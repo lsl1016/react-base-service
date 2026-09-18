@@ -9,6 +9,7 @@ import (
 	"react-base-service/components/params"
 	"react-base-service/conf"
 	model "react-base-service/models/llm"
+	agentService "react-base-service/service/agent"
 )
 
 func TestDelegateAgentPath(t *testing.T) {
@@ -52,11 +53,11 @@ func TestFilterToolIndexSnapshot(t *testing.T) {
 	snapshot := `[{"toolId":"tool_a","name":"query_log","description":"查日志"},{"toolId":"tool_b","name":"query_schema","description":"查表结构"},{"toolId":"tool_c","name":"explain_sql","description":"执行计划"}]`
 
 	// 空白名单 = 继承全部可见工具
-	if got := filterToolIndexSnapshot(snapshot, nil); got != snapshot {
+	if got := (agentService.RuntimePolicy{}).FilterToolIndexSnapshot(snapshot); got != snapshot {
 		t.Fatalf("空白名单应继承全部工具: %q", got)
 	}
 	// 按 name 过滤
-	got := filterToolIndexSnapshot(snapshot, []string{"query_schema", "explain_sql"})
+	got := (agentService.RuntimePolicy{ToolRefs: []string{"query_schema", "explain_sql"}}).FilterToolIndexSnapshot(snapshot)
 	var items []reactToolIndexItem
 	if err := json.Unmarshal([]byte(got), &items); err != nil {
 		t.Fatalf("过滤结果非法 JSON: %v", err)
@@ -65,12 +66,12 @@ func TestFilterToolIndexSnapshot(t *testing.T) {
 		t.Fatalf("过滤结果不符合预期: %s", got)
 	}
 	// 按 toolId 过滤同样生效
-	got = filterToolIndexSnapshot(snapshot, []string{"tool_c"})
+	got = (agentService.RuntimePolicy{ToolRefs: []string{"tool_c"}}).FilterToolIndexSnapshot(snapshot)
 	if !strings.Contains(got, "explain_sql") {
 		t.Fatalf("按 toolId 过滤未生效: %s", got)
 	}
 	// 未知名自然丢弃
-	got = filterToolIndexSnapshot(snapshot, []string{"not_exist"})
+	got = (agentService.RuntimePolicy{ToolRefs: []string{"not_exist"}}).FilterToolIndexSnapshot(snapshot)
 	if got != "[]" {
 		t.Fatalf("未知名应全部丢弃: %s", got)
 	}
@@ -80,10 +81,10 @@ func TestFilterSkillIndexSnapshot(t *testing.T) {
 	snapshot := `[{"skillId":"skill_1","name":"db-diagnosis","description":"诊断"},{"skillId":"skill_2","name":"log-analysis","description":"日志"}]`
 
 	// 空白名单 = 不注入任何 skill
-	if got := filterSkillIndexSnapshot(snapshot, nil); got != "[]" {
+	if got := (agentService.RuntimePolicy{}).FilterSkillIndexSnapshot(snapshot); got != "[]" {
 		t.Fatalf("空白名单应不注入 skill: %q", got)
 	}
-	got := filterSkillIndexSnapshot(snapshot, []string{"log-analysis"})
+	got := (agentService.RuntimePolicy{SkillRefs: []string{"log-analysis"}}).FilterSkillIndexSnapshot(snapshot)
 	if !strings.Contains(got, "log-analysis") || strings.Contains(got, "db-diagnosis") {
 		t.Fatalf("按名过滤结果不符合预期: %s", got)
 	}

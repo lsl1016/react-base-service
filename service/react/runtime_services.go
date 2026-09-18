@@ -23,6 +23,7 @@ type serverToolRuntime interface {
 type agentRuntime interface {
 	FindVisible(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Agent, error)
 	Resolve(ctx *gin.Context, callerKey string, routeValues []string, agentKey string) (*model.Agent, error)
+	Policy(agent model.Agent) agentService.RuntimePolicy
 }
 
 // memoryRuntime 是 ReAct 对长期记忆的最小依赖面。
