@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	llm "react-base-service/api/llm"
@@ -37,59 +36,6 @@ const (
 )
 
 type ClientMessageReader func() (params.ReactWSMessage, error)
-
-type reactEngineState struct {
-	ctx            *gin.Context
-	runCtx         context.Context
-	req            *runtimeRequest
-	profile        ExecutionProfile
-	runID          string
-	sessionID      string
-	client         llm.LLMClient
-	currentModel   reactModelTarget
-	failoverModels []reactModelTarget
-	emitter        *runEventEmitter
-	readClient     ClientMessageReader
-	services       runtimeServices
-	// clientHub 是外层 run 级上行消息分发器（req.clientHub 注入）；并行委派的多个等待者
-	// 经它按 toolUseId 认领消息，交互等待函数统一走 hub 而不是直读 readClient。
-	clientHub   *clientMessageHub
-	messages    []llm.ChatMessage
-	messageRefs [][]reactMessageRef
-	activeTools map[string]model.Tool
-	// prevToolDefFingerprint 记录上一个 run 已加载工具的 definition 指纹（callName → 指纹），
-	// 用于区分"工具从未加载"和"工具定义已变更需要重新 get_tool"两种未命中场景。
-	prevToolDefFingerprint map[string]string
-	loadedSkillID          map[string]bool
-	todoStateJSON          string
-	// memoryWrites 是当前 run 内成功执行的记忆写操作数，用于 reflection 的单次写入限额。
-	memoryWrites int
-	// pendingAsyncTasks 保存当前 Session 的未完结异步任务，仅在外层 ReAct 中注入模型上下文。
-	pendingAsyncTasks        []model.ReactAsyncTask
-	pendingAsyncTasksHasMore bool
-	inputTokens              int
-	outputTokens             int
-	runBaseInputTokens       int
-	runBaseOutputTokens      int
-	cacheReadTokens          int
-	cacheCreateTokens        int
-	runBaseCacheReadTokens   int
-	runBaseCacheCreateTokens int
-	// lastInputTokens 最近一次模型调用真实 input_tokens，用作压缩触发的主锚点。
-	// 仅当 streamResult.InputTokens > 0 时更新，避免流式中断的 0 覆盖。
-	lastInputTokens  int
-	lastOutputTokens int
-	// agentPath 是当前 run 的多 Agent 事件归属路径（外层 run 为空）；depth 是委派嵌套深度。
-	agentPath string
-	depth     int
-	// agentPermissionMode 是当前 run 的 agent 级工具确认收紧（来自 tblLlmAgent.permission_mode，
-	// 外层 run 为空=不收紧）：与工具级 permission_mode 取更严者（P2-3）。
-	agentPermissionMode string
-	// delegatedInput/OutputTokens 是委派子 run 消耗的内存镜像（DB 为权威口径），
-	// 并行委派并发累加用原子操作，done 事件透出给前端。
-	delegatedInputTokens  atomic.Int64
-	delegatedOutputTokens atomic.Int64
-}
 
 type reactClientToolCall struct {
 	index int
@@ -122,30 +68,7 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 		return err
 	}
 
-	state := &reactEngineState{
-		ctx:                    ctx,
-		runCtx:                 runCtx,
-		req:                    req,
-		profile:                executionProfileForRun(req),
-		runID:                  runID,
-		sessionID:              sessionID,
-		client:                 client,
-		currentModel:           currentModel,
-		failoverModels:         failoverModels,
-		emitter:                emitter,
-		readClient:             readClient,
-		services:               req.services,
-		messages:               messages,
-		messageRefs:            req.historyMessageRefs,
-		activeTools:            make(map[string]model.Tool),
-		prevToolDefFingerprint: make(map[string]string),
-		loadedSkillID:          make(map[string]bool),
-		todoStateJSON:          req.todoStateJSON,
-		agentPath:              req.agentPath,
-		depth:                  req.depth,
-		clientHub:              req.clientHub,
-		agentPermissionMode:    req.agentPermissionMode,
-	}
+	state := newReactEngineState(ctx, runCtx, req, runID, sessionID, client, currentModel, failoverModels, emitter, readClient, messages)
 	// 恢复上一个 run 已加载且定义未变化的 Business Tool，避免模型按历史上下文直接 execute_tool 时空转报错。
 	if err := state.restoreActiveToolsFromPreviousRun(); err != nil {
 		zlog.Warnf(ctx, "[React] 恢复历史已加载工具失败(忽略,模型可重新 get_tool): runId=%s, sessionId=%s, err=%v", runID, sessionID, err)

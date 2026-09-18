@@ -114,6 +114,8 @@ ReAct 主循环本身不再直接感知 HTTP/MCP 的执行实现。
 
 - caller/route 下可见 Agent 查询
 - 委派前 Agent 实时解析
+- tools/skills 白名单运行期策略
+- permissionMode / maxSteps / tokenBudget 运行期归一
 
 仍留在 `service/react/delegate.go`：
 
@@ -164,12 +166,17 @@ ReAct 主循环本身不再直接感知 HTTP/MCP 的执行实现。
 - Context Compact 行为
 - Workspace 行为
 
+## Runtime State 整理
+
+`runtimeRequest` 已按 identity/model/capabilities/execution/conversation 分组；
+`reactEngineState` 已按 model/conversation/async/usage 分组，并由统一构造函数初始化。
+匿名嵌入保持现有字段读取语义，对执行路径无行为变化。
+
 ## 后续建议
 
 下一轮优先级：
 
 1. 将 Skill Runtime 从 `meta_tools.go` 下沉为独立 resolver。
-2. 继续缩小 `runtimeRequest`，按 identity/model/capabilities/execution/history 分组。
 3. 将 Tool Result 统一升级为可表达 MCP `structuredContent` / `outputSchema` 的结构。
 4. 为 Agent 引入显式 capability policy：
    - toolPolicy

@@ -130,10 +130,10 @@ func TestRenderReactAsyncTaskReminderHasMore(t *testing.T) {
 }
 
 func TestRemovePendingAsyncTask(t *testing.T) {
-	state := &reactEngineState{pendingAsyncTasks: []model.ReactAsyncTask{
+	state := &reactEngineState{reactEngineAsyncState: reactEngineAsyncState{pendingAsyncTasks: []model.ReactAsyncTask{
 		{ToolUseID: "toolu_01"},
 		{ToolUseID: "toolu_02"},
-	}}
+	}}}
 	state.removePendingAsyncTask("toolu_01")
 	if len(state.pendingAsyncTasks) != 1 || state.pendingAsyncTasks[0].ToolUseID != "toolu_02" {
 		t.Fatalf("unexpected pending tasks after remove: %+v", state.pendingAsyncTasks)
@@ -157,10 +157,10 @@ func TestResolveAsyncTaskInputValidation(t *testing.T) {
 
 func TestHandleResolvedAsyncTaskState(t *testing.T) {
 	t.Run("already resolved uses actual terminal status", func(t *testing.T) {
-		state := &reactEngineState{pendingAsyncTasks: []model.ReactAsyncTask{
+		state := &reactEngineState{reactEngineAsyncState: reactEngineAsyncState{pendingAsyncTasks: []model.ReactAsyncTask{
 			{ToolUseID: "toolu_01"},
 			{ToolUseID: "toolu_02"},
-		}}
+		}}}
 		content, isError, err := state.handleResolvedAsyncTaskState("toolu_01", &model.ReactAsyncTask{
 			ToolUseID:     "toolu_01",
 			State:         model.ReactAsyncTaskStateResolved,
@@ -191,7 +191,7 @@ func TestHandleResolvedAsyncTaskState(t *testing.T) {
 	})
 
 	t.Run("expired is a non-retryable terminal result", func(t *testing.T) {
-		state := &reactEngineState{pendingAsyncTasks: []model.ReactAsyncTask{{ToolUseID: "toolu_expired"}}}
+		state := &reactEngineState{reactEngineAsyncState: reactEngineAsyncState{pendingAsyncTasks: []model.ReactAsyncTask{{ToolUseID: "toolu_expired"}}}}
 		content, isError, err := state.handleResolvedAsyncTaskState("toolu_expired", &model.ReactAsyncTask{
 			ToolUseID: "toolu_expired",
 			State:     model.ReactAsyncTaskStateExpired,
@@ -217,7 +217,7 @@ func TestHandleResolvedAsyncTaskState(t *testing.T) {
 	})
 
 	t.Run("missing task points to the exact reminder ID", func(t *testing.T) {
-		state := &reactEngineState{pendingAsyncTasks: []model.ReactAsyncTask{{ToolUseID: "toolu_missing"}}}
+		state := &reactEngineState{reactEngineAsyncState: reactEngineAsyncState{pendingAsyncTasks: []model.ReactAsyncTask{{ToolUseID: "toolu_missing"}}}}
 		content, isError, err := state.handleResolvedAsyncTaskState("toolu_typo", nil)
 		if err != nil || isError {
 			t.Fatalf("expected non-error result, got isError=%v err=%v", isError, err)

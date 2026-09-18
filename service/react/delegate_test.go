@@ -97,7 +97,7 @@ func TestDelegationAllowedRespectsConfigAndDepth(t *testing.T) {
 	enabled := true
 	conf.CustomConf.LLM.React.SubAgent = conf.ReactSubAgentConfig{Enabled: &enabled, MaxDepth: 2, MaxParallel: 1, DefaultMaxSteps: 8}
 
-	req := &runtimeRequest{agents: []model.Agent{{AgentKey: "dba-agent"}}}
+	req := &runtimeRequest{runtimeRequestCapabilities: runtimeRequestCapabilities{agents: []model.Agent{{AgentKey: "dba-agent"}}}}
 	if !req.delegationAllowed() {
 		t.Fatal("外层 run（depth=0）且 max_depth=2 应允许委派")
 	}
@@ -131,7 +131,9 @@ func TestRuntimeToolDefinitionsAppendDelegate(t *testing.T) {
 
 	req := &runtimeRequest{
 		payload: params.ReactRunPayload{Type: model.ReactSessionTypeChat},
-		agents:  []model.Agent{{AgentKey: "dba-agent"}},
+		runtimeRequestCapabilities: runtimeRequestCapabilities{
+			agents: []model.Agent{{AgentKey: "dba-agent"}},
+		},
 	}
 	profile := outerExecutionProfile()
 	defs := runtimeToolDefinitions(req, profile)

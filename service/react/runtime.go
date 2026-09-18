@@ -52,52 +52,6 @@ type RunResult struct {
 	SessionID string `json:"sessionId"`
 }
 
-type runtimeRequest struct {
-	payload                 params.ReactRunPayload
-	services                runtimeServices
-	inputSessionID          string
-	userName                string
-	apiKey                  string
-	resolvedModelKey        string
-	resolvedModelVersion    string
-	systemPrompt            string
-	skillsIndexSnapshotJSON string
-	toolsIndexSnapshotJSON  string
-	// memoryContext 是长期记忆注入块（<memory>...</memory>），memory.enabled 时在 prepareRuntimeRequest 装配；
-	// 每次 run 初始化重新解析，保证上一个 run 的写入对后续轮次立即可见。
-	memoryContext string
-	// graphMemoryContext 是时序图谱记忆注入块（<graph_memory>...</graph_memory>），graph_memory.enabled
-	// 且 inject.enabled 时按本次用户输入检索装配；检索失败/超时/空结果为空串（不注入）。
-	graphMemoryContext string
-	// agents 是 caller 可见的子 Agent 清单（subagent.enabled 时装配），
-	// 用于 delegate_agent 工具描述动态渲染与委派解析。
-	agents []model.Agent
-	// agentPath 是当前 run 的多 Agent 事件归属路径；外层 run 为空（事件省略，前端按 main 渲染），
-	// delegate_agent 子 run 形如 main/ops-agent。
-	agentPath string
-	// depth 是委派嵌套深度：外层 run 为 0，每委派一层 +1；达到 subagent.max_depth 后不再装配 delegate_agent。
-	depth int
-	// clientHub 是外层 run 级的前端上行消息分发器：并行委派的多个等待者按 toolUseId
-	// 各自认领消息（见 client_hub.go）；外层 run 创建，子 run 继承同一实例。
-	clientHub *clientMessageHub
-	// agentPermissionMode 是子 run 的 agent 级工具确认收紧（tblLlmAgent.permission_mode，
-	// inherit/空 = 不收紧）；外层 run 为空。
-	agentPermissionMode string
-	// tokenBudget 是子 run 递归 token 预算上限（P3 子代理预算，tblLlmAgent.max_tokens_per_run；
-	// 0=不限）；外层 run 恒 0。口径 = 本 run 输入+输出+委派孙代理 delegated_*。
-	tokenBudget            int
-	routeValuesJSON        string
-	historyMessages        []llm.ChatMessage
-	historyMessageRefs     [][]reactMessageRef
-	modelUserMessage       llm.ChatMessage
-	modelUserMessageRef    reactMessageRef
-	attachments            []reactAttachmentSnapshot
-	callerRuntimeContext   components.CallerRuntimeContext
-	todoStateJSON          string
-	prevActiveToolIDsJSON  string
-	prevActiveToolDefsJSON string
-}
-
 // delegationAllowed 判定当前 run 是否装配 delegate_agent：
 // subagent 开启、可见 agent 非空、且当前深度还允许再委派一层（depth < max_depth）。
 func (r *runtimeRequest) delegationAllowed() bool {
@@ -512,23 +466,31 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	}
 	modelUserMessage := llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: userContent}
 	return &runtimeRequest{
-		payload:                 payload,
-		services:                services,
-		inputSessionID:          strings.TrimSpace(sessionID),
-		userName:                userName,
-		apiKey:                  apiKey,
-		resolvedModelKey:        modelKey,
-		resolvedModelVersion:    modelVersion,
-		systemPrompt:            systemPrompt,
-		skillsIndexSnapshotJSON: skillsIndexSnapshotJSON,
-		toolsIndexSnapshotJSON:  toolsIndexSnapshotJSON,
-		memoryContext:           memoryContext,
-		graphMemoryContext:      graphMemoryContext,
-		agents:                  agents,
-		routeValuesJSON:         string(routeValuesBytes),
-		modelUserMessage:        modelUserMessage,
-		attachments:             attachments,
-		callerRuntimeContext:    callerRuntimeCtx,
+		payload:  payload,
+		services: services,
+		runtimeRequestIdentity: runtimeRequestIdentity{
+			inputSessionID:       strings.TrimSpace(sessionID),
+			userName:             userName,
+			routeValuesJSON:      string(routeValuesBytes),
+			callerRuntimeContext: callerRuntimeCtx,
+		},
+		runtimeRequestModel: runtimeRequestModel{
+			apiKey:               apiKey,
+			resolvedModelKey:     modelKey,
+			resolvedModelVersion: modelVersion,
+		},
+		runtimeRequestCapabilities: runtimeRequestCapabilities{
+			systemPrompt:            systemPrompt,
+			skillsIndexSnapshotJSON: skillsIndexSnapshotJSON,
+			toolsIndexSnapshotJSON:  toolsIndexSnapshotJSON,
+			memoryContext:           memoryContext,
+			graphMemoryContext:      graphMemoryContext,
+			agents:                  agents,
+		},
+		runtimeRequestConversation: runtimeRequestConversation{
+			modelUserMessage: modelUserMessage,
+			attachments:      attachments,
+		},
 	}, nil
 }
 
