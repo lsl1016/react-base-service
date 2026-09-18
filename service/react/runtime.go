@@ -54,6 +54,7 @@ type RunResult struct {
 
 type runtimeRequest struct {
 	payload                 params.ReactRunPayload
+	services                runtimeServices
 	inputSessionID          string
 	userName                string
 	apiKey                  string
@@ -380,6 +381,11 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 
 // prepareRuntimeRequest 统一完成入参归一化、调用方校验、模型/API Key 解析和系统提示词装配。
 func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, sessionID string) (*runtimeRequest, error) {
+	return prepareRuntimeRequestWithServices(ctx, payload, sessionID, defaultRuntimeServices())
+}
+
+// prepareRuntimeRequestWithServices 与 prepareRuntimeRequest 行为一致，但允许子 run/测试复用同一组 Runtime 能力依赖。
+func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRunPayload, sessionID string, services runtimeServices) (*runtimeRequest, error) {
 	payload.CallerKey = strings.TrimSpace(payload.CallerKey)
 	payload.Type = normalizeSessionType(payload.Type)
 	payload.ModelKey = strings.TrimSpace(payload.ModelKey)
@@ -468,7 +474,7 @@ func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, ses
 	// 子 Agent 清单：subagent.enabled 时装配，用于 delegate_agent 工具描述动态渲染与委派解析。
 	var agents []model.Agent
 	if conf.CustomConf.LLM.React.SubAgent.SubAgentEnabled() {
-		agents, err = model.FindAgentsByCallerAndRoutes(ctx, payload.CallerKey, route.BuildRoutePrefixes(routeValues))
+		agents, err = services.agentResolver().FindVisible(ctx, payload.CallerKey, routeValues)
 		if err != nil {
 			return nil, err
 		}
@@ -478,7 +484,7 @@ func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, ses
 	// 记忆为空返回空串（不注入，token 零增量）。
 	var memoryContext string
 	if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
-		memoryContext, err = buildMemoryContextForRun(ctx, payload.CallerKey, userName)
+		memoryContext, err = services.memoryExecutor().BuildContext(ctx, payload.CallerKey, userName, conf.GetReactRuntimeConfig().Memory)
 		if err != nil {
 			return nil, err
 		}
@@ -507,6 +513,7 @@ func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, ses
 	modelUserMessage := llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: userContent}
 	return &runtimeRequest{
 		payload:                 payload,
+		services:                services,
 		inputSessionID:          strings.TrimSpace(sessionID),
 		userName:                userName,
 		apiKey:                  apiKey,

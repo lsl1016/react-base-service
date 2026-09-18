@@ -26,7 +26,6 @@ import (
 	"react-base-service/components"
 	"react-base-service/components/metrics"
 	"react-base-service/components/params"
-	"react-base-service/components/route"
 	"react-base-service/conf"
 	"react-base-service/helpers"
 	model "react-base-service/models/llm"
@@ -205,7 +204,7 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 		ModelVersion: modelVersion,
 		MaxSteps:     maxSteps,
 	}
-	base, err := prepareRuntimeRequest(s.ctx, payload, s.sessionID)
+	base, err := prepareRuntimeRequestWithServices(s.ctx, payload, s.sessionID, s.services)
 	if err != nil {
 		return nil, "", err
 	}
@@ -327,17 +326,15 @@ func (s *reactEngineState) findVisibleAgent(agentKey string) (model.Agent, bool)
 // resolveAgentForKey 实时查库解析 agent 定义（caller 作用域 + default 合并语义，与快照同源逻辑）：
 // 委派执行取最新配置，管理面板变更从下一次委派起生效。
 func (s *reactEngineState) resolveAgentForKey(agentKey string) (model.Agent, bool) {
-	agents, err := model.FindAgentsByCallerAndRoutes(s.ctx, s.req.payload.CallerKey, route.BuildRoutePrefixes(s.req.payload.RouteValues))
+	agent, err := s.services.agentResolver().Resolve(s.ctx, s.req.payload.CallerKey, s.req.payload.RouteValues, agentKey)
 	if err != nil {
 		zlog.Warnf(s.ctx, "[React.Delegate] 实时解析 agent 失败(回退 run 快照): runId=%s, agentKey=%s, err=%v", s.runID, agentKey, err)
 		return s.findVisibleAgent(agentKey)
 	}
-	for _, agent := range agents {
-		if agent.AgentKey == agentKey {
-			return agent, true
-		}
+	if agent == nil {
+		return model.Agent{}, false
 	}
-	return model.Agent{}, false
+	return *agent, true
 }
 
 // accumulateDelegatedTokens 把子 run 的 token 消耗（自身 total + 其 delegated 递归口径）
