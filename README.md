@@ -7,11 +7,17 @@
 | 能力 | 说明 |
 |---|---|
 | ReAct 运行时 | WebSocket 单入口 `/react-base-service/react/ws`，模型流式输出 + 工具循环 + 上下文自动压缩 + 模型互备 |
+| 多 Agent 委派 | Agent 注册表（`/agent/*`，支持 Markdown 导入）；`delegate_agent` 委派子 ReactRun 执行：父子历史/token 预算隔离、事件按 agentPath 归流、支持同轮并行委派 |
 | 计划确认 | `create_plan` Meta Tool：复杂任务先提交分步计划，前端计划卡片 + 「开始任务」确认后按计划执行（进度走 todo）；`llm.react.allow_plan: false` 可关闭（未配置默认开启） |
-| 会话管理 | 会话隐式创建/复用（事务加锁 + 归属校验）、会话列表、并发 run 互斥、软删状态 |
+| 会话管理 | 会话隐式创建/复用（事务加锁 + 归属校验）、会话列表、并发 run 互斥、软删状态；启动期自动清理重启残留的陈旧活跃 run |
 | 历史回放 | 持久化消息还原为与实时协议同形的事件流（`/react/session/events`），内置回放页面 `/react/replay` |
 | 工具体系 | Business Tool 注册（http/client/mcp 三类）、两段式加载、输入 Schema 校验、白名单、异步提交型工具；MCP 客户端双来源：`custom.yaml` `mcp` 段静态声明 + 「MCP 连接管理」接口动态登记（`tblLlmMcpServer`，支持粘贴 mcpServers JSON、请求头透传、连接测试、启停与工具清单同步），工具自动进注册表供 ReAct 运行时使用 |
 | Skill 体系 | Skill 注册 + 摘要索引注入 system 前缀 + get_skill 按需加载完整说明；支持 `default` 默认作用域 |
+| 长期记忆 | 跨会话记忆按 owner 作用域读写（memory_write 等 Meta Tool）、run 启动分层注入、修订审计与回滚；管理面 `/react/memory/*` |
+| 图谱记忆 | Graphiti 时序事实图谱（Layer2）：run 启动事实注入 + `graph_memory_search` / `graph_memory_write` Meta Tool，外部 REST 存储 |
+| 代码工作区 | 按 run 分配 git worktree（bare mirror 缓存 + 静态解析 + commit 锁定），挂载只读 repo MCP 检索工具（`ws_*` 系列）；运行视图 `/react/workspace/active` |
+| Bundle 插件包 | manifest + agents + skills + .mcp.json 打包安装，展开写入注册表并记录快照，卸载按快照逆序回滚（`/react/bundle/*`） |
+| HITL 交互 | Client Tool（浏览器执行）、ask_question 补充信息、危险工具二次确认（tool_confirm），统一经 clientMessageHub 按 toolUseId 认领回包 |
 | 系统提示词 | 按 callerKey + routeValues 前缀匹配解析，多条由通用到具体拼接；支持 `default` 默认作用域（全 caller 共享，拼接在最前） |
 | 异步任务 | 提交快照落库、`<async_tasks>` 提醒注入、resolve/get 闭环工具、Provider 状态同步框架（可插拔） |
 | 产物与附件 | python_exec 沙箱执行 + COS 产物下载（支持本地目录存储模式）；csv/md/txt 附件上传与引用 |
@@ -81,9 +87,11 @@ go run main.go                 # 监听 :8180（conf/mount/config.yaml 可改）
 
 详细文档：
 
+- [文档总索引](docs/README.md)（含 16 篇模块系统文档 `docs/system/` 与变更记录 `docs/changelog/`）
 - [系统架构](docs/architecture.md)
 - [接入方式](docs/integration-guide.md)
 - [启动与部署](docs/deployment.md)
+- [Runtime 模块化](docs/runtime-modularization.md)
 - [MCP 客户端与仓库检索能力边界](docs/mcp.md)
 
 ## 目录结构
@@ -91,23 +99,22 @@ go run main.go                 # 监听 :8180（conf/mount/config.yaml 可改）
 ```
 ├── main.go                  # 入口：PreInit → InitResource → 路由 → 后台任务 → HTTP
 ├── router/                  # 路由注册（react / 注册类管理接口 / 静态资源）
-├── controllers/http/        # HTTP/WS 控制器（react、attachment、caller、skill、tool、apikey、systemprompt、llmmodel）
-├── service/react/           # ReAct 运行时核心（引擎、运行时装配、Meta Tool、会话历史、异步任务…）
-├── service/asynctask/       # 异步任务 Provider 状态同步框架（可插拔）
-├── service/tool|skill|...   # 工具/Skill/系统提示词/APIKey/Caller/模型积分 服务
+├── controllers/http/        # HTTP/WS 控制器（react、attachment、caller、agent、skill、tool、apikey、systemprompt、llmmodel、probe）
+├── service/react/           # ReAct 运行时核心（引擎、运行时装配、Meta Tool、委派、记忆注入、会话历史、异步任务…）
+├── service/                 # 领域服务：tool / skill / agent / memory / graphmemory / workspace / mcpclient / bundle / asynctask / caller / apikey / systemprompt / llmmodel / credits / token / skillchatfile
 ├── api/llm/                 # LLM 客户端（claude / gpt 兼容 / minimax，流式+工具调用）
 ├── api/pythonexec/          # python_exec 沙箱客户端
-├── models/llm/              # GORM 模型（17 张表，见表结构见 sql/init.sql）
+├── models/llm/              # GORM 模型（26 张表，表结构见 sql/init.sql）
 ├── components/              # 错误码、响应渲染、参数结构、路由前缀、COS、调用方运行时上下文
 ├── conf/                    # 配置加载 + conf/mount 示例配置（脱敏）
 ├── middleware/              # 免鉴权中间件（信任 X-User-Name 头，缺省 anonymous）
 ├── web/                     # playground / replay 页面 + TypeScript SDK（embed 进二进制）
 ├── sql/init.sql             # 全量建库脚本
-└── docs/                    # 架构 / 接入 / 部署文档
+└── docs/                    # 受管文档体系（system / changelog / plan）+ 架构、接入、部署与专题文档
 ```
 
 ## 范围与边界
 
-- **只做通用 ReAct 基座**：提供与业务域解耦的 ReAct 运行时和注册管理接口，不内置知识库检索、Plan 编排等上层业务能力。
+- **只做通用 ReAct 基座**：提供与业务域解耦的 ReAct 运行时和注册管理接口，不内置业务知识库检索与 Plan 自动编排（`create_plan` 仅为计划确认卡片，正式 Plan Runtime 见分支规划）。
 - **对外契约保持稳定**：ReAct 引擎主循环、系统提示词装配顺序（systemPrompt + 工具索引摘要 + Skill 索引摘要）、Meta Tool 集合与描述、两段式工具加载与指纹自愈、Skill 注入，以及注册类接口（caller/skill/tool/apikey/system-prompt）的请求响应结构。
 - **通用化设计**：HTTP 工具请求头透传不绑定特定 caller；异步任务 Provider 框架默认无内置 Provider，按需注册扩展。

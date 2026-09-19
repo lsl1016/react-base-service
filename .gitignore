@@ -66,3 +66,4 @@ react-base-service
 /bin/
 /.mimosa/
 /.mimosa-tmp/
+.agents/

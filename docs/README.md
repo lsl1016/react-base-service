@@ -46,6 +46,6 @@
 
 ## 维护入口
 
-- 文档基线：`skills/bootstrap-project-docs/SKILL.md`
-- 变更记录：`skills/writing-changelog/SKILL.md`
+- 文档基线：`.agents/skills/bootstrap-project-docs/SKILL.md`
+- 变更记录：`.agents/skills/writing-changelog/SKILL.md`
 - 校验：`bash scripts/check-docs.sh`

@@ -1,7 +1,7 @@
 ---
 title: Skill 模块功能文档
 date: 2026-09-19
-version: v1.0
+version: v1.1
 type: system
 module: skill
 maintainer: react-base-service 项目组
@@ -60,10 +60,11 @@ Run 初始化时注入可见 Skill 的摘要索引。模型判断适用后调用
 
 本模块无独立 YAML 开关。可见性由 Caller、Route、`status` 与 `is_default` 决定。`SKILL.md` 要求 front-matter 和正文均非空，触发词数量与长度在 `service/skill` 内限制。
 
-仓库的 `skills/` 保存可版本化的维护 Skill 源文件；是否导入运行时数据库由部署方决定。
+项目的文档维护技能存放于 `.agents/skills/`（不纳入版本控制）；是否导入运行时数据库由部署方决定。
 
 ## 6. 历史版本
 
 | 版本 | 日期 | 修改人 | 变更说明 |
 |---|---|---|---|
+| v1.1 | 2026-09-19 | react-base-service 项目组 | 修正维护技能存放路径的表述（`skills/` → `.agents/skills/`） |
 | v1.0 | 2026-09-19 | react-base-service 项目组 | 从 main 分支代码建立 Skill 模块文档基线 |

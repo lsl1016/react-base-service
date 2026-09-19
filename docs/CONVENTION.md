@@ -8,8 +8,8 @@ maintainer: react-base-service 项目组
 status: active
 related_code:
   - scripts/check-docs.sh
-  - skills/bootstrap-project-docs/SKILL.md
-  - skills/writing-changelog/SKILL.md
+  - .agents/skills/bootstrap-project-docs/SKILL.md
+  - .agents/skills/writing-changelog/SKILL.md
 summary: 定义项目系统文档、变更记录、索引和校验规则
 ---
 
