@@ -958,6 +958,7 @@ const management = {
     $('management-add').addEventListener('click', () => this.openCreate());
     $('management-import').addEventListener('click', () => this.openImport());
     $('management-batch').addEventListener('click', () => this.openBatchTools());
+    $('management-gwadmin').addEventListener('click', () => window.open('/react-base-service/react/mcp-admin', '_blank'));
     $('management-refresh').addEventListener('click', () => this.refresh());
     $('management-modal-body').addEventListener('click', (event) => {
       const batchAction = event.target.closest('[data-batch-action]')?.dataset.batchAction;
@@ -1023,8 +1024,10 @@ const management = {
     document.querySelector('.rp-caller-filter-field')?.classList.toggle('rp-hidden', !resource.callerFilter);
     document.querySelector('.rp-mcp-filter-field')?.classList.toggle('rp-hidden', !resource.mcpFilter);
     $('management-head').innerHTML = useCards ? '' : `<tr class="rp-table-row">${resource.columns.map(([, label]) => `<th class="rp-table-cell rp-table-header-cell">${label}</th>`).join('')}</tr>`;
-    // 工具管理页提供「批量注册」（多草稿 Tab 批量登记 http 工具），其余页隐藏。
+    // 工具管理页提供「批量注册」（多草稿 Tab 批量登记 http 工具），其余页隐藏；
+    // MCP 相关页提供「网关管理台」入口（mcp-server 风格的独立管理页）。
     $('management-batch').hidden = this.type !== 'tool';
+    $('management-gwadmin').hidden = !(this.type === 'mcp' || this.type === 'mcpapp');
   },
   // 拉取 caller 清单填充筛选下拉：固定「全部 / 默认」+ 扁平的 caller 列表（平台并入文案）。
   async loadCallerFilterOptions() {

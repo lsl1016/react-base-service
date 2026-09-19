@@ -383,6 +383,9 @@ type MCPServerConfig struct {
 	Instructions string `yaml:"instructions"`
 	// ForwardCookies 把调用方请求里的指定 Cookie 透传给工具上游（上游依赖登录态的场景）。
 	ForwardCookies []string `yaml:"forward_cookies"`
+	// AdminTokens 是管理台（/react/mcp-admin 页面）的静态令牌白名单；
+	// 空列表 = 接受任意非空令牌（与 playground 管理面同级的内网联调默认）。
+	AdminTokens []string `yaml:"admin_tokens"`
 	// Audit 控制调用审计异步落库（tblLlmMcpCallLog）。
 	Audit MCPServerAuditConfig `yaml:"audit"`
 }

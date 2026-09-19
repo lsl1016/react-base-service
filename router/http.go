@@ -1,7 +1,9 @@
 package router
 
 import (
+	"embed"
 	"net/http"
+	"strings"
 
 	"react-base-service/components"
 	"react-base-service/conf"
@@ -10,6 +12,7 @@ import (
 	"react-base-service/controllers/http/attachment"
 	"react-base-service/controllers/http/caller"
 	"react-base-service/controllers/http/llmmodel"
+	"react-base-service/controllers/http/mcpadmin"
 	"react-base-service/controllers/http/react"
 	"react-base-service/controllers/http/skill"
 	"react-base-service/controllers/http/setting"
@@ -29,6 +32,9 @@ func Http(engine *gin.Engine) {
 	// 健康检查与指标挂根路径，不走业务前缀与中间件（K8s/抓取惯例）。
 	registerHealthRoutes(engine)
 	registerMetricsRoute(engine)
+	// MCP 网关管理台（mcp-server 移植的 Vue SPA）：页面走业务前缀，
+	// 其构建产物引用根路径 /assets/* 与 /favicon.svg（Vite 绝对路径），一并挂根。
+	registerMcpAdminRoutes(engine)
 
 	router := engine.Group("/react-base-service")
 
@@ -103,8 +109,24 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/mcpapp/delete", react.DeleteMcpApp)
 		reactGroup.POST("/mcpapp/reset_secret", react.ResetMcpAppSecret)
 		reactGroup.POST("/mcpapp/logs", react.ListMcpAppLogs)
-		reactGroup.POST("/mcpapp/grant_tools", react.GrantMcpAppTools)
+	reactGroup.POST("/mcpapp/grant_tools", react.GrantMcpAppTools)
 		reactGroup.POST("/mcpapp/list_tools", react.ListMcpAppGrantableTools)
+		// MCP 网关管理台（mcp-server Vue SPA）的 /api/manage 兼容接口
+		//（见 controllers/http/mcpadmin；页面在 /react/mcp-admin）。
+		adminAPI := router.Group("/api/manage")
+		adminAPI.Use(mcpadmin.Auth)
+		{
+			adminAPI.POST("/tools/list", mcpadmin.ListTools)
+			adminAPI.POST("/tools/search", mcpadmin.SearchTools)
+			adminAPI.POST("/tools/batchCreate", mcpadmin.BatchCreateTools)
+			adminAPI.POST("/tools/batchUpdate", mcpadmin.BatchUpdateTools)
+			adminAPI.POST("/tools/batchUpdateStatus", mcpadmin.BatchUpdateToolStatus)
+			adminAPI.POST("/app/list", mcpadmin.ListApps)
+			adminAPI.POST("/app/create", mcpadmin.CreateApp)
+			adminAPI.POST("/app/grantTools", mcpadmin.GrantAppTools)
+			adminAPI.POST("/app/updateToolStatus", mcpadmin.UpdateAppToolStatus)
+			adminAPI.POST("/app/listTools", mcpadmin.ListAppTools)
+		}
 		// Agent Bundle 插件包管理（P3：安装展开写入注册表、卸载回滚，见 controllers/http/react/bundle.go）
 		reactGroup.POST("/bundle/install", react.InstallBundle)
 		reactGroup.POST("/bundle/uninstall", react.UninstallBundle)
@@ -229,6 +251,58 @@ const (
 // isPlaygroundWhitelisted 判断用户是否可访问 playground 页面；白名单为空时不限制。
 func isPlaygroundWhitelisted(userName string) bool {
 	return conf.IsReactPlaygroundWhitelisted(userName)
+}
+
+const (
+	mcpAdminIndexEmbedPath   = "mcp-admin/dist/index.html"
+	mcpAdminFaviconEmbedPath = "mcp-admin/dist/favicon.svg"
+	mcpAdminAssetsEmbedPath  = "mcp-admin/dist/assets/"
+)
+
+// registerMcpAdminRoutes 挂载 MCP 网关管理台（mcp-server 移植的 Vue SPA，hash 路由）：
+// 页面在 /react-base-service/react/mcp-admin（playground「MCP 应用」页有入口），
+// 构建产物按其绝对路径约定挂根 /assets/* 与 /favicon.svg。
+func registerMcpAdminRoutes(engine *gin.Engine) {
+	router := engine.Group("/react-base-service")
+	router.GET("/react/mcp-admin", serveMcpAdminIndex)
+	engine.GET("/favicon.svg", serveMcpAdminFavicon)
+	engine.GET("/assets/*path", serveMcpAdminAsset)
+}
+
+func serveMcpAdminIndex(ctx *gin.Context) {
+	serveEmbedFile(ctx, web.McpAdminFS, mcpAdminIndexEmbedPath, "text/html; charset=utf-8")
+}
+
+func serveMcpAdminFavicon(ctx *gin.Context) {
+	serveEmbedFile(ctx, web.McpAdminFS, mcpAdminFaviconEmbedPath, "image/svg+xml")
+}
+
+func serveMcpAdminAsset(ctx *gin.Context) {
+	name := strings.TrimPrefix(ctx.Param("path"), "/")
+	if strings.Contains(name, "..") || strings.Contains(name, "\\") {
+		ctx.String(http.StatusBadRequest, "bad path")
+		return
+	}
+	contentType := "application/octet-stream"
+	switch {
+	case strings.HasSuffix(name, ".js"):
+		contentType = "application/javascript; charset=utf-8"
+	case strings.HasSuffix(name, ".css"):
+		contentType = "text/css; charset=utf-8"
+	case strings.HasSuffix(name, ".svg"):
+		contentType = "image/svg+xml"
+	}
+	serveEmbedFile(ctx, web.McpAdminFS, mcpAdminAssetsEmbedPath+name, contentType)
+}
+
+func serveEmbedFile(ctx *gin.Context, fs embed.FS, path, contentType string) {
+	data, err := fs.ReadFile(path)
+	if err != nil {
+		ctx.String(http.StatusNotFound, "not found")
+		return
+	}
+	ctx.Header("Cache-Control", "no-cache")
+	ctx.Data(http.StatusOK, contentType, data)
 }
 
 func serveReactEmbedPlayground(ctx *gin.Context) {

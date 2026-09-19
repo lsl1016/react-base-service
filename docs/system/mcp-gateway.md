@@ -115,10 +115,12 @@ mcp_server:
     worker_num: 10         # 审计落库并发
 ```
 
-## 6. playground 页面
+## 6. playground 页面与管理台
 
-- **MCP 应用**（新 tab）：应用卡片（appKey 一键复制/secret 打码/绑定 caller/接入端点/已授权工具数）+ 创建与重置密钥弹窗（完整 secret 一次性展示）+ **工具授权**弹窗（勾选 caller 作用域内工具，全选/清空，全量替换）+ 调用记录分页弹层。
-- **工具管理 → 批量注册**：多草稿 Tab 批量登记 http 工具（名称/描述/URL/方法/超时/请求头/入参出参 Schema），统一提交 `/tool/batch_register`，逐条返回成败。
+- **MCP 应用**（playground tab）：应用卡片（appKey 一键复制/secret 打码/绑定 caller/接入端点/已授权工具数）+ 创建与重置密钥弹窗（完整 secret 一次性展示）+ **工具授权**弹窗（勾选 caller 作用域内工具，全选/清空，全量替换）+ 调用记录分页弹层。「MCP 连接」「MCP 应用」两页工具栏有「网关管理台 ↗」入口。
+- **网关管理台**（`/react-base-service/react/mcp-admin`）：mcp-server 项目 Vue3 管理台的**原版前端**（`web/mcp-admin/dist` 经 go:embed 内嵌），含工具列表/批量注册（多草稿）/编辑/批量上下线与应用创建/授权页。后端为 `/api/manage/*` 协议兼容层（`controllers/http/mcpadmin`），字段映射：数字 id ↔ tblLlmTool 主键、bizTag ↔ caller 作用域、requestConfig/readOnly ↔ config 的 method/headers/timeout（GET=只读）、status 1/2 ↔ 0/1；应用创建默认绑定 default 作用域（改绑定走 playground「MCP 应用」页）。
+- **管理台鉴权**：`X-Admin-Token` 静态令牌；`mcp_server.admin_tokens` 配置白名单时按白名单校验，空列表 = 接受任意非空令牌（内网联调默认）；无效令牌返回 errNo 2001 触发右上角「管理令牌」弹窗。`X-Admin-User` 记录操作者。
+- **工具管理 → 批量注册**（playground 原生实现）：多草稿 Tab 批量登记 http 工具（名称/描述/URL/方法/超时/请求头/入参出参 Schema），统一提交 `/tool/batch_register`，逐条返回成败。
 
 ## 7. 边界与决策
 
@@ -132,5 +134,6 @@ mcp_server:
 
 | 版本 | 日期 | 修改人 | 变更说明 |
 |---|---|---|---|
+| v1.2 | 2026-09-20 | react-base-service 项目组 | 内嵌 mcp-server 原版 Vue3 管理台（/react/mcp-admin + /api/manage 兼容层 + X-Admin-Token 鉴权），playground 增加入口 |
 | v1.1 | 2026-09-20 | react-base-service 项目组 | 补齐 mcp-server 的按应用工具授权（tblLlmMcpAppTool 显式白名单 + grant_tools/list_tools 接口 + 授权弹窗） |
 | v1.0 | 2026-09-20 | react-base-service 项目组 | 自 mcp-server 移植网关核心，与 tblLlmTool 工具体系原生融合；新增应用凭证/审计两表与 playground 管理页 |

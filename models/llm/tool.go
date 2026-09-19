@@ -252,6 +252,21 @@ func listGatewayToolsInCaller(ctx *gin.Context, callerKey string) ([]Tool, error
 	return tools, nil
 }
 
+// GetHTTPToolsByIDs 按自增主键批量查询 http 工具行（mcp-server 管理台兼容层用；
+// 数字 ID 是该管理台编辑/授权的操作键）。
+func GetHTTPToolsByIDs(ctx *gin.Context, ids []uint) ([]Tool, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var tools []Tool
+	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
+		Where("id IN ? AND tool_type = 'http'", ids).Find(&tools).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return tools, nil
+}
+
 // FindToolsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 tool；
 // 同时并入「默认作用域」（caller_key=default）下命中的工具，对全部 caller 生效。
 func FindToolsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Tool, error) {
