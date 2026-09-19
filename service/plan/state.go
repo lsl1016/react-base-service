@@ -15,6 +15,8 @@ const (
 	maxPlanSteps                    = 20
 	defaultAgentStepMaxAttempts     = 2
 	maxAgentStepAttempts            = 3
+	minStepTimeoutSeconds           = 60
+	maxStepTimeoutSeconds           = 3600
 )
 
 var planStepKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -37,6 +39,8 @@ type PlanDraftStep struct {
 	SuccessCriteria []string               `json:"successCriteria"`
 	Question        string                 `json:"question,omitempty"`
 	ResponseSchema  map[string]interface{} `json:"responseSchema,omitempty"`
+	// TimeoutSeconds 是 AGENT 步骤的单次 Attempt 执行上限；0 表示用运行时默认值。
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 }
 
 func newID(prefix string) string {
@@ -64,9 +68,9 @@ func validateDraft(draft *PlanDraft) error {
 		step.ExpectedOutput = strings.TrimSpace(step.ExpectedOutput)
 		step.StepType = strings.ToUpper(strings.TrimSpace(step.StepType))
 		step.Question = strings.TrimSpace(step.Question)
-		if !planStepKeyPattern.MatchString(step.StepKey) {
-			return fmt.Errorf("invalid stepKey %q", step.StepKey)
-		}
+		// 模型偶发漏填/写错 stepKey（如空串、含中文或大写）。计划整体因此判死代价过高，
+		// 这里按 name / 序号确定性推导一个合法 key，保持 dependsOn 自动补链可用。
+		step.StepKey = repairStepKey(step.StepKey, step.Name, index, seen)
 		if _, exists := seen[step.StepKey]; exists {
 			return fmt.Errorf("duplicate stepKey %q", step.StepKey)
 		}
@@ -81,8 +85,10 @@ func validateDraft(draft *PlanDraft) error {
 			if step.MaxAttempts > maxAgentStepAttempts {
 				step.MaxAttempts = maxAgentStepAttempts
 			}
+			step.TimeoutSeconds = clampStepTimeoutSeconds(step.TimeoutSeconds)
 		case model.PlanStepTypeUserInput, model.PlanStepTypeUserAction:
 			step.MaxAttempts = 1
+			step.TimeoutSeconds = 0
 			if step.Question == "" {
 				step.Question = step.Instruction
 			}
@@ -115,6 +121,77 @@ func validateDraft(draft *PlanDraft) error {
 
 func stepRequired(step PlanDraftStep) bool {
 	return step.Required == nil || *step.Required
+}
+
+// repairStepKey 在 stepKey 不合法时按 name（其次按序号）推导合法 key，并保证相对 seen 唯一。
+// 已合法的 key 原样返回；推导仅在本地生效，不回写模型输出语义。
+func repairStepKey(raw, name string, index int, seen map[string]int) string {
+	if planStepKeyPattern.MatchString(raw) {
+		if _, exists := seen[raw]; !exists {
+			return raw
+		}
+	}
+	key := deriveStepKey(name)
+	if key == "" {
+		key = fmt.Sprintf("step_%d", index+1)
+	}
+	if _, exists := seen[key]; !exists {
+		return key
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s_%d", key, suffix)
+		if len(candidate) > 64 {
+			candidate = fmt.Sprintf("step_%d_%d", index+1, suffix)
+		}
+		if _, exists := seen[candidate]; !exists {
+			return candidate
+		}
+	}
+}
+
+// deriveStepKey 把 name 规范成 stepKey：小写、非 [a-z0-9_] 连缀成单下划线、去首尾下划线；
+// 数字开头补 s 前缀（pattern 要求字母开头），超长截断到 64。
+func deriveStepKey(name string) string {
+	lowered := strings.ToLower(strings.TrimSpace(name))
+	var builder strings.Builder
+	lastUnderscore := false
+	for _, char := range lowered {
+		valid := (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9')
+		if valid {
+			builder.WriteRune(char)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			builder.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	key := strings.Trim(builder.String(), "_")
+	if key == "" {
+		return ""
+	}
+	if key[0] >= '0' && key[0] <= '9' {
+		key = "s" + key
+	}
+	if len(key) > 64 {
+		key = key[:64]
+	}
+	return key
+}
+
+// clampStepTimeoutSeconds 把显式配置的步骤超时压进 [min, max]；0 表示未配置（用默认值）。
+func clampStepTimeoutSeconds(value int) int {
+	if value == 0 {
+		return 0
+	}
+	if value < minStepTimeoutSeconds {
+		return minStepTimeoutSeconds
+	}
+	if value > maxStepTimeoutSeconds {
+		return maxStepTimeoutSeconds
+	}
+	return value
 }
 
 func encodeDraftStep(step PlanDraftStep) string {

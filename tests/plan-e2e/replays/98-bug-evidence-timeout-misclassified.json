@@ -1,0 +1,137 @@
+{
+ "exportedAt": "2026-09-19T13:35:00.799Z",
+ "scenario": "Bug 证据：修复前步骤超时被误判为用户取消（步骤 3 恰 600s 整被级联 CANCELLED，对应测试报告 §6-P1）",
+ "baseline": "Bug 证据（修复前）",
+ "planExecutionId": "plan_exec_b373129cc5934860b9ccf154b99baa0e",
+ "sessionId": "session_72f9ad5573a8445b8146cb76fd4b8f0c",
+ "expectedOutcome": "CANCELLED（当时的错误终态；修复后应为 FAILED）",
+ "replay": {
+  "sessionId": "session_72f9ad5573a8445b8146cb76fd4b8f0c",
+  "title": "请对比分析本地代码镜像库中的 adk-g...",
+  "events": [
+   {
+    "type": "run",
+    "seq": 1,
+    "runId": "run_9b9f622dc77f4000bb98581e271a2fbf",
+    "sessionId": "session_72f9ad5573a8445b8146cb76fd4b8f0c",
+    "payload": {
+     "callerKey": "demo-app",
+     "routeValues": [],
+     "type": "chat",
+     "userPrompt": "请对比分析本地代码镜像库中的 adk-go 与 trpc-agent-go 两个 Go 仓库：1）先用代码检索类工具（如 repo_list_files、repo_search_code、repo_get_repo_map 等）分别了解两个仓库的目录结构与主要模块；2）再用 python_exec 工具写一段 Python 脚本，基于第一步的真实检索结果做量化对比（例如按目录统计文件数、统计 README 中的关键词频次），并输出对比结论；3）最后输出中文总结报告：两个仓库各自的定位、架构差异与适用场景。要求：每一步都必须实际调用工具并引用真实返回数据，禁止凭空编造。",
+     "controlContext": null,
+     "llmContext": null,
+     "modelKey": "claude",
+     "modelVersion": "glm-4.6",
+     "modelHash": "",
+     "maxSteps": 500
+    },
+    "createdAt": "2026-09-19 19:09:30"
+   },
+   {
+    "type": "cancelled",
+    "seq": 2,
+    "runId": "run_9b9f622dc77f4000bb98581e271a2fbf",
+    "sessionId": "session_72f9ad5573a8445b8146cb76fd4b8f0c",
+    "payload": {
+     "ok": true,
+     "reason": "本次运行已被用户取消",
+     "contextUsedTokens": 5139,
+     "maxContextTokens": 170000
+    },
+    "createdAt": "2026-09-19 19:33:49"
+   },
+   {
+    "type": "plan_view_update",
+    "seq": 3,
+    "runId": "run_9b9f622dc77f4000bb98581e271a2fbf",
+    "sessionId": "session_72f9ad5573a8445b8146cb76fd4b8f0c",
+    "payload": {
+     "planExecutionId": "plan_exec_b373129cc5934860b9ccf154b99baa0e",
+     "view": {
+      "plan_execution_id": "plan_exec_b373129cc5934860b9ccf154b99baa0e",
+      "status": "CANCELLED",
+      "summary": "adk-go 与 trpc-agent-go 双仓库对比分析",
+      "steps": [
+       {
+        "step_id": "plan_step_3941fd48dc8f42869cd70bdd4e4dfa6c",
+        "step_order": 1,
+        "step_name": "探查 adk-go 仓库结构与主要模块",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "SUCCEEDED",
+        "summary": "Step 1（探查 adk-go 仓库结构与主要模块）已完成，5 项子任务全部收口。以下是汇总输出，所有路径与引文均来自本轮实际工具返回，逐项标注来源工具。\n\n---\n\n# adk-go 仓库结构探查摘要（Plan Step 1 / 5）\n\n## 0. 关键前置发现：只读根为镜像根\n\n**来源：`repo_get_repo_map`（max_files=2000）+ `repo_list_files`（根目录）**\n- 配置的只读仓库根不是 adk-go 本身，而是**镜像根**：根目录下有一份顶层 `README.md`，各仓库位于子目录中（已直接确认 `adk-go/` 子仓库）。后续所有路径均带 `adk-go/` 前缀。\n- `trpc-agent-go` 的位置在当前保留数据中**尚未出现**，其镜像根下路径留待下一步用 `repo_list_files` 确认，此处不作断言。\n\n## 1. 目录结构概览\n\n**来源：`repo_get_repo_map`（整仓地图，输出在 `adk-go/auth/credential.go` 处截断，此后目录未逐一确认）+ `repo_search_code` 命中 `adk-go/AGENTS.md` 第 91–108 行的官方目录清单（该清单本身是工具真实返回）**\n\n已由整仓地图直接确认存在的目录：\n```\nadk-go/\n├── AGENTS.md / CLAUDE.md / CONTRIBUTING.md / GEMINI.md / LICENSE / README.md / README-v2.md\n├── agent/                     # Agent 接口与类型（含多个子包，见下）\n│   ├── llmagent/              # LLM 代理（含 testdata/ 回放用例）\n│   ├── remoteagent/（含 v2/）  # A2A 远程代理\n│   ├── workflowagent/         # workflow.go（Config、New、workflowAgent）\n│   └── workflowagents/        # loopagent/ parallelagent/ sequentialagent/\n├── agentregistry/             # Google Cloud Agent Registry 客户端\n├── artifact/（含 gcsartifact/）# 制品存储\n├── auth/                      # credential.go（整仓地图自此截断，目录内其余未确认）\n├── session/vertexai/testdata/ # VertexAI ...",
+        "step_result_ref": {
+         "plan_execution_id": "plan_exec_b373129cc5934860b9ccf154b99baa0e",
+         "plan_version_id": "plan_ver_b0140696c3fc48b587b7bc5288458c50",
+         "step_id": "plan_step_3941fd48dc8f42869cd70bdd4e4dfa6c",
+         "step_attempt_id": "plan_attempt_2ecdefe5ec4b464499c19f280d910960",
+         "step_result_id": "plan_result_2ae25db08942495788db57f1796f9f45"
+        }
+       },
+       {
+        "step_id": "plan_step_f75ae39f4d6745d692ddb7660ebb8668",
+        "step_order": 2,
+        "step_name": "探查 trpc-agent-go 仓库结构与主要模块",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "SUCCEEDED",
+        "summary": "Step 2（探查 trpc-agent-go 仓库结构与主要模块）已完成，4 项子任务全部收口。以下为汇总输出，所有路径、行号与引文均来自本轮实际工具返回，逐项标注来源工具。\n\n# trpc-agent-go 仓库结构探查摘要（Plan Step 2 / 5）\n\n## 0. 关键前置发现：仓库位置确认\n\n**来源：`repo_list_files`（镜像根，max_entries=200）**\n- 返回清单为 `[\"README.md\",\"adk-go/\",\"trpc-agent-go/\"]`，确认 trpc-agent-go 与 adk-go 并列位于镜像根下，本步所有路径均带 `trpc-agent-go/` 前缀（与 Step 1 中“镜像根含两个子仓库”的结论一致）。\n\n## 1. 实际目录树概览\n\n**来源：`repo_list_files`（path=trpc-agent-go，max_entries=200，返回未截断）**\n\n```\ntrpc-agent-go/\n├── AGENTS.md / CODE-OF-CONDUCT.md / CONTRIBUTING.md / CONTRIBUTORS.md\n├── LICENSE / LICENSE.original / NOTICE / README.md / README.zh_CN.md / go.mod / go.sum / .github/\n├── agent/        artifact/      benchmark/     codeexecutor/  docs/\n├── evaluation/   event/         evolution/     examples/      graph/\n├── internal/     knowledge/     log/           memory/        model/\n├── openclaw/     planner/       plugin/        prompt/        runner/\n├── server/       session/       skill/         storage/       team/\n└── telemetry/    test/          tool/\n```\n- **注意**：顶层**不存在** `llm/` 或 `message/` 目录（清单中未出现，不作虚构）；LLM 相关代码位于 `model/` 与 `agent/llmagent/`，消息相关代码位于 `model/`（message_compare.go、message_validator.go）与 `event/`。\n- **来源：`repo_get_repo_map`...",
+        "step_result_ref": {
+         "plan_execution_id": "plan_exec_b373129cc5934860b9ccf154b99baa0e",
+         "plan_version_id": "plan_ver_b0140696c3fc48b587b7bc5288458c50",
+         "step_id": "plan_step_f75ae39f4d6745d692ddb7660ebb8668",
+         "step_attempt_id": "plan_attempt_e66f0480364142f29a6ed4bbff01b03f",
+         "step_result_id": "plan_result_2cfa385a228a4da6a5148cad1e26438e"
+        }
+       },
+       {
+        "step_id": "plan_step_3b2946f9f4114aa4b6dd5e7fc6e4b19e",
+        "step_order": 3,
+        "step_name": "汇总两仓库量化分析所需的真实数据",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "步骤已取消"
+       },
+       {
+        "step_id": "plan_step_7715dbfb8bae4494a666258ead6f3fb7",
+        "step_order": 4,
+        "step_name": "用 python_exec 运行量化对比脚本",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "用户取消了 Plan"
+       },
+       {
+        "step_id": "plan_step_294811679cb647cf884fcf7f12d4bfab",
+        "step_order": 5,
+        "step_name": "输出中文总结报告",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "用户取消了 Plan"
+       }
+      ],
+      "current_step": {
+       "step_id": "plan_step_3b2946f9f4114aa4b6dd5e7fc6e4b19e",
+       "step_order": 3,
+       "step_name": "汇总两仓库量化分析所需的真实数据",
+       "step_type": "AGENT",
+       "required": true,
+       "status": "CANCELLED",
+       "summary": "步骤已取消"
+      },
+      "error": {
+       "code": "cancelled",
+       "summary": "用户取消了 Plan"
+      },
+      "can_resume": false,
+      "updated_at": "2026-09-19T19:33:49+08:00"
+     }
+    },
+    "createdAt": "2026-09-19T19:09:30+08:00"
+   }
+  ]
+ }
+}

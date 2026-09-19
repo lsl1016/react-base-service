@@ -1,0 +1,114 @@
+{
+ "exportedAt": "2026-09-19T13:35:00.721Z",
+ "scenario": "S4 运行中取消（HTTP）+ WS 命令窗口探针",
+ "baseline": "修复后复测",
+ "planExecutionId": "plan_exec_471a2ae0e9f84676b206644f177fd84a",
+ "sessionId": "session_b018d48d7d704022bcc6284ec000a227",
+ "expectedOutcome": "CANCELLED",
+ "replay": {
+  "sessionId": "session_b018d48d7d704022bcc6284ec000a227",
+  "title": "请制定一个多步骤纯计算任务，每个计算步骤...",
+  "events": [
+   {
+    "type": "run",
+    "seq": 1,
+    "runId": "run_aa8a3e1f302b46c5a1d0276a580316c4",
+    "sessionId": "session_b018d48d7d704022bcc6284ec000a227",
+    "payload": {
+     "callerKey": "demo-app",
+     "routeValues": [],
+     "type": "chat",
+     "userPrompt": "请制定一个多步骤纯计算任务，每个计算步骤都要调用 python_exec 工具：1）计算 1000 以内的素数个数与总和；2）计算斐波那契数列第 40 项的值；3）用蒙特卡洛方法（10 万次采样）估算圆周率；4）汇总以上三项结果输出中文报告。",
+     "controlContext": null,
+     "llmContext": null,
+     "modelKey": "claude",
+     "modelVersion": "glm-4.6",
+     "modelHash": "",
+     "maxSteps": 500
+    },
+    "createdAt": "2026-09-19 21:29:02"
+   },
+   {
+    "type": "cancelled",
+    "seq": 2,
+    "runId": "run_aa8a3e1f302b46c5a1d0276a580316c4",
+    "sessionId": "session_b018d48d7d704022bcc6284ec000a227",
+    "payload": {
+     "ok": true,
+     "reason": "本次运行已被用户取消",
+     "contextUsedTokens": 3571,
+     "maxContextTokens": 170000
+    },
+    "createdAt": "2026-09-19 21:30:13"
+   },
+   {
+    "type": "plan_view_update",
+    "seq": 3,
+    "runId": "run_aa8a3e1f302b46c5a1d0276a580316c4",
+    "sessionId": "session_b018d48d7d704022bcc6284ec000a227",
+    "payload": {
+     "planExecutionId": "plan_exec_471a2ae0e9f84676b206644f177fd84a",
+     "view": {
+      "plan_execution_id": "plan_exec_471a2ae0e9f84676b206644f177fd84a",
+      "status": "CANCELLED",
+      "summary": "纯计算四步流水线：素数统计 → 斐波那契第 40 项 → 蒙特卡洛估算 π → 中文汇总报告",
+      "steps": [
+       {
+        "step_id": "plan_step_90dad191e61d4ee5b6b0fb9c6e786d63",
+        "step_order": 1,
+        "step_name": "计算 1000 以内素数个数与总和",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "步骤已取消"
+       },
+       {
+        "step_id": "plan_step_5e4385b903c4494c8a4f00ee85faf709",
+        "step_order": 2,
+        "step_name": "计算斐波那契数列第 40 项",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "用户取消了 Plan"
+       },
+       {
+        "step_id": "plan_step_f93eab2eed6c487c8a6747f0e1cd8773",
+        "step_order": 3,
+        "step_name": "蒙特卡洛法估算圆周率（10 万次采样）",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "用户取消了 Plan"
+       },
+       {
+        "step_id": "plan_step_de957a728c26442292ecf2861ca9cfe8",
+        "step_order": 4,
+        "step_name": "汇总三项结果并生成中文报告",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "用户取消了 Plan"
+       }
+      ],
+      "current_step": {
+       "step_id": "plan_step_90dad191e61d4ee5b6b0fb9c6e786d63",
+       "step_order": 1,
+       "step_name": "计算 1000 以内素数个数与总和",
+       "step_type": "AGENT",
+       "required": true,
+       "status": "CANCELLED",
+       "summary": "步骤已取消"
+      },
+      "error": {
+       "code": "cancelled",
+       "summary": "用户取消了 Plan"
+      },
+      "can_resume": false,
+      "updated_at": "2026-09-19T21:30:13+08:00"
+     }
+    },
+    "createdAt": "2026-09-19T21:29:02+08:00"
+   }
+  ]
+ }
+}

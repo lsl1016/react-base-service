@@ -211,6 +211,7 @@ func persistInitialDraft(ctx *gin.Context, execution *model.PlanExecution, draft
 				StepType: draftStep.StepType,
 				Required: stepRequired(draftStep),
 				MaxAttempts: draftStep.MaxAttempts,
+				TimeoutSeconds: draftStep.TimeoutSeconds,
 				DependsOnJSON: string(deps),
 				InputJSON: encodeDraftStep(draftStep),
 			}
@@ -679,6 +680,18 @@ func completeAgentAttemptFailure(ctx *gin.Context, execution *model.PlanExecutio
 	return nil
 }
 
+// reviveOuterRun 在 Retry/Skip 复活计划的同一事务内把外层 run 复位为 running。
+// 失败路径会把外层 run 置为 error，而 restoreForCommand 的状态守卫会拒绝 error 态外层 run，
+// 导致"重试失败步骤/跳过失败步骤"命令永远进不了执行；复位与计划状态变更保持原子。
+func reviveOuterRun(tx *gorm.DB, execution *model.PlanExecution) error {
+	if err := tx.Model(&model.ReactRun{}).
+		Where("run_id = ?", execution.OuterRunID).
+		Updates(map[string]any{"state": model.ReactRunStateRunning, "error_message": ""}).Error; err != nil {
+		return components.ErrorDbUpdate.Wrap(err)
+	}
+	return nil
+}
+
 func retryStepAndContinue(ctx *gin.Context, execution *model.PlanExecution, step *model.PlanStep) error {
 	err := model.GetLLMDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		stepUpdate := tx.Model(&model.PlanStep{}).
@@ -696,6 +709,19 @@ func retryStepAndContinue(ctx *gin.Context, execution *model.PlanExecution, step
 		if stepUpdate.RowsAffected != 1 {
 			return components.ErrorParamInvalid.Sprintf("only FAILED step can be retried")
 		}
+		// 失败级联曾把该步骤之后的 PENDING 步骤批量置 CANCELLED；重试意味着计划复活，
+		// 这些步骤须一并复位。FAILED Plan 内的 CANCELLED 步骤只可能来自失败级联
+		// （用户取消的 Plan 终态是 CANCELLED，进不到这里），因此无需额外标记区分。
+		if err := tx.Model(&model.PlanStep{}).
+			Where("plan_execution_id = ? AND plan_version_id = ? AND status = ? AND step_order > ?",
+				execution.PlanExecutionID, execution.CurrentVersionID, model.PlanStepStatusCancelled, step.StepOrder).
+			Updates(map[string]any{
+				"status":         model.PlanStepStatusPending,
+				"result_summary": "",
+				"finished_at":    nil,
+			}).Error; err != nil {
+			return components.ErrorDbUpdate.Wrap(err)
+		}
 		planUpdate := tx.Model(&model.PlanExecution{}).
 			Where("plan_execution_id = ? AND status = ?", execution.PlanExecutionID, model.PlanExecutionStatusFailed).
 			Updates(map[string]any{
@@ -711,7 +737,7 @@ func retryStepAndContinue(ctx *gin.Context, execution *model.PlanExecution, step
 		if planUpdate.RowsAffected != 1 {
 			return components.ErrorParamInvalid.Sprintf("plan is not retryable")
 		}
-		return nil
+		return reviveOuterRun(tx, execution)
 	})
 	if err != nil {
 		return err
@@ -767,7 +793,7 @@ func skipStepAndContinue(ctx *gin.Context, execution *model.PlanExecution, step 
 		if planUpdate.Error != nil {
 			return components.ErrorDbUpdate.Wrap(planUpdate.Error)
 		}
-		return nil
+		return reviveOuterRun(tx, execution)
 	})
 	if err != nil {
 		return err

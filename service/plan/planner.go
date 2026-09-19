@@ -8,6 +8,7 @@ import (
 
 	reactService "react-base-service/service/react"
 
+	"react-base-service/golib/zlog"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,8 +24,9 @@ const plannerSystemPrompt = `你是 Agent Plan Runtime 的 Planner。
 5. 不要把“思考一下”“总结一下”拆成无价值步骤；每一步必须有明确产出。
 6. stepKey 使用小写字母、数字、下划线，且以字母开头。
 7. AGENT 步骤 maxAttempts 建议 1-3；等待用户步骤固定为 1。
-8. 不规划并行步骤、SUB_PLAN、EXTERNAL_TASK；这些不属于 V1。
-9. 计划必须足够完整，让每个 Step 在只看到 Plan 上下文、当前 Step 和前序结果摘要时也能执行。`
+8. AGENT 步骤单次执行默认超时 600 秒；预计单步耗时明显超过 10 分钟（大规模检索、重型计算等）时，为该步骤显式设置 timeoutSeconds（60-3600 秒）。
+9. 不规划并行步骤、SUB_PLAN、EXTERNAL_TASK；这些不属于 V1。
+10. 计划必须足够完整，让每个 Step 在只看到 Plan 上下文、当前 Step 和前序结果摘要时也能执行。`
 
 func planSchema() reactService.StructuredToolSpec {
 	stringArray := map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}
@@ -50,6 +52,7 @@ func planSchema() reactService.StructuredToolSpec {
 							"stepType":        map[string]interface{}{"type": "string", "enum": []string{"AGENT", "USER_INPUT", "USER_ACTION"}},
 							"dependsOn":       stringArray,
 							"maxAttempts":     map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 3},
+							"timeoutSeconds":  map[string]interface{}{"type": "integer", "minimum": minStepTimeoutSeconds, "maximum": maxStepTimeoutSeconds},
 							"required":        map[string]interface{}{"type": "boolean"},
 							"successCriteria": stringArray,
 							"question":        map[string]interface{}{"type": "string"},
@@ -71,18 +74,33 @@ func buildPlannerUserPrompt(userPrompt string) string {
 		"\n\n请生成执行计划并调用 submit_plan。Plan 模式已由用户主动选择，计划生成后会自动从 Step 1 开始执行，不需要额外添加“确认开始计划”的步骤。"
 }
 
+// maxPlannerAttempts 是单次 Plan Run 内的规划尝试总数（首次 + 重试）。
+// 规划输出是模型随机采样，偶发漏填字段或依赖非法；失败后整体判死 Run 的代价远高于多采样一次。
+const maxPlannerAttempts = 3
+
 // generateDraft 使用 schema-constrained 虚拟 Tool 获取 PlanDraft；Planner 不进入 ReAct，也不会执行 Tool。
+// 生成或校验失败时自动重试（decode/validate 失败前会先做 stepKey 等确定性修复）。
 func generateDraft(ctx *gin.Context, runCtx context.Context, prepared *reactService.PreparedExternalRun, userPrompt string) (PlanDraft, reactService.StructuredCompletionResult, error) {
-	result, err := reactService.CompleteStructured(ctx, runCtx, prepared, plannerSystemPrompt, buildPlannerUserPrompt(userPrompt), planSchema())
-	if err != nil {
-		return PlanDraft{}, result, err
+	var lastResult reactService.StructuredCompletionResult
+	var lastErr error
+	for attempt := 1; attempt <= maxPlannerAttempts; attempt++ {
+		result, err := reactService.CompleteStructured(ctx, runCtx, prepared, plannerSystemPrompt, buildPlannerUserPrompt(userPrompt), planSchema())
+		lastResult = result
+		if err != nil {
+			lastErr = err
+		} else {
+			var draft PlanDraft
+			if err = json.Unmarshal(result.Arguments, &draft); err != nil {
+				lastErr = fmt.Errorf("decode plan draft: %w", err)
+			} else if err = validateDraft(&draft); err != nil {
+				lastErr = err
+			} else {
+				return draft, result, nil
+			}
+		}
+		if attempt < maxPlannerAttempts {
+			zlog.Errorf(ctx, "[Plan.Planner] 第 %d/%d 次规划失败，自动重试: err=%v", attempt, maxPlannerAttempts, lastErr)
+		}
 	}
-	var draft PlanDraft
-	if err := json.Unmarshal(result.Arguments, &draft); err != nil {
-		return PlanDraft{}, result, fmt.Errorf("decode plan draft: %w", err)
-	}
-	if err := validateDraft(&draft); err != nil {
-		return PlanDraft{}, result, err
-	}
-	return draft, result, nil
+	return PlanDraft{}, lastResult, lastErr
 }

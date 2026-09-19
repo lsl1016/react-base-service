@@ -107,6 +107,11 @@ func (x *executor) runAgentStep(step *model.PlanStep) error {
 			x.emitter.stepWriter(x.execution, step, attempt),
 			x.readClient,
 		)
+		// 超时判定必须在取消路径之前：截止落在工具执行阶段时，中断错误常被包装为
+		// context.Canceled，若只看 runErr 会把步骤超时误判成用户取消并级联取消整个 Plan。
+		// stepCtx 的 Err 以先发生者为准（deadline 先到即为 DeadlineExceeded），是区分
+		// "步骤超时" 与 "父级/用户取消" 的权威信号。
+		stepTimedOut := errors.Is(stepCtx.Err(), context.DeadlineExceeded)
 		cancelStep()
 		if result.RunID != "" {
 			attempt.StepRunID = result.RunID
@@ -130,13 +135,16 @@ func (x *executor) runAgentStep(step *model.PlanStep) error {
 			return x.emitter.emitView(x.execution)
 		}
 
-		if reactService.IsCancellation(runErr) || errors.Is(runErr, context.Canceled) {
+		if !stepTimedOut && (reactService.IsCancellation(runErr) || errors.Is(runErr, context.Canceled)) {
 			_ = finishAttempt(x.ctx, attempt.StepAttemptID, model.PlanAttemptStatusCancelled, "cancelled", runErr.Error())
 			_ = finishStep(x.ctx, x.execution, step, model.PlanStepStatusCancelled, "步骤已取消", "")
 			return runErr
 		}
 
 		errorSummary := compactText(runErr.Error(), 1200)
+		if stepTimedOut {
+			errorSummary = compactText(fmt.Sprintf("步骤超时（上限 %d 秒）: %v", timeout, runErr), 1200)
+		}
 		terminal := attemptNo >= limit
 		if err := completeAgentAttemptFailure(
 			x.ctx,
@@ -203,7 +211,7 @@ func (x *executor) buildStepPrompt(step *model.PlanStep) (string, error) {
 			line += "\n结果摘要: " + item.ResultSummary
 		}
 		if strings.TrimSpace(item.ResultRef) != "" {
-			line += "\n结果引用: " + item.ResultRef + "（仅在摘要不足以完成当前步骤时使用 read_tool_result 按需读取）"
+			line += "\n结果引用: " + item.ResultRef + "（仅在摘要不足以完成当前步骤时用 read_tool_result 按需读取；引用只是定位标识，把读到的数据直接写进工具入参或代码字面量，不要把引用本身当作数据传递）"
 		}
 		completed = append(completed, line)
 	}
@@ -226,6 +234,7 @@ func (x *executor) buildStepPrompt(step *model.PlanStep) (string, error) {
 		strings.Join(completed, "\n\n"),
 		"</plan_execution>",
 		"",
+		"执行约束：本步骤有独立的执行超时——优先用最少的工具调用达成目标，禁止无边界穷举式检索或逐目录展开；发起重型操作前先确认它对本步骤必要。",
 		"只执行当前步骤。最终回答应清晰描述本步骤实际完成内容、关键事实/修改以及供后续步骤使用的结论。",
 	}, "\n"), nil
 }

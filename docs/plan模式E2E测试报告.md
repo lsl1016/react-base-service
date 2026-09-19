@@ -171,3 +171,25 @@ node mutex_probe.js <sessionId>                       # 独立并发互斥探针
 ### 测试脚本备注
 
 早期两轮"等待期并发互斥"探针存在构造缺陷（sessionId 误置于 payload 而非消息顶层，导致服务端为新会话开跑），相关结论以 `mutex_probe.js` 独立探针（正确构造，两态均被 6000100 拒绝）为准。
+
+## 10. 修复复测（同日）
+
+针对 §6 发现的修复已于同日落地并复测（详见 `docs/system/plan.md` v1.1 与 git 提交）：
+
+| 问题 | 修复 | 复测 |
+|---|---|---|
+| P1 超时误判为取消 | 以 stepCtx 的 `DeadlineExceeded` 为权威信号区分超时与取消，超时统一走 Attempt 失败（T7 场景：timeoutSeconds=60 + sleep(90)，两次 Attempt 错误均标注「步骤超时（上限 60 秒）」并自动重试，Plan 终态 FAILED 而非 CANCELLED） | ✅ T7 PASS |
+| P2 非法 stepKey 判死 | `validateDraft` 按 name/序号确定性修复非法与重复 key；规划失败自动重试（最多 3 次） | ✅ 单元测试 |
+| P3 超时不可配 | `timeoutSeconds` 纳入 Planner Schema（60–3600 钳制）并持久化 | ✅ T7（DB 落库 60） |
+| P8 失败不级联终态 | FAILED 时后续 PENDING 步骤批量置 CANCELLED；Retry/Skip 同事务复位这些步骤及外层 run（顺带修复了 Retry/Skip 被外层 run error 守卫拒绝的存量问题） | ✅ T7（Retry 后 step_2 回 PENDING） |
+| P4 WS 命令窗口未标明 | `docs/system/plan.md` 接口清单加注 | ✅ 文档 |
+| P6/P7 提示词 | 步骤提示加入 result_ref 消费范式与工具预算约束 | ✅ 随 S1/S2 回归 |
+| P5 断连暂停 | 属 Durable Runtime 二期，未改 | ➖ 留二期 |
+
+回归：S2（等待/恢复 438s）✅、S4（运行中取消，首轮失败为驱动侧竞态——探针 error 事件提前满足终态等待，修正等待条件后复跑）见下表、`go test ./...` 全绿。
+
+| 复测轮 | 场景 | 结果 |
+|---|---|---|
+| 修复后 | T7 超时链路（P1/P3/P8） | ✅ PASS 166s |
+| 修复后 | S2 USER_INPUT 等待 + WS 恢复 | ✅ PASS 438s |
+| 修复后 | S4 运行中取消 | ✅ PASS（驱动修正后） |

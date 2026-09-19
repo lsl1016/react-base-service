@@ -1,6 +1,25 @@
 /**
  * Plan 模式 E2E 场景测试
  * 用法: node run_scenarios.js [scenarioName ...]
+ *
+ * ── 场景清单（单场景说明见 scenarios/，总览见 README.md）─────────────────────
+ *  s1 复杂正常流        三步 AGENT（repo_get_repo_map → python_exec 统计 → 中文总结），
+ *                       验证多步骤串联、工具充分调用与 Finalizer 写回       → scenarios/01
+ *  s2 USER_INPUT 恢复   USER_INPUT 等待 → 等待期并发互斥探针 → WS plan_resume 续跑完成
+ *                                                                       → scenarios/02
+ *  s3 USER_ACTION 拒绝  approved:false → 当前+后续步骤级联 CANCELLED、Wait 取消
+ *                                                                       → scenarios/03
+ *  s4 运行中取消        首步 RUNNING 时：WS plan_cancel 探针（应被拒）+ HTTP cancel 级联
+ *                                                                       → scenarios/04
+ *  s5 HTTP 恢复         USER_INPUT 等待后关闭 WS，经 HTTP resume 续跑至终态（连接无关性）
+ *                                                                       → scenarios/05
+ *  s6 WAIT 态互斥       等待期正确构造的并发探针被拒 + Planner 自定义 responseSchema 校验
+ *                                                                       → scenarios/06
+ *  t7 超时分类修复验证  timeoutSeconds=60 + sleep(90)：超时→Attempt 失败重试（非取消）、
+ *                       失败级联终态、HTTP Retry 复位（P1/P3/P8 修复）    → scenarios/07
+ * ────────────────────────────────────────────────────────────────────────────
+ * 驱动侧注意：并发探针 sessionId 必须放 WS 消息顶层；HTTP cancel 后的终态信号是
+ * plan_view_update 视图翻转（详见 README「驱动侧已知坑」）。
  */
 'use strict';
 const { PlanClient, httpPost, sleep, OUT_DIR, toolCallsOf, fs, path } = require('./driver');
@@ -212,7 +231,11 @@ async function scenarioS4() {
   const http = await httpPost('/react/plan_execution/cancel', { planExecutionId: midView.plan_execution_id });
   assert(http.status === 200 && http.json.errNo === 0, `HTTP cancel 成功: ${JSON.stringify(http.json).slice(0, 200)}`);
 
-  await c.waitUntil(cl => cl.done || cl.cancelled || cl.errorEvent, 300000, '取消后 run 结束');
+  // 注意: 上面的 WS 探针拒绝会设置 errorEvent，不能用它判定终态；取消的权威信号是视图状态翻转
+  await c.waitUntil(cl => {
+    const v = cl.latestView();
+    return v && ['CANCELLED', 'FAILED', 'SUCCEEDED'].includes(v.status);
+  }, 300000, '取消后视图终态');
   const finalView = c.latestView();
   assert(finalView.status === 'CANCELLED', `取消后终态 CANCELLED，实际 ${finalView.status}`);
   const notTerminal = finalView.steps.filter(s => !['CANCELLED', 'SUCCEEDED', 'SKIPPED', 'FAILED'].includes(s.status));
@@ -318,8 +341,59 @@ async function scenarioS6() {
   };
 }
 
+async function scenarioT7() {
+  const c = new PlanClient('T7');
+  await c.connect();
+  const t0 = Date.now();
+  c.startRun(runPayload(
+    '请制定两步计划：' +
+    '1）用 python_exec 执行一段 Python 脚本：time.sleep(90) 后打印 "sleep done"（这一步必须显式设置 timeoutSeconds=60，用于验证超时行为）；' +
+    '2）总结第一步结果。第一步的重试次数（maxAttempts）设为 2。'
+  ));
+
+  // 等待最终 FAILED（两次 60s 超时 + 规划 ≈ 3 分钟）
+  await c.waitUntil(cl => cl.done || cl.cancelled || cl.errorEvent, 600000, '超时链路收敛');
+  const finalView = c.latestView();
+  assert(finalView.status === 'FAILED', `P1: 超时应导致 FAILED（而非误判 CANCELLED），实际 ${finalView.status}`);
+  const sleepStep = finalView.steps.find(s => /sleep|python|exec/i.test(s.step_id + s.summary)) || finalView.steps[0];
+  const afterSteps = finalView.steps.filter(s => s.step_order > sleepStep.step_order);
+  assert(afterSteps.every(s => s.status === 'CANCELLED'), `P8: 后续步骤应级联 CANCELLED，实际 ${afterSteps.map(s => s.status).join(',')}`);
+
+  // P1/P3: attempt 错误应标注步骤超时，且存在自动重试的第 2 次 attempt
+  const detail = await httpPost('/react/plan_execution/detail', {
+    planExecutionId: finalView.plan_execution_id, sessionId: c.sessionId, callerKey: CALLER,
+  });
+  const attempts = (detail.json.data.attempts || []).filter(a => a.stepId === sleepStep.step_id).sort((a, b) => a.attemptNo - b.attemptNo);
+  assert(attempts.length >= 2, `D4: 超时后应自动新建 Attempt 重试，实际 ${attempts.length} 次`);
+  assert(attempts.slice(0, 2).every(a => /超时/.test(a.errorSummary || '')), `P1: attempt 错误应标注超时，实际 ${JSON.stringify(attempts.map(a => a.errorSummary))}`);
+  c.close();
+
+  // P8 兼容: HTTP Retry 复活计划（同步阻塞到下一个终态），派出后查中间态——
+  // 失败级联置 CANCELLED 的后续步骤应复位 PENDING
+  const retryPromise = httpPost('/react/plan_execution/retry', {
+    planExecutionId: finalView.plan_execution_id, stepId: sleepStep.step_id,
+  }).catch(e => ({ networkError: e.message }));
+  await sleep(12000);
+  const mid = await httpPost('/react/plan_execution/detail', {
+    planExecutionId: finalView.plan_execution_id, sessionId: c.sessionId, callerKey: CALLER,
+  });
+  const midSteps = mid.json.data.view.steps;
+  const resetStep = midSteps.find(s => s.step_order > sleepStep.step_order);
+  assert(resetStep && resetStep.status === 'PENDING', `Retry 应复位后续步骤为 PENDING，实际 ${resetStep && resetStep.status}`);
+
+  // 清理: 取消复跑中的计划，并等 retry 调用返回
+  await httpPost('/react/plan_execution/cancel', { planExecutionId: finalView.plan_execution_id });
+  await Promise.race([retryPromise, sleep(30000)]);
+  return {
+    name: 'T7-步骤超时分类修复验证(P1/P3/P8)',
+    pass: true, ms: Date.now() - t0, session: c.sessionId, plan: finalView.plan_execution_id,
+    steps: finalView.steps.map(s => ({ key: s.step_id, type: s.step_type, status: s.status })),
+    attemptErrors: attempts.map(a => (a.errorSummary || '').slice(0, 60)),
+  };
+}
+
 const SCENARIOS = {
-  s1: scenarioS1, s2: scenarioS2, s3: scenarioS3, s4: scenarioS4, s5: scenarioS5, s6: scenarioS6,
+  s1: scenarioS1, s2: scenarioS2, s3: scenarioS3, s4: scenarioS4, s5: scenarioS5, s6: scenarioS6, t7: scenarioT7,
 };
 
 async function main() {

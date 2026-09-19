@@ -86,6 +86,9 @@ func RunWithClientReaderContext(
 
 func failExecution(ctx *gin.Context, prepared *reactService.PreparedExternalRun, execution *model.PlanExecution, emitter *runtimeEmitter, code string, cause error) error {
 	summary := compactText(cause.Error(), 1600)
+	// 与取消级联（D3）同理：FAILED 终态后不允许残留 PENDING 步骤，
+	// 否则公开视图会出现"已失败但还有待执行步骤"的矛盾状态；手工 Retry 会把这些步骤一并复位。
+	_ = cancelPendingSteps(ctx, execution, "Plan 失败，后续步骤未执行")
 	_ = setExecutionStatus(ctx, execution, model.PlanExecutionStatusFailed, code, summary, true)
 	_ = reactService.MarkExternalRunState(ctx, prepared, model.ReactRunStateError, summary)
 	_ = emitter.emitView(execution)

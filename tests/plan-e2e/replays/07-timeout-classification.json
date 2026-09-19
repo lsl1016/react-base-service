@@ -1,0 +1,110 @@
+{
+ "exportedAt": "2026-09-19T13:35:00.779Z",
+ "scenario": "T7 步骤超时分类（timeoutSeconds=60 + sleep90，验证 P1/P3/P8 修复）",
+ "baseline": "修复后复测",
+ "planExecutionId": "plan_exec_03588727b41c4098a826a162b5c8b28d",
+ "sessionId": "session_da522769f3064d249d8cc8fedb76dce7",
+ "expectedOutcome": "CANCELLED（验证完成后清理取消）",
+ "replay": {
+  "sessionId": "session_da522769f3064d249d8cc8fedb76dce7",
+  "title": "请制定两步计划：1）用 python_e...",
+  "events": [
+   {
+    "type": "run",
+    "seq": 1,
+    "runId": "run_8d3d0b58f6af497ca611a0a78987a4ce",
+    "sessionId": "session_da522769f3064d249d8cc8fedb76dce7",
+    "payload": {
+     "callerKey": "demo-app",
+     "routeValues": [],
+     "type": "chat",
+     "userPrompt": "请制定两步计划：1）用 python_exec 执行一段 Python 脚本：time.sleep(90) 后打印 \"sleep done\"（这一步必须显式设置 timeoutSeconds=60，用于验证超时行为）；2）总结第一步结果。第一步的重试次数（maxAttempts）设为 2。",
+     "controlContext": null,
+     "llmContext": null,
+     "modelKey": "claude",
+     "modelVersion": "glm-4.6",
+     "modelHash": "",
+     "maxSteps": 500
+    },
+    "createdAt": "2026-09-19 21:16:22"
+   },
+   {
+    "type": "cancelled",
+    "seq": 2,
+    "runId": "run_8d3d0b58f6af497ca611a0a78987a4ce",
+    "sessionId": "session_da522769f3064d249d8cc8fedb76dce7",
+    "payload": {
+     "ok": true,
+     "reason": "本次运行已被用户取消",
+     "contextUsedTokens": 1345,
+     "maxContextTokens": 170000
+    },
+    "createdAt": "2026-09-19 21:19:07"
+   },
+   {
+    "type": "plan_view_update",
+    "seq": 3,
+    "runId": "run_8d3d0b58f6af497ca611a0a78987a4ce",
+    "sessionId": "session_da522769f3064d249d8cc8fedb76dce7",
+    "payload": {
+     "planExecutionId": "plan_exec_03588727b41c4098a826a162b5c8b28d",
+     "view": {
+      "plan_execution_id": "plan_exec_03588727b41c4098a826a162b5c8b28d",
+      "status": "CANCELLED",
+      "summary": "Python 脚本 90 秒休眠超时验证与结果总结",
+      "steps": [
+       {
+        "step_id": "plan_step_e1e6abb8d59b4c118d67a76612580333",
+        "step_order": 1,
+        "step_name": "执行 Python 睡眠脚本（60 秒超时验证）",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "步骤已取消",
+        "step_result_ref": {
+         "plan_execution_id": "plan_exec_03588727b41c4098a826a162b5c8b28d",
+         "plan_version_id": "plan_ver_cfdf2231b1af4c10b97b3ccf49aecf0a",
+         "step_id": "plan_step_e1e6abb8d59b4c118d67a76612580333",
+         "step_attempt_id": "plan_attempt_b58cf691557b435ab938f0b0b0f95e64",
+         "step_result_id": "plan_result_dd9a001fd1664366b634dd8c9a86c7fe"
+        }
+       },
+       {
+        "step_id": "plan_step_de74ddeb5951410bb7579b81fa80f147",
+        "step_order": 2,
+        "step_name": "总结第一步执行结果",
+        "step_type": "AGENT",
+        "required": true,
+        "status": "CANCELLED",
+        "summary": "用户取消了 Plan"
+       }
+      ],
+      "current_step": {
+       "step_id": "plan_step_e1e6abb8d59b4c118d67a76612580333",
+       "step_order": 1,
+       "step_name": "执行 Python 睡眠脚本（60 秒超时验证）",
+       "step_type": "AGENT",
+       "required": true,
+       "status": "CANCELLED",
+       "summary": "步骤已取消",
+       "step_result_ref": {
+        "plan_execution_id": "plan_exec_03588727b41c4098a826a162b5c8b28d",
+        "plan_version_id": "plan_ver_cfdf2231b1af4c10b97b3ccf49aecf0a",
+        "step_id": "plan_step_e1e6abb8d59b4c118d67a76612580333",
+        "step_attempt_id": "plan_attempt_b58cf691557b435ab938f0b0b0f95e64",
+        "step_result_id": "plan_result_dd9a001fd1664366b634dd8c9a86c7fe"
+       }
+      },
+      "error": {
+       "code": "cancelled",
+       "summary": "用户取消了 Plan"
+      },
+      "can_resume": false,
+      "updated_at": "2026-09-19T21:19:07+08:00"
+     }
+    },
+    "createdAt": "2026-09-19T21:16:22+08:00"
+   }
+  ]
+ }
+}
