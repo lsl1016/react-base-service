@@ -170,6 +170,50 @@ func ListMCPServerTools(ctx *gin.Context, serverName string) ([]Tool, error) {
 	return matched, nil
 }
 
+// OfflineMCPServerTools 把一个 MCP 服务器同步进注册表的工具标记停用（status=0，不软删：
+// 重新连接成功后下次同步会自动恢复启用，行保留供管理面审计）。
+//   - callerKey 为空 = 全部 caller 名下的副本（连接检测失败，整台服务器失联下线）；
+//     非空 = 仅该 caller 名下（同步时清理该作用域内服务器端已下架的工具）。
+//   - activeNames 非空时只停用名单外的工具（工具名 <server>_<tool>，刷新同步用）；
+//     为空 = 匹配到的全部停用。
+//   - 已停用行与软删除行不受影响。返回本次停用的行数。
+func OfflineMCPServerTools(ctx *gin.Context, serverName, callerKey string, activeNames []string) (int64, error) {
+	tools, err := ListToolsByType(ctx, "mcp")
+	if err != nil {
+		return 0, err
+	}
+	active := make(map[string]bool, len(activeNames))
+	for _, name := range activeNames {
+		active[name] = true
+	}
+	offlined := int64(0)
+	for _, tool := range tools {
+		if tool.Status == 0 {
+			continue
+		}
+		if callerKey != "" && tool.CallerKey != callerKey {
+			continue
+		}
+		var cfg struct {
+			MCPServer string `json:"mcpServer"`
+		}
+		if err := json.Unmarshal([]byte(tool.Config), &cfg); err != nil || cfg.MCPServer != serverName {
+			continue
+		}
+		if active[tool.Name] {
+			continue
+		}
+		if err := UpdateToolByToolID(ctx, tool.ToolID, map[string]interface{}{
+			"status":     0,
+			"updated_by": "mcp-sync",
+		}); err != nil {
+			return offlined, err
+		}
+		offlined++
+	}
+	return offlined, nil
+}
+
 // FindToolsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 tool；
 // 同时并入「默认作用域」（caller_key=default）下命中的工具，对全部 caller 生效。
 func FindToolsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Tool, error) {

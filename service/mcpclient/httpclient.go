@@ -100,9 +100,10 @@ func (c *HTTPClient) ListTools() ([]RegistryTool, error) {
 		}
 		var payload struct {
 			Tools []struct {
-				Name        string         `json:"name"`
-				Description string         `json:"description"`
-				InputSchema map[string]any `json:"inputSchema"`
+				Name         string         `json:"name"`
+				Description  string         `json:"description"`
+				InputSchema  map[string]any `json:"inputSchema"`
+				OutputSchema map[string]any `json:"outputSchema"`
 			} `json:"tools"`
 		}
 		if err := json.Unmarshal(result, &payload); err != nil {
@@ -113,10 +114,11 @@ func (c *HTTPClient) ListTools() ([]RegistryTool, error) {
 				continue
 			}
 			tools = append(tools, RegistryTool{
-				Server:      c.name,
-				Tool:        tool.Name,
-				Description: tool.Description,
-				InputSchema: tool.InputSchema,
+				Server:       c.name,
+				Tool:         tool.Name,
+				Description:  tool.Description,
+				InputSchema:  tool.InputSchema,
+				OutputSchema: tool.OutputSchema,
 			})
 		}
 		return nil

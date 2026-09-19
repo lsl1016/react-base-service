@@ -931,7 +931,7 @@ const management = {
     });
     $('management-add').addEventListener('click', () => this.openCreate());
     $('management-import').addEventListener('click', () => this.openImport());
-    $('management-refresh').addEventListener('click', () => this.reload());
+    $('management-refresh').addEventListener('click', () => this.refresh());
     $('management-modal-close').addEventListener('click', () => this.closeModal());
     $('management-modal-cancel').addEventListener('click', () => this.closeModal());
     $('management-modal-save').addEventListener('click', () => this.save());
@@ -1010,6 +1010,32 @@ const management = {
     } catch (error) {
       this.items = [];
       this.setState(error.message || '加载失败', true);
+      this.renderTable();
+    }
+  },
+  // 刷新按钮：MCP 连接页先做一轮重连 + 工具清单同步（描述/入参出参 schema/上下线状态
+  // 落库，失联连接的工具会被下线），其余页保持纯列表重拉。
+  async refresh() {
+    if (this.type !== 'mcp') {
+      this.reload();
+      return;
+    }
+    this.setState('正在重新检测 MCP 连接并同步工具清单...');
+    try {
+      const summary = await post('/react/mcp/refresh', { callerKey: this.config().callerKey });
+      await this.reload();
+      const entries = Array.isArray(summary?.results) ? summary.results : [];
+      const failed = entries.filter((item) => item.status === 'disconnected');
+      const skipped = entries.filter((item) => item.status === 'skipped').length;
+      const suffix = skipped ? `，${skipped} 个已停用跳过` : '';
+      if (!failed.length) {
+        this.setState(`刷新完成：${summary?.connected ?? 0}/${summary?.checked ?? 0} 个连接正常${suffix}`);
+        return;
+      }
+      const detail = failed.map((item) => `${item.name}：${shortText(item.message || '连接失败', 80)}`).join('；');
+      this.setState(`刷新完成：${failed.length} 个连接失联（${detail}），其工具已下线${suffix}`, true);
+    } catch (error) {
+      this.setState(error.message || '刷新失败', true);
       this.renderTable();
     }
   },
@@ -1350,7 +1376,11 @@ const management = {
       this.setState(`${item.name} 连接成功，已同步 ${result?.toolCount ?? 0} 个工具`);
       this.renderTable();
     } catch (error) {
-      this.setState(error.message || '连接失败', true);
+      // 连接失败时工具已被后端下线，重拉列表让卡片状态与工具数立即反映现状。
+      await this.reload();
+      this.expandedMcp.add(item.serverId);
+      this.setState(`${error.message || '连接失败'}（该连接的工具已下线，恢复连接后重新测试即可）`, true);
+      this.renderTable();
     }
   },
   itemFromEvent(event) {

@@ -42,6 +42,12 @@ func TestSDKClient_ListTools(t *testing.T) {
 	if tools[0].InputSchema == nil || tools[0].InputSchema["type"] != "object" {
 		t.Fatalf("inputSchema not normalized: %+v", tools[0].InputSchema)
 	}
+	if tools[0].OutputSchema == nil || tools[0].OutputSchema["type"] != "object" {
+		t.Fatalf("outputSchema not normalized: %+v", tools[0].OutputSchema)
+	}
+	if tools[1].OutputSchema != nil {
+		t.Fatalf("服务器未声明 outputSchema 时应为 nil: %+v", tools[1].OutputSchema)
+	}
 	if sessionSeenBy(srv) != "sess-fixed-1234" {
 		t.Fatalf("业务请求未携带 initialize 签发的会话头: %q", sessionSeenBy(srv))
 	}

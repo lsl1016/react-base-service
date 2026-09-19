@@ -37,14 +37,21 @@
 ```
 服务启动 → 拉起子进程 + initialize → tools/list
         → upsert tblLlmTool（toolId=mcp_<server>_<tool>，toolType=mcp，
-          config={mcpServer,mcpTool,inputSchema}，挂 caller_key，route_values="[]"）
+          config={mcpServer,mcpTool,inputSchema[,outputSchema]}，挂 caller_key，route_values="[]"）
 模型侧 → 工具索引摘要（system 前缀）→ get_tool 加载参数 → execute_tool
         → 路由到 tools/call → 文本内容回填（大结果自动走 resultRef 分片）
 ```
 
 边界说明：
 
-- **同步时机是启动时一次性**：运行中服务器新增/变更工具不会自动重同步（重启服务触发；也可手动删改注册表行）；
+- **同步时机是启动时一次性 + 手动触发**：运行中服务器新增/变更工具不会自动重同步，可通过
+  「MCP 连接」面板的**刷新**按钮（`/mcp/refresh`，逐连接重连并同步）、单连接「测试连接」
+  （`/mcp/connect`）或重启服务触发；
+- 每次同步把 `tools/list` 的最新结果落库：更新工具描述与入参/出参 schema（`outputSchema`
+  仅在服务器声明时写入 config），服务器端已下架的工具标记停用（`status=0`，不软删，
+  重新出现后下次同步自动恢复）；
+- **连接检测失败即整体下线**：刷新/测试连接/启动装配任一环节失败，该服务器全部注册工具
+  标记停用（`status=0`），不再进入会话工具索引；恢复连接后重新检测即自动恢复；
 - 工具在注册表中就是普通 Business Tool 行，**可被工具管理面板启停/修改/删除**，也受用户白名单（ToolUserPolicy）约束；
 - 同步失败只记日志，不阻断服务启动。
 
@@ -118,12 +125,17 @@ playground 右侧「MCP 连接」面板提供同能力的页面操作：
 | `POST /react-base-service/react/mcp/create` | 新增：`rawConfig` 粘贴标准 mcpServers JSON（`{url, headers}`，可一次多条）或结构化字段（`name/kind/endpoint/headers/timeoutMs/boundCallers`） |
 | `POST /react-base-service/react/mcp/update` | 更新端点/请求头/超时/描述/绑定 caller/启停；更新后自动重连重同步，停用会下线其全部注册工具 |
 | `POST /react-base-service/react/mcp/delete` | 删除连接并清理其注册工具 |
-| `POST /react-base-service/react/mcp/connect` | 连接测试：拉起客户端 + tools/list + 写回检测结果 |
+| `POST /react-base-service/react/mcp/connect` | 连接测试：拉起客户端 + tools/list + 写回检测结果；失败时该连接全部注册工具下线 |
+| `POST /react-base-service/react/mcp/refresh` | 批量刷新：对 caller 下全部启用连接（含 yaml 静态声明）逐台重连重同步，工具描述/入参出参 schema/上下线状态落库，返回逐台结果摘要 |
 
 行为与边界：
 
 - 工具同步：连接成功后 `tools/list` 结果 upsert 进 `tblLlmTool`（`tool_type=mcp`，toolId=`mcp_<server>_<tool>`），
   ReAct 运行时经既有 get_tool/execute_tool 两段式加载使用，引擎无感知；
+- **刷新语义**（「MCP 连接」面板刷新按钮 → `/mcp/refresh`）：逐台重连并把工具的描述、入参/出参
+  schema 与上下线状态写回 `tblLlmTool`——连接正常的恢复/更新工具行；失联的整台下线
+  （`status=0`）；服务器端已下架的单独下线。会话工具索引只取 `status=1`，因此失联服务器的
+  工具不会再被加载；
 - 请求头：`headers`（如 `Authorization: Bearer ...`）附加到每个 HTTP 请求，但不允许覆盖协议自身管理的头
   （Host/Content-Type/Accept/Mcp-Session-Id）；上限 4KB；
 - SSRF：HTTP 端点仍走 `validateEndpoint` 校验（拒绝环回/私网/保留地址）；本机开发/演示环境可用

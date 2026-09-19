@@ -32,16 +32,23 @@ type RegistryTool struct {
 	Tool        string
 	Description string
 	InputSchema map[string]any
+	// OutputSchema 是服务器声明的结构化输出 schema（MCP 2025-06-18 起可选），无则为 nil。
+	OutputSchema map[string]any
 }
 
 // ToolConfigJSON 生成写入 tblLlmTool.config 的 JSON（tool_type=mcp）。
-// inputSchema 供 get_tool 校验与参数透出；mcpServer/mcpTool 供执行分发。
-func ToolConfigJSON(server, tool string, inputSchema map[string]any) (string, error) {
-	data, err := json.Marshal(map[string]any{
+// inputSchema 供 get_tool 校验与参数透出；outputSchema（如有）透出给模型理解返回结构；
+// mcpServer/mcpTool 供执行分发。
+func ToolConfigJSON(server, tool string, inputSchema, outputSchema map[string]any) (string, error) {
+	payload := map[string]any{
 		"mcpServer":   server,
 		"mcpTool":     tool,
 		"inputSchema": orEmptyObject(inputSchema),
-	})
+	}
+	if len(outputSchema) > 0 {
+		payload["outputSchema"] = outputSchema
+	}
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
@@ -85,15 +92,7 @@ func Bootstrap(engine *gin.Engine) {
 	}
 
 	for _, serverCfg := range mcpConf.Servers {
-		client, err := newServer(ServerConfig{
-			Name:         serverCfg.Name,
-			Kind:         serverCfg.Kind,
-			Env:          serverCfg.Env,
-			Endpoint:     serverCfg.Endpoint,
-			TimeoutMs:    serverCfg.TimeoutMs,
-			Headers:      serverCfg.Headers,
-			AllowPrivate: mcpConf.AllowPrivateEndpoint,
-		})
+		client, err := newServer(ConfServerConfig(serverCfg))
 		if err != nil {
 			zlog.Errorf(nil, "[MCP] 服务器配置无效: %v", err)
 			continue
@@ -119,7 +118,8 @@ func Bootstrap(engine *gin.Engine) {
 }
 
 // bootstrapDBServers 启动时按注册表记录拉起数据库登记的 MCP 连接。
-// 单条失败只记日志（last_check_* 字段会在下次「连接测试」时更新）。
+// 单条失败不影响其余连接；失败连接的全部注册工具标记停用并把失败原因写回 last_check_*，
+// 与「测试连接」/「刷新」的失败语义一致（失联服务器的工具不进入会话工具索引）。
 func bootstrapDBServers() {
 	if helpers.MysqlClientLLM == nil {
 		return
@@ -131,34 +131,8 @@ func bootstrapDBServers() {
 		return
 	}
 	for _, server := range servers {
-		cfg, err := McpServerConfig(server)
-		if err != nil {
-			zlog.Errorf(nil, "[MCP] 注册表记录 %s 配置无效: %v", server.Name, err)
-			continue
-		}
-		if _, err := EnsureServer(*cfg); err != nil {
-			zlog.Errorf(nil, "[MCP] 启动注册表连接 %s 失败: %v", server.Name, err)
-			continue
-		}
-		if _, err := SyncServerRegistry(server.CallerKey, server.Name); err != nil {
-			zlog.Errorf(nil, "[MCP] 同步注册表连接 %s 工具失败: %v", server.Name, err)
-		}
-		// 绑定 caller 的工具副本（toolId 带后缀）；caller 不存在/停用时跳过。
-		bound, err := model.ListMcpServerCallers(ctx, server.ServerID)
-		if err != nil {
-			zlog.Errorf(nil, "[MCP] 读取连接 %s 绑定 caller 失败: %v", server.Name, err)
-			continue
-		}
-		for _, callerKey := range bound {
-			if !model.IsReservedCallerKey(callerKey) {
-				caller, err := model.GetActiveCallerByKey(ctx, callerKey)
-				if err != nil || caller == nil {
-					continue
-				}
-			}
-			if _, err := SyncServerRegistryScoped(callerKey, server.Name, false); err != nil {
-				zlog.Errorf(nil, "[MCP] 同步连接 %s 到绑定 caller %s 失败: %v", server.Name, callerKey, err)
-			}
+		if ok, message := ConnectServer(ctx, server); !ok {
+			zlog.Errorf(nil, "[MCP] 启动注册表连接 %s 失败: %s", server.Name, message)
 		}
 	}
 	if len(servers) > 0 {
@@ -186,6 +160,111 @@ func McpServerConfig(server model.McpServer) (*ServerConfig, error) {
 		}
 	}
 	return &cfg, nil
+}
+
+// ConfServerConfig 把 yaml 静态声明转成客户端拉起配置。
+func ConfServerConfig(serverCfg conf.MCPServerConf) ServerConfig {
+	return ServerConfig{
+		Name:         serverCfg.Name,
+		Kind:         serverCfg.Kind,
+		Env:          serverCfg.Env,
+		Endpoint:     serverCfg.Endpoint,
+		TimeoutMs:    serverCfg.TimeoutMs,
+		Headers:      serverCfg.Headers,
+		AllowPrivate: conf.CustomConf.MCP.AllowPrivateEndpoint,
+	}
+}
+
+// last_check_status 取值：connected=最近一次连接成功；disconnected=最近一次失败；unknown=尚未检测。
+const (
+	CheckStatusConnected    = "connected"
+	CheckStatusDisconnected = "disconnected"
+	CheckStatusUnknown      = "unknown"
+)
+
+// ConnectionCallers 返回连接工具同步到的全部 caller：属主在首位，其后为绑定 caller（去重）。
+// 绑定 caller 不存在/已停用（且非保留作用域）由 ConnectServer 逐个跳过。
+func ConnectionCallers(ctx *gin.Context, server *model.McpServer) []string {
+	callers := []string{server.CallerKey}
+	bound, err := model.ListMcpServerCallers(ctx, server.ServerID)
+	if err != nil {
+		zlog.Errorf(ctx, "[MCP] 查询连接绑定 caller 失败: serverId=%s err=%v", server.ServerID, err)
+		return callers
+	}
+	seen := map[string]bool{server.CallerKey: true}
+	for _, key := range bound {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		callers = append(callers, key)
+	}
+	return callers
+}
+
+// OfflineServerTools 把一个服务器同步进注册表的全部工具标记停用（全部 caller 副本），
+// 供连接检测失败时下线，确保失联服务器的工具不再进入会话工具索引（FindToolsByCallerAndRoutes
+// 只取 status=1）。返回停用行数。
+func OfflineServerTools(ctx *gin.Context, serverName string) (int64, error) {
+	return model.OfflineMCPServerTools(ctx, serverName, "", nil)
+}
+
+// ConnectServer 对一条注册表连接执行完整连接流程：EnsureServer 拉起（或同名替换）→
+// 把 tools/list 结果同步到属主与全部绑定 caller 名下（更新描述与入参/出参 schema、恢复
+// 停用行、下线服务器端已下架的工具）→ 结果写回 last_check_*。
+// 任一步失败即整体判失联：该服务器全部注册工具标记停用（status=0，不软删，恢复连接后
+// 下次同步自动恢复），避免「服务器连不上但工具仍进会话」。
+// 返回（是否连接成功, 展示消息：成功提示或失败原因）。
+func ConnectServer(ctx *gin.Context, server model.McpServer) (bool, string) {
+	fail := func(err error) (bool, string) {
+		if offlined, offErr := OfflineServerTools(ctx, server.Name); offErr != nil {
+			zlog.Errorf(ctx, "[MCP] 失联下线 %s 注册工具失败: %v", server.Name, offErr)
+		} else if offlined > 0 {
+			zlog.Infof(ctx, "[MCP] 连接 %s 失败，已下线其注册工具 %d 个", server.Name, offlined)
+		}
+		message := err.Error()
+		if len(message) > 500 {
+			message = message[:500]
+		}
+		recordCheckResult(ctx, server.ServerID, CheckStatusDisconnected, message)
+		return false, message
+	}
+	cfg, err := McpServerConfig(server)
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := EnsureServer(*cfg); err != nil {
+		return fail(err)
+	}
+	// 属主用历史 toolId 格式，绑定 caller 用带后缀的副本；绑定 caller 不存在/停用则静默跳过。
+	for i, callerKey := range ConnectionCallers(ctx, &server) {
+		if i > 0 && !model.IsReservedCallerKey(callerKey) {
+			caller, err := model.GetActiveCallerByKey(ctx, callerKey)
+			if err != nil || caller == nil {
+				continue
+			}
+		}
+		if _, err := SyncServerRegistryScoped(callerKey, server.Name, i == 0); err != nil {
+			return fail(err)
+		}
+	}
+	message := "连接成功，工具清单已同步"
+	recordCheckResult(ctx, server.ServerID, CheckStatusConnected, message)
+	return true, message
+}
+
+// recordCheckResult 把连接检测结果写回 tblLlmMcpServer.last_check_*（消息截 500 字）。
+func recordCheckResult(ctx *gin.Context, serverID, status, message string) {
+	if len(message) > 500 {
+		message = message[:500]
+	}
+	if err := model.UpdateMcpServerByServerID(ctx, serverID, map[string]interface{}{
+		"last_check_status":  status,
+		"last_check_message": message,
+		"last_check_at":      time.Now(),
+	}); err != nil {
+		zlog.Errorf(ctx, "[MCP] 写回连接检测结果失败: serverId=%s err=%v", serverID, err)
+	}
 }
 
 // EnsureServer 按配置拉起（或替换）一个 MCP 服务器客户端并注册进 Manager。
@@ -289,9 +368,27 @@ func SyncRegistry(callerKey string) error {
 			}
 			synced++
 		}
+		offlineStaleTools(ctx, callerKey, client.Name(), tools)
 	}
 	zlog.Infof(nil, "[MCP] 注册表同步完成: callerKey=%s, 共 %d 个 MCP 工具", callerKey, synced)
 	return nil
+}
+
+// offlineStaleTools 把该 caller 名下、不在服务器当前清单内的注册工具标记停用
+// （服务器端已下架/改名；status=0，不软删，重新出现在清单时下次同步自动恢复）。
+func offlineStaleTools(ctx *gin.Context, callerKey, serverName string, tools []RegistryTool) {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, fmt.Sprintf("%s_%s", serverName, tool.Tool))
+	}
+	offlined, err := model.OfflineMCPServerTools(ctx, serverName, callerKey, names)
+	if err != nil {
+		zlog.Errorf(ctx, "[MCP] 清理 %s 在 caller %s 名下失效工具失败: %v", serverName, callerKey, err)
+		return
+	}
+	if offlined > 0 {
+		zlog.Infof(ctx, "[MCP] %s 在 caller %s 名下 %d 个服务器端已下架工具标记停用", serverName, callerKey, offlined)
+	}
 }
 
 // SyncServerRegistry 同步单个服务器的工具清单进 tblLlmTool（属主 caller，toolId 历史格式），返回同步的工具数。
@@ -319,6 +416,7 @@ func SyncServerRegistryScoped(callerKey, serverName string, primary bool) (int, 
 			continue
 		}
 	}
+	offlineStaleTools(ctx, callerKey, client.Name(), tools)
 	return len(tools), nil
 }
 
@@ -364,7 +462,7 @@ func upsertRegistryTool(ctx *gin.Context, callerKey, server string, tool Registr
 	if description == "" {
 		description = fmt.Sprintf("MCP tool %s/%s", server, tool.Tool)
 	}
-	configJSON, err := ToolConfigJSON(server, tool.Tool, tool.InputSchema)
+	configJSON, err := ToolConfigJSON(server, tool.Tool, tool.InputSchema, tool.OutputSchema)
 	if err != nil {
 		return err
 	}

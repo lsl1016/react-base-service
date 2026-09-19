@@ -66,10 +66,11 @@ func (c *SDKClient) ListTools() ([]RegistryTool, error) {
 				continue
 			}
 			tools = append(tools, RegistryTool{
-				Server:      c.name,
-				Tool:        tool.Name,
-				Description: tool.Description,
-				InputSchema: normalizeSDKSchema(tool.InputSchema),
+				Server:       c.name,
+				Tool:         tool.Name,
+				Description:  tool.Description,
+				InputSchema:  normalizeSDKSchema(tool.InputSchema),
+				OutputSchema: normalizeSDKOutputSchema(tool.OutputSchema),
 			})
 		}
 		return nil
@@ -146,6 +147,24 @@ func normalizeSDKSchema(schema any) map[string]any {
 	var parsed map[string]any
 	if err := json.Unmarshal(data, &parsed); err != nil || parsed == nil {
 		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	return parsed
+}
+
+// normalizeSDKOutputSchema 把 SDK 返回的 OutputSchema（any）转成 map；
+// 服务器未声明输出 schema 时返回 nil（config 不写入 outputSchema 字段，
+// 与手写客户端解析缺省值的行为一致）。
+func normalizeSDKOutputSchema(schema any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return nil
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil || len(parsed) == 0 {
+		return nil
 	}
 	return parsed
 }

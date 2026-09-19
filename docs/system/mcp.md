@@ -36,6 +36,7 @@ MCP 模块登记并管理外部 MCP 服务器连接，把服务器工具清单�
 | `/react-base-service/react/mcp/update` | POST | 更新端点/请求头/超时/绑定 caller/启停 | `react.UpdateMcpServer` |
 | `/react-base-service/react/mcp/delete` | POST | 删除连接并清理注册表工具 | `react.DeleteMcpServer` |
 | `/react-base-service/react/mcp/connect` | POST | 连接测试并同步工具清单 | `react.ConnectMcpServer` |
+| `/react-base-service/react/mcp/refresh` | POST | 批量刷新：逐台重连重同步，工具描述/入参出参 schema/上下线状态落库 | `react.RefreshMcpServers` |
 
 ## 3. 核心逻辑
 
@@ -49,11 +50,13 @@ MCP 模块登记并管理外部 MCP 服务器连接，把服务器工具清单�
 
 ### 3.3 connect 语义与工具同步
 
-`applyMcpConnect` 是统一的"连接"动作：`EnsureServer` 拉起（或同名替换并停旧客户端）→ `SyncServerRegistryScoped` 把 `tools/list` 结果 upsert 进 `tblLlmTool`（属主 toolId=`mcp_<server>_<tool>`，绑定 caller 追加 `__<callerKey>` 后缀避开全局唯一键，工具名 `<server>_<tool>` 不变，软删行复活）→ 结果写回 `last_check_status`/`last_check_message`（截 500 字）/`last_check_at`。触发时机：create（`status=1` 时）、update（`status=1` 时重连；停用则 `RemoveServer` + `RemoveRegistryTools` 清空全部工具副本并标记 `unknown`）、connect 显式测试（停用态拒绝）、服务启动 `Bootstrap`（先 yaml servers，再 DB 启用行，单条失败只记日志）。update 中 `boundCallers` 全量替换：解绑 caller 的工具副本立即清理，不论连接启停。delete：`RemoveServer` + `RemoveRegistryTools`（全部 caller）+ 软删连接记录。
+`mcpclient.ConnectServer` 是统一的"连接"动作：`EnsureServer` 拉起（或同名替换并停旧客户端）→ `SyncServerRegistryScoped` 把 `tools/list` 结果 upsert 进 `tblLlmTool`（属主 toolId=`mcp_<server>_<tool>`，绑定 caller 追加 `__<callerKey>` 后缀避开全局唯一键，工具名 `<server>_<tool>` 不变，软删行复活；config 更新 `description` 行与 `{mcpServer, mcpTool, inputSchema[, outputSchema]}`，出参 schema 仅在服务器声明时写入）→ 同步后把该 caller 名下不在服务器当前清单内的注册工具标记停用（服务器端已下架；`status=0`，重新出现后下次同步自动恢复）→ 结果写回 `last_check_status`/`last_check_message`（截 500 字）/`last_check_at`。**任一步失败即整体判失联**：该服务器全部注册工具（含绑定 caller 副本）标记停用并写回 `disconnected`——会话工具索引（`FindToolsByCallerAndRoutes`）只取 `status=1`，失联服务器的工具不再进入会话；恢复连接后重新检测即自动恢复启用。
+
+触发时机：create（`status=1` 时）、update（`status=1` 时重连；停用则 `RemoveServer` + `RemoveRegistryTools` 清空全部工具副本并标记 `unknown`）、connect 显式测试（停用态拒绝）、refresh 批量刷新（caller 下全部启用连接 + yaml 静态声明逐台重连，返回逐台结果摘要；停用连接跳过）、服务启动 `Bootstrap`（先 yaml servers，再 DB 启用行；单条失败下线其工具并写回失败原因，不影响其余连接）。update 中 `boundCallers` 全量替换：解绑 caller 的工具副本立即清理，不论连接启停。delete：`RemoveServer` + `RemoveRegistryTools`（全部 caller）+ 软删连接记录。
 
 ### 3.4 工具执行链路
 
-同步出的工具行就是普通 Business Tool（`route_values="[]"`、`config={mcpServer, mcpTool, inputSchema}`、`created_by=mcp-sync`），受工具管理面板启停与用户白名单（ToolUserPolicy）约束。引擎 `execute_tool` 调用 `service/tool` 的 `Runtime.Execute`：`tool_type=mcp` 或 config 含 `mcpServer` 时路由到 `mcpclient.Call`，超时取工具 config 的 `timeout_ms`（未配置用 60 秒）；`tools/call` 返回的 text 内容拼接回填，`isError` 转为错误。运行中服务器新增/变更工具不会自动重同步，需经 connect/update 触发或重启服务。
+同步出的工具行就是普通 Business Tool（`route_values="[]"`、`config={mcpServer, mcpTool, inputSchema[, outputSchema]}`、`created_by=mcp-sync`），受工具管理面板启停与用户白名单（ToolUserPolicy）约束。引擎 `execute_tool` 调用 `service/tool` 的 `Runtime.Execute`：`tool_type=mcp` 或 config 含 `mcpServer` 时路由到 `mcpclient.Call`，超时取工具 config 的 `timeout_ms`（未配置用 60 秒）；`tools/call` 返回的 text 内容拼接回填，`isError` 转为错误。运行中服务器新增/变更工具不会自动重同步，需经 refresh/connect/update 触发或重启服务。
 
 ## 4. 数据模型
 
@@ -74,4 +77,5 @@ yaml 静态声明位于 `mcp` 段（`conf/mount/custom.yaml`，容器版在 `dep
 
 | 版本 | 日期 | 修改人 | 变更说明 |
 |---|---|---|---|
+| v1.1 | 2026-09-19 | react-base-service 项目组 | 新增 `/mcp/refresh` 批量刷新；工具同步落库描述与入参/出参 schema；连接检测失败/服务器端下架的工具标记停用（status=0），不再进入会话工具索引 |
 | v1.0 | 2026-09-19 | react-base-service 项目组 | 从 main 分支代码建立 MCP 模块文档基线 |

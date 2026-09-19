@@ -80,7 +80,7 @@ func (s *mcpTestServer) handler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		writeJSON(w, map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{
 			"tools": []map[string]any{
-				{"name": "echo", "description": "回显输入", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []string{"text"}}},
+				{"name": "echo", "description": "回显输入", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []string{"text"}}, "outputSchema": map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}}},
 				{"name": "boom", "description": "总是失败", "inputSchema": map[string]any{"type": "object"}},
 			},
 		}})
@@ -129,6 +129,12 @@ func TestHTTPClient_ListTools(t *testing.T) {
 	}
 	if tools[0].InputSchema == nil || tools[0].InputSchema["type"] != "object" {
 		t.Fatalf("inputSchema not propagated: %+v", tools[0].InputSchema)
+	}
+	if tools[0].OutputSchema == nil || tools[0].OutputSchema["type"] != "object" {
+		t.Fatalf("outputSchema not propagated: %+v", tools[0].OutputSchema)
+	}
+	if tools[1].OutputSchema != nil {
+		t.Fatalf("服务器未声明 outputSchema 时应为 nil: %+v", tools[1].OutputSchema)
 	}
 	if sessionSeenBy(srv) != "sess-fixed-1234" {
 		t.Fatalf("tools/list 未携带 initialize 签发的会话头: %q", sessionSeenBy(srv))

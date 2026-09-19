@@ -85,6 +85,7 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/mcp/update", react.UpdateMcpServer)
 		reactGroup.POST("/mcp/delete", react.DeleteMcpServer)
 		reactGroup.POST("/mcp/connect", react.ConnectMcpServer)
+		reactGroup.POST("/mcp/refresh", react.RefreshMcpServers)
 		// Agent Bundle 插件包管理（P3：安装展开写入注册表、卸载回滚，见 controllers/http/react/bundle.go）
 		reactGroup.POST("/bundle/install", react.InstallBundle)
 		reactGroup.POST("/bundle/uninstall", react.UninstallBundle)
