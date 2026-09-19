@@ -26,9 +26,9 @@ import (
 	"react-base-service/components"
 	"react-base-service/components/metrics"
 	"react-base-service/components/params"
-	"react-base-service/components/route"
 	"react-base-service/conf"
 	"react-base-service/helpers"
+	agentService "react-base-service/service/agent"
 	model "react-base-service/models/llm"
 	"react-base-service/service/workspace"
 
@@ -66,8 +66,9 @@ func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 	for _, agent := range agents {
 		agentKeys = append(agentKeys, agent.AgentKey)
 		sb.WriteString(fmt.Sprintf("- agent_key: %s\n  name: %s\n  description: %s\n", agent.AgentKey, agent.Name, strings.TrimSpace(agent.Description)))
-		if tools := parseAgentStringList(agent.ToolsJSON); len(tools) > 0 {
-			sb.WriteString(fmt.Sprintf("  tools: %s\n", strings.Join(tools, ", ")))
+		policy := agentService.DefaultRuntime().Policy(agent)
+		if len(policy.ToolRefs) > 0 {
+			sb.WriteString(fmt.Sprintf("  tools: %s\n", strings.Join(policy.ToolRefs, ", ")))
 		}
 	}
 	return llm.ToolDefinition{
@@ -186,10 +187,8 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 		return nil, "", components.ErrorModelNotSupported.Sprintf(modelKey)
 	}
 
-	maxSteps := agent.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = cfg.DefaultMaxSteps
-	}
+	policy := s.services.agentResolver().Policy(agent)
+	maxSteps := policy.EffectiveMaxSteps(cfg.DefaultMaxSteps)
 
 	taskContent := task
 	if expect != "" {
@@ -205,7 +204,7 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 		ModelVersion: modelVersion,
 		MaxSteps:     maxSteps,
 	}
-	base, err := prepareRuntimeRequest(s.ctx, payload, s.sessionID)
+	base, err := prepareRuntimeRequestWithServices(s.ctx, payload, s.sessionID, s.services)
 	if err != nil {
 		return nil, "", err
 	}
@@ -215,8 +214,8 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	base.historyMessageRefs = nil
 	base.attachments = nil
 	base.systemPrompt = agent.SystemPrompt
-	base.toolsIndexSnapshotJSON = filterToolIndexSnapshot(base.toolsIndexSnapshotJSON, parseAgentStringList(agent.ToolsJSON))
-	base.skillsIndexSnapshotJSON = filterSkillIndexSnapshot(base.skillsIndexSnapshotJSON, parseAgentStringList(agent.SkillsJSON))
+	base.toolsIndexSnapshotJSON = policy.FilterToolIndexSnapshot(base.toolsIndexSnapshotJSON)
+	base.skillsIndexSnapshotJSON = policy.FilterSkillIndexSnapshot(base.skillsIndexSnapshotJSON)
 	base.memoryContext = ""
 	base.graphMemoryContext = ""
 	base.modelUserMessage = llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: taskContent}
@@ -229,10 +228,10 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	base.clientHub = s.req.clientHub // 子 run 的交互等待经同一上行消息分发器认领
 	// agent 级工具确认收紧（P2-3）：inherit/空 = 不收紧，confirm/confirm_risky 作为子 run
 	// 内全部服务端工具的权限下限（与工具级取更严者）。
-	base.agentPermissionMode = strings.TrimSpace(agent.PermissionMode)
+	base.agentPermissionMode = policy.PermissionMode
 	// 子代理预算（P3）：agent 定义的递归 token 上限，engine 每轮模型调用后检查，超限终止子 run
 	// 并经软错误通道回填父循环（OH max_budget_per_run 的 token 口径版）。
-	base.tokenBudget = agent.MaxTokensPerRun
+	base.tokenBudget = policy.MaxTokensPerRun
 
 	subRunID := generateRunID()
 	base.modelUserMessageRef = reactMessageRef{RunID: subRunID, MessageID: generateMessageID(), Seq: 1}
@@ -327,17 +326,15 @@ func (s *reactEngineState) findVisibleAgent(agentKey string) (model.Agent, bool)
 // resolveAgentForKey 实时查库解析 agent 定义（caller 作用域 + default 合并语义，与快照同源逻辑）：
 // 委派执行取最新配置，管理面板变更从下一次委派起生效。
 func (s *reactEngineState) resolveAgentForKey(agentKey string) (model.Agent, bool) {
-	agents, err := model.FindAgentsByCallerAndRoutes(s.ctx, s.req.payload.CallerKey, route.BuildRoutePrefixes(s.req.payload.RouteValues))
+	agent, err := s.services.agentResolver().Resolve(s.ctx, s.req.payload.CallerKey, s.req.payload.RouteValues, agentKey)
 	if err != nil {
 		zlog.Warnf(s.ctx, "[React.Delegate] 实时解析 agent 失败(回退 run 快照): runId=%s, agentKey=%s, err=%v", s.runID, agentKey, err)
 		return s.findVisibleAgent(agentKey)
 	}
-	for _, agent := range agents {
-		if agent.AgentKey == agentKey {
-			return agent, true
-		}
+	if agent == nil {
+		return model.Agent{}, false
 	}
-	return model.Agent{}, false
+	return *agent, true
 }
 
 // accumulateDelegatedTokens 把子 run 的 token 消耗（自身 total + 其 delegated 递归口径）
@@ -367,62 +364,4 @@ func (s *reactEngineState) visibleAgentKeys() []string {
 		keys = append(keys, agent.AgentKey)
 	}
 	return keys
-}
-
-// parseAgentStringList 解析 agent 定义中的 JSON 字符串数组（tools_json/skills_json）。
-func parseAgentStringList(raw string) []string {
-	var values []string
-	_ = json.Unmarshal([]byte(raw), &values)
-	if len(values) == 0 {
-		return nil
-	}
-	return values
-}
-
-// filterToolIndexSnapshot 按 agent 白名单过滤工具索引：白名单为空表示继承 caller 全部可见工具；
-// 非空时按 name/toolId 匹配（配置写哪个都行）。未知名字自然丢弃，运行期 get_tool 也查不到。
-func filterToolIndexSnapshot(snapshotJSON string, allowed []string) string {
-	if len(allowed) == 0 {
-		return snapshotJSON
-	}
-	var items []reactToolIndexItem
-	if err := json.Unmarshal([]byte(snapshotJSON), &items); err != nil {
-		return "[]"
-	}
-	allowedSet := make(map[string]bool, len(allowed))
-	for _, name := range allowed {
-		allowedSet[strings.TrimSpace(name)] = true
-	}
-	filtered := make([]reactToolIndexItem, 0, len(items))
-	for _, item := range items {
-		if allowedSet[item.Name] || allowedSet[item.ToolID] {
-			filtered = append(filtered, item)
-		}
-	}
-	data, _ := json.Marshal(filtered)
-	return string(data)
-}
-
-// filterSkillIndexSnapshot 按 agent 白名单过滤 Skill 索引：白名单为空不注入任何 Skill
-// （专家子 Agent 的行为由 system_prompt 主导），非空按 name/skillId 匹配。
-func filterSkillIndexSnapshot(snapshotJSON string, allowed []string) string {
-	if len(allowed) == 0 {
-		return "[]"
-	}
-	var items []reactSkillIndexItem
-	if err := json.Unmarshal([]byte(snapshotJSON), &items); err != nil {
-		return "[]"
-	}
-	allowedSet := make(map[string]bool, len(allowed))
-	for _, name := range allowed {
-		allowedSet[strings.TrimSpace(name)] = true
-	}
-	filtered := make([]reactSkillIndexItem, 0, len(items))
-	for _, item := range items {
-		if allowedSet[item.Name] || allowedSet[item.SkillID] {
-			filtered = append(filtered, item)
-		}
-	}
-	data, _ := json.Marshal(filtered)
-	return string(data)
 }

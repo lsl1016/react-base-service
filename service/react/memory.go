@@ -1,11 +1,8 @@
 package react
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
-	"slices"
-	"strings"
 
 	llm "react-base-service/api/llm"
 	"react-base-service/conf"
@@ -21,142 +18,37 @@ const (
 	memoryListMaxSize     = 50
 )
 
-// memoryScopeResolved 描述一次 run 可见的记忆空间与写入目标。
+// memoryScopeResolved 保留 ReAct 包内兼容视图；实际作用域解析由 service/memory 负责。
 type memoryScopeResolved struct {
-	owners      []model.MemoryOwner // 可见空间（caller 在前，caller_user 在后）
-	writeOwner  model.MemoryOwner   // memory_write 的落库目标
-	allowedKeys map[string]struct{} // 可见空间集合（OwnerScopeKey），read/list/write 权限校验用
+	owners      []model.MemoryOwner
+	writeOwner  model.MemoryOwner
+	allowedKeys map[string]struct{}
 }
 
-// resolveMemoryScope 解析当前 run 的记忆作用域：caller 级做公共底座，user 级（启用时）为写入目标。
 func resolveMemoryScope(callerKey, userName string, allowUserScope bool) memoryScopeResolved {
-	scope := memoryScopeResolved{
-		owners:      []model.MemoryOwner{model.BuildCallerMemoryOwner(callerKey)},
-		allowedKeys: make(map[string]struct{}, 2),
+	scope := memoryService.ResolveRuntimeScope(callerKey, userName, allowUserScope)
+	return memoryScopeResolved{
+		owners:      scope.Owners,
+		writeOwner:  scope.WriteOwner,
+		allowedKeys: scope.AllowedKeys,
 	}
-	scope.writeOwner = scope.owners[0]
-	scope.allowedKeys[memoryOwnerKey(model.BuildCallerMemoryOwner(callerKey))] = struct{}{}
-	if allowUserScope {
-		userOwner := model.BuildCallerUserMemoryOwner(callerKey, userName)
-		scope.owners = append(scope.owners, userOwner)
-		scope.writeOwner = userOwner
-		scope.allowedKeys[memoryOwnerKey(userOwner)] = struct{}{}
-	}
-	return scope
 }
 
 func memoryOwnerKey(owner model.MemoryOwner) string {
 	return memoryService.OwnerScopeKey(owner.OwnerType, owner.OwnerKey)
 }
 
-// mergeMemoryItems 合并多空间条目：同 itemKey 时 caller_user 恒覆盖 caller（按 owner 优先级而非更新时间），
-// 结果按更新时间倒序输出。
 func mergeMemoryItems(items []model.MemoryItem) []model.MemoryItem {
-	slices.SortStableFunc(items, func(a, b model.MemoryItem) int {
-		return cmp.Compare(memoryOwnerPriority(a.OwnerType), memoryOwnerPriority(b.OwnerType))
-	})
-	merged := make([]model.MemoryItem, 0, len(items))
-	indexByKey := make(map[string]int, len(items))
-	for _, item := range items {
-		key := item.ItemKey
-		if pos, ok := indexByKey[key]; ok {
-			merged[pos] = item
-			continue
-		}
-		indexByKey[key] = len(merged)
-		merged = append(merged, item)
-	}
-	slices.SortStableFunc(merged, func(a, b model.MemoryItem) int {
-		return b.UpdatedAt.Compare(a.UpdatedAt)
-	})
-	return merged
+	return memoryService.MergeRuntimeItems(items)
 }
 
-// memoryOwnerPriority owner 覆盖优先级：数值大的覆盖小的（caller_user > caller）。
-func memoryOwnerPriority(ownerType string) int {
-	if ownerType == model.MemoryOwnerTypeCallerUser {
-		return 1
-	}
-	return 0
-}
-
-// splitMemoryLayers 按层级拆分条目。
-func splitMemoryLayers(items []model.MemoryItem) (resident, detached []model.MemoryItem) {
-	for _, item := range items {
-		if item.Layer == model.MemoryLayerResident {
-			resident = append(resident, item)
-		} else {
-			detached = append(detached, item)
-		}
-	}
-	return resident, detached
-}
-
-// renderMemoryContext 渲染注入 system 前缀的 <memory> 块：常驻层全文 + 按需层目录索引。
-// 无条目时返回空串（不注入，token 零增量）。
 func renderMemoryContext(items []model.MemoryItem, cfg conf.ReactMemoryConfig) string {
-	resident, detached := splitMemoryLayers(items)
-	if len(resident) == 0 && len(detached) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString("<memory>\n")
-	sb.WriteString("## 长期记忆（自动维护）\n\n")
-
-	if len(resident) > 0 {
-		sb.WriteString("### 常驻\n")
-		used := 0
-		truncated := 0
-		for _, item := range resident {
-			line := fmt.Sprintf("- [%s] %s\n", item.Title, strings.TrimSpace(item.Content))
-			if used+len([]rune(line)) > cfg.ResidentBudgetChars {
-				truncated++
-				continue
-			}
-			sb.WriteString(line)
-			used += len([]rune(line))
-		}
-		if truncated > 0 {
-			sb.WriteString(fmt.Sprintf("（另有 %d 条常驻记忆超出字符预算未注入，可用 memory_list 查看）\n", truncated))
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(detached) > 0 {
-		sb.WriteString("### 记忆目录（需要时用 memory_read 按 itemId 读取全文）\n")
-		listed := detached
-		overflow := 0
-		if len(listed) > cfg.IndexMaxItems {
-			overflow = len(listed) - cfg.IndexMaxItems
-			listed = listed[:cfg.IndexMaxItems]
-		}
-		for _, item := range listed {
-			description := strings.TrimSpace(item.Description)
-			if description == "" {
-				description = strings.TrimSpace(item.Content)
-			}
-			sb.WriteString(fmt.Sprintf("- #%d [%s] %s\n", item.ID, item.Title, description))
-		}
-		if overflow > 0 {
-			sb.WriteString(fmt.Sprintf("（另有 %d 条记忆未列出，可用 memory_list 检索）\n", overflow))
-		}
-	}
-
-	sb.WriteString("\n记忆使用纪律：以上内容自动维护、可能过时；与用户当前表述冲突时以用户为准，并用 memory_write 修正。\n")
-	sb.WriteString("</memory>")
-	return sb.String()
+	return memoryService.RenderRuntimeContext(items, cfg)
 }
 
-// buildMemoryContextForRun 在 run 初始化阶段装配记忆注入块：解析作用域 → 查询 → 合并 → 渲染。
+// buildMemoryContextForRun 保留 React Runtime 入口；查询/合并/渲染已下沉到 service/memory。
 func buildMemoryContextForRun(ctx *gin.Context, callerKey, userName string) (string, error) {
-	cfg := conf.GetReactRuntimeConfig().Memory
-	scope := resolveMemoryScope(callerKey, userName, cfg.MemoryAllowUserScope())
-	items, err := model.FindActiveMemoryItemsByOwners(ctx, scope.owners)
-	if err != nil {
-		return "", err
-	}
-	return renderMemoryContext(mergeMemoryItems(items), cfg), nil
+	return memoryService.BuildRuntimeContext(ctx, callerKey, userName, conf.GetReactRuntimeConfig().Memory)
 }
 
 // memoryToolDefinitions 声明三个记忆工具；仅在 memory.enabled 时注册。
@@ -242,68 +134,28 @@ func (s *reactEngineState) executeMemoryList(input json.RawMessage) (string, boo
 	var req memoryListInput
 	_ = json.Unmarshal(input, &req)
 
-	limit := req.Limit
-	if limit <= 0 {
-		limit = memoryListDefaultSize
-	}
-	if limit > memoryListMaxSize {
-		limit = memoryListMaxSize
-	}
-
 	cfg := conf.GetReactRuntimeConfig().Memory
-	scope := resolveMemoryScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
-	items, err := model.FindActiveMemoryItemsByOwners(s.ctx, scope.owners)
+	memoryRuntime := s.services.memoryExecutor()
+	scope := memoryRuntime.ResolveScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
+	items, err := memoryRuntime.List(s.ctx, scope, memoryService.RuntimeListOptions{
+		Layer:   req.Layer,
+		Tag:     req.Tag,
+		Keyword: req.Keyword,
+		Limit:   req.Limit,
+	})
 	if err != nil {
 		return "", true, err
 	}
-
-	layer := strings.TrimSpace(req.Layer)
-	if layer == "" {
-		layer = model.MemoryLayerDetached
-	}
-	tag := strings.TrimSpace(req.Tag)
-	keyword := strings.ToLower(strings.TrimSpace(req.Keyword))
-	views := make([]memoryListItemView, 0, limit)
-	for _, item := range mergeMemoryItems(items) {
-		if layer != "all" && item.Layer != layer {
-			continue
-		}
-		if tag != "" && !memoryItemHasTag(item.Tags, tag) {
-			continue
-		}
-		if keyword != "" && !memoryItemMatchesKeyword(item, keyword) {
-			continue
-		}
-		views = append(views, memoryListItemView{
-			ItemID:      item.ID,
-			Layer:       item.Layer,
-			Title:       item.Title,
-			Description: item.Description,
-			Tags:        item.Tags,
-			Source:      item.Source,
-			Version:     item.Version,
-			UpdatedAt:   item.UpdatedAt.Format("2006-01-02 15:04:05"),
-		})
-		if len(views) >= limit {
-			break
-		}
-	}
-	data, _ := json.Marshal(map[string]interface{}{"items": views, "total": len(views)})
+	data, _ := json.Marshal(map[string]interface{}{"items": items, "total": len(items)})
 	return string(data), false, nil
 }
 
 func memoryItemHasTag(tags, tag string) bool {
-	for _, part := range strings.Split(tags, ",") {
-		if strings.TrimSpace(part) == tag {
-			return true
-		}
-	}
-	return false
+	return memoryService.RuntimeItemHasTag(tags, tag)
 }
 
 func memoryItemMatchesKeyword(item model.MemoryItem, keyword string) bool {
-	haystack := strings.ToLower(item.Title + "\n" + item.Description + "\n" + item.Tags)
-	return strings.Contains(haystack, keyword)
+	return memoryService.RuntimeItemMatchesKeyword(item, keyword)
 }
 
 type memoryReadInput struct {
@@ -326,46 +178,15 @@ type memoryReadItemView struct {
 func (s *reactEngineState) executeMemoryRead(input json.RawMessage) (string, bool, error) {
 	var req memoryReadInput
 	_ = json.Unmarshal(input, &req)
-	if len(req.ItemIDs) == 0 {
-		return "", true, fmt.Errorf("itemIds 不能为空")
-	}
-	if len(req.ItemIDs) > memoryReadMaxItems {
-		return "", true, fmt.Errorf("一次最多读取 %d 条记忆", memoryReadMaxItems)
-	}
 
 	cfg := conf.GetReactRuntimeConfig().Memory
-	scope := resolveMemoryScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
-	views := make([]memoryReadItemView, 0, len(req.ItemIDs))
-	for _, rawID := range req.ItemIDs {
-		if rawID == 0 {
-			continue
-		}
-		item, err := model.GetActiveMemoryItemByID(s.ctx, uint(rawID))
-		if err != nil {
-			return "", true, err
-		}
-		if item == nil {
-			return "", true, fmt.Errorf("记忆 #%d 不存在或已删除", rawID)
-		}
-		if _, ok := scope.allowedKeys[memoryOwnerKey(model.MemoryOwner{OwnerType: item.OwnerType, OwnerKey: item.OwnerKey})]; !ok {
-			return "", true, fmt.Errorf("记忆 #%d 不在当前作用域内，无权读取", rawID)
-		}
-		views = append(views, memoryReadItemView{
-			ItemID:     item.ID,
-			Layer:      item.Layer,
-			Title:      item.Title,
-			Content:    item.Content,
-			Tags:       item.Tags,
-			Source:     item.Source,
-			Version:    item.Version,
-			LastReason: item.LastReason,
-			UpdatedAt:  item.UpdatedAt.Format("2006-01-02 15:04:05"),
-		})
+	memoryRuntime := s.services.memoryExecutor()
+	scope := memoryRuntime.ResolveScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
+	items, err := memoryRuntime.Read(s.ctx, scope, req.ItemIDs)
+	if err != nil {
+		return "", true, err
 	}
-	if len(views) == 0 {
-		return "", true, fmt.Errorf("itemIds 不能为空")
-	}
-	data, _ := json.Marshal(map[string]interface{}{"items": views})
+	data, _ := json.Marshal(map[string]interface{}{"items": items})
 	return string(data), false, nil
 }
 
@@ -396,8 +217,9 @@ func (s *reactEngineState) executeMemoryWrite(input json.RawMessage) (string, bo
 		return "", true, fmt.Errorf("本次整理的写操作已达上限（%d 次）：停止写入，直接进入总结阶段", cfg.Reflection.MaxWritesPerRun)
 	}
 
-	scope := resolveMemoryScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
-	result, err := memoryService.ApplyMutation(s.ctx, memoryService.MutationInput{
+	memoryRuntime := s.services.memoryExecutor()
+	scope := memoryRuntime.ResolveScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
+	result, err := memoryRuntime.ApplyMutation(s.ctx, memoryService.MutationInput{
 		Action:           req.Action,
 		ItemID:           uint(req.ItemID),
 		Version:          req.Version,
@@ -407,10 +229,10 @@ func (s *reactEngineState) executeMemoryWrite(input json.RawMessage) (string, bo
 		Description:      req.Description,
 		Tags:             req.Tags,
 		Reason:           req.Reason,
-		Owner:            scope.writeOwner,
+		Owner:            scope.WriteOwner,
 		Source:           memorySourceForRun(isReflection),
 		CreatedBy:        s.runID,
-		AllowedOwnerKeys: scope.allowedKeys,
+		AllowedOwnerKeys: scope.AllowedKeys,
 		RespectLocked:    isReflection,
 	})
 	if err != nil {

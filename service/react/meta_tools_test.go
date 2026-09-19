@@ -106,13 +106,13 @@ func TestToolDefinitionFingerprintDetectsSchemaChange(t *testing.T) {
 
 func TestBuildToolDefinitionsKeepsBusinessToolsOutOfProviderTools(t *testing.T) {
 	state := &reactEngineState{
-		activeTools: map[string]model.Tool{
+		reactEngineConversationState: reactEngineConversationState{activeTools: map[string]model.Tool{
 			"tool_demo": {
 				ToolID:      "tool_demo",
 				Name:        "演示业务工具",
 				Description: "演示业务工具描述",
 			},
-		},
+		}},
 	}
 
 	defs := state.buildToolDefinitions()
@@ -252,19 +252,23 @@ func TestReactMessageToChatMessageConvertsSessionHistory(t *testing.T) {
 func TestBuildInitialChatMessagesKeepsSystemFirstAndCurrentUserLast(t *testing.T) {
 	currentUserRef := reactMessageRef{RunID: "run_new", MessageID: "msg_new", Seq: 1}
 	req := &runtimeRequest{
-		systemPrompt: "当前系统提示",
-		historyMessages: []llm.ChatMessage{
-			{Role: model.ReactMessageRoleUser, Content: "第一轮用户"},
-			{Role: model.ReactMessageRoleAssistant, Content: "第一轮回答"},
-			{Role: model.ReactMessageRoleUser, Content: "历史摘要"},
+		runtimeRequestCapabilities: runtimeRequestCapabilities{
+			systemPrompt: "当前系统提示",
 		},
-		historyMessageRefs: [][]reactMessageRef{
-			{{RunID: "run_old", MessageID: "msg_1", Seq: 1}},
-			{{RunID: "run_old", MessageID: "msg_2", Seq: 2}},
-			{{RunID: "run_old", MessageID: "msg_3", Seq: 3}},
+		runtimeRequestConversation: runtimeRequestConversation{
+			historyMessages: []llm.ChatMessage{
+				{Role: model.ReactMessageRoleUser, Content: "第一轮用户"},
+				{Role: model.ReactMessageRoleAssistant, Content: "第一轮回答"},
+				{Role: model.ReactMessageRoleUser, Content: "历史摘要"},
+			},
+			historyMessageRefs: [][]reactMessageRef{
+				{{RunID: "run_old", MessageID: "msg_1", Seq: 1}},
+				{{RunID: "run_old", MessageID: "msg_2", Seq: 2}},
+				{{RunID: "run_old", MessageID: "msg_3", Seq: 3}},
+			},
+			modelUserMessage:    llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: "第二轮用户"},
+			modelUserMessageRef: currentUserRef,
 		},
-		modelUserMessage:    llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: "第二轮用户"},
-		modelUserMessageRef: currentUserRef,
 	}
 
 	messages, err := buildInitialChatMessages(nil, req, "run_new", "session_demo")
@@ -308,10 +312,14 @@ func TestBuildInitialChatMessagesInjectsSkillSummary(t *testing.T) {
 		},
 	})
 	req := &runtimeRequest{
-		systemPrompt:            "当前系统提示",
-		skillsIndexSnapshotJSON: skillsIndexSnapshotJSON,
-		modelUserMessage:        llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: "分析一下报表"},
-		modelUserMessageRef:     currentUserRef,
+		runtimeRequestCapabilities: runtimeRequestCapabilities{
+			systemPrompt:            "当前系统提示",
+			skillsIndexSnapshotJSON: skillsIndexSnapshotJSON,
+		},
+		runtimeRequestConversation: runtimeRequestConversation{
+			modelUserMessage:    llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: "分析一下报表"},
+			modelUserMessageRef: currentUserRef,
+		},
 	}
 
 	messages, err := buildInitialChatMessages(nil, req, "run_new", "session_demo")

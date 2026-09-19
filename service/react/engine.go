@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	llm "react-base-service/api/llm"
@@ -17,8 +15,6 @@ import (
 	"react-base-service/components/params"
 	"react-base-service/conf"
 	model "react-base-service/models/llm"
-	"react-base-service/service/mcpclient"
-	toolService "react-base-service/service/tool"
 
 	"github.com/gin-gonic/gin"
 	"react-base-service/golib/zlog"
@@ -40,58 +36,6 @@ const (
 )
 
 type ClientMessageReader func() (params.ReactWSMessage, error)
-
-type reactEngineState struct {
-	ctx            *gin.Context
-	runCtx         context.Context
-	req            *runtimeRequest
-	profile        ExecutionProfile
-	runID          string
-	sessionID      string
-	client         llm.LLMClient
-	currentModel   reactModelTarget
-	failoverModels []reactModelTarget
-	emitter        *runEventEmitter
-	readClient     ClientMessageReader
-	// clientHub 是外层 run 级上行消息分发器（req.clientHub 注入）；并行委派的多个等待者
-	// 经它按 toolUseId 认领消息，交互等待函数统一走 hub 而不是直读 readClient。
-	clientHub   *clientMessageHub
-	messages    []llm.ChatMessage
-	messageRefs [][]reactMessageRef
-	activeTools map[string]model.Tool
-	// prevToolDefFingerprint 记录上一个 run 已加载工具的 definition 指纹（callName → 指纹），
-	// 用于区分"工具从未加载"和"工具定义已变更需要重新 get_tool"两种未命中场景。
-	prevToolDefFingerprint map[string]string
-	loadedSkillID          map[string]bool
-	todoStateJSON          string
-	// memoryWrites 是当前 run 内成功执行的记忆写操作数，用于 reflection 的单次写入限额。
-	memoryWrites int
-	// pendingAsyncTasks 保存当前 Session 的未完结异步任务，仅在外层 ReAct 中注入模型上下文。
-	pendingAsyncTasks        []model.ReactAsyncTask
-	pendingAsyncTasksHasMore bool
-	inputTokens              int
-	outputTokens             int
-	runBaseInputTokens       int
-	runBaseOutputTokens      int
-	cacheReadTokens          int
-	cacheCreateTokens        int
-	runBaseCacheReadTokens   int
-	runBaseCacheCreateTokens int
-	// lastInputTokens 最近一次模型调用真实 input_tokens，用作压缩触发的主锚点。
-	// 仅当 streamResult.InputTokens > 0 时更新，避免流式中断的 0 覆盖。
-	lastInputTokens  int
-	lastOutputTokens int
-	// agentPath 是当前 run 的多 Agent 事件归属路径（外层 run 为空）；depth 是委派嵌套深度。
-	agentPath string
-	depth     int
-	// agentPermissionMode 是当前 run 的 agent 级工具确认收紧（来自 tblLlmAgent.permission_mode，
-	// 外层 run 为空=不收紧）：与工具级 permission_mode 取更严者（P2-3）。
-	agentPermissionMode string
-	// delegatedInput/OutputTokens 是委派子 run 消耗的内存镜像（DB 为权威口径），
-	// 并行委派并发累加用原子操作，done 事件透出给前端。
-	delegatedInputTokens  atomic.Int64
-	delegatedOutputTokens atomic.Int64
-}
 
 type reactClientToolCall struct {
 	index int
@@ -124,29 +68,7 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 		return err
 	}
 
-	state := &reactEngineState{
-		ctx:                    ctx,
-		runCtx:                 runCtx,
-		req:                    req,
-		profile:                executionProfileForRun(req),
-		runID:                  runID,
-		sessionID:              sessionID,
-		client:                 client,
-		currentModel:           currentModel,
-		failoverModels:         failoverModels,
-		emitter:                emitter,
-		readClient:             readClient,
-		messages:               messages,
-		messageRefs:            req.historyMessageRefs,
-		activeTools:            make(map[string]model.Tool),
-		prevToolDefFingerprint: make(map[string]string),
-		loadedSkillID:          make(map[string]bool),
-		todoStateJSON:          req.todoStateJSON,
-		agentPath:              req.agentPath,
-		depth:                  req.depth,
-		clientHub:              req.clientHub,
-		agentPermissionMode:    req.agentPermissionMode,
-	}
+	state := newReactEngineState(ctx, runCtx, req, runID, sessionID, client, currentModel, failoverModels, emitter, readClient, messages)
 	// 恢复上一个 run 已加载且定义未变化的 Business Tool，避免模型按历史上下文直接 execute_tool 时空转报错。
 	if err := state.restoreActiveToolsFromPreviousRun(); err != nil {
 		zlog.Warnf(ctx, "[React] 恢复历史已加载工具失败(忽略,模型可重新 get_tool): runId=%s, sessionId=%s, err=%v", runID, sessionID, err)
@@ -569,202 +491,6 @@ consume:
 		return result(), err
 	}
 	return result(), nil
-}
-
-// executeToolCalls 按模型返回顺序执行同一步工具，保证外部副作用和结果回填顺序稳定。
-// delegate_agent 调用之间可并行（agent 委派无副作用），受 subagent.max_parallel 限制；
-// 其余工具保持串行；并行度 1（默认）时与历史完全串行等价。
-// 并行委派的多个子 run 同时等待用户输入（ask_question/client tool）时，上行消息经
-// clientHub 按 toolUseId 路由到各自的等待者（并行 HITL，见 client_hub.go）。
-func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]llm.ToolResultContent, error) {
-	if s.delegateParallelism(len(calls)) <= 1 {
-		return s.executeToolCallsSerial(calls, step)
-	}
-
-	results := make([]llm.ToolResultContent, len(calls))
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var firstErr error
-	recordErr := func(err error) {
-		if err == nil {
-			return
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if firstErr == nil {
-			firstErr = err
-		}
-	}
-	sem := make(chan struct{}, s.delegateParallelism(len(calls)))
-	for i, call := range calls {
-		if call.Name != metaToolDelegateAgent {
-			continue
-		}
-		wg.Add(1)
-		go func(i int, call llm.ToolCall) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			start := time.Now()
-			result, err := s.executeToolCall(call, step)
-			metrics.ObserveToolCall(s.metricToolName(call), start, result.IsError)
-			results[i] = result
-			recordErr(err)
-		}(i, call)
-	}
-	for i, call := range calls {
-		if call.Name == metaToolDelegateAgent {
-			continue
-		}
-		start := time.Now()
-		result, err := s.executeToolCall(call, step)
-		metrics.ObserveToolCall(s.metricToolName(call), start, result.IsError)
-		results[i] = result
-		if err != nil {
-			// 串行工具出错即停并返回，与历史中止语义一致；取消/断线错误同时会让在途委派子 run 级联收敛。
-			recordErr(err)
-			break
-		}
-	}
-	wg.Wait()
-	if firstErr != nil {
-		return results, firstErr
-	}
-	return results, nil
-}
-
-func (s *reactEngineState) executeToolCallsSerial(calls []llm.ToolCall, step int) ([]llm.ToolResultContent, error) {
-	results := make([]llm.ToolResultContent, len(calls))
-	for i, call := range calls {
-		start := time.Now()
-		result, err := s.executeToolCall(call, step)
-		metrics.ObserveToolCall(s.metricToolName(call), start, result.IsError)
-		results[i] = result
-		if err != nil {
-			return results, err
-		}
-	}
-	return results, nil
-}
-
-// delegateParallelism 返回本轮 delegate_agent 的并行度：
-// 仅当同轮存在多个委派调用、执行档案放行且配置 max_parallel>1 时取配置值，否则 1。
-func (s *reactEngineState) delegateParallelism(callCount int) int {
-	if callCount <= 1 || s.req == nil || !s.profile.AllowSubagent {
-		return 1
-	}
-	cfg := conf.GetReactRuntimeConfig().SubAgent
-	if !cfg.SubAgentEnabled() || cfg.MaxParallel <= 1 {
-		return 1
-	}
-	return cfg.MaxParallel
-}
-
-// metricToolName 解析用于指标标签的工具名：execute_tool 反解入参里的业务工具名，其余用元工具名。
-func (s *reactEngineState) metricToolName(call llm.ToolCall) string {
-	if call.Name == metaToolExecuteTool {
-		var payload struct {
-			Name     string `json:"name"`
-			CallName string `json:"callName"`
-		}
-		if err := json.Unmarshal(call.Input, &payload); err == nil {
-			if payload.CallName != "" {
-				return payload.CallName
-			}
-			if payload.Name != "" {
-				return payload.Name
-			}
-		}
-	}
-	return call.Name
-}
-
-// executeToolCall 执行单个工具调用；保留给非批量路径和后续扩展复用。
-func (s *reactEngineState) executeToolCall(call llm.ToolCall, step int) (llm.ToolResultContent, error) {
-	s.logToolCallInput(call, step)
-	if isInternalMetaTool(call.Name) {
-		if !s.profile.allowsInternalTool(call.Name) {
-			return llm.ToolResultContent{ToolUseID: call.ID, Content: fmt.Sprintf("internal tool %s is not allowed by execution profile", call.Name), IsError: true}, nil
-		}
-		return s.executeInternalTool(call, step)
-	}
-	tool, ok := s.activeTools[call.Name]
-	if !ok {
-		// 之前加载过但定义已变化（或已下线）的工具不会被恢复，提示模型刷新而不是笼统报未激活。
-		if _, loadedBefore := s.prevToolDefFingerprint[call.Name]; loadedBefore {
-			return llm.ToolResultContent{ToolUseID: call.ID, Content: fmt.Sprintf("tool %s definition has changed or it is no longer available, call get_tool to reload it before use", call.Name), IsError: true}, nil
-		}
-		return llm.ToolResultContent{ToolUseID: call.ID, Content: fmt.Sprintf("tool %s is not active, call get_tool first", call.Name), IsError: true}, nil
-	}
-	switch toolService.NormalizeToolType(tool.ToolType) {
-	case toolService.ToolTypeClient:
-		return s.executeClientTool(call, tool, step, "")
-	case toolService.ToolTypeHTTP:
-		return s.executeServerTool(call, tool, step, "")
-	default:
-		return llm.ToolResultContent{ToolUseID: call.ID, Content: fmt.Sprintf("unsupported tool type: %s", tool.ToolType), IsError: true}, nil
-	}
-}
-
-// executeServerTool 调用后端托管的 HTTP Business Tool，并把大结果压缩成可回读的 resultRef。
-func (s *reactEngineState) executeServerTool(call llm.ToolCall, tool model.Tool, step int, description string) (llm.ToolResultContent, error) {
-	_ = s.emitter.EmitStep(step, EventToolUseStart, params.ReactToolUseStartPayload{ToolUseID: call.ID, ToolName: tool.Name, ToolInput: json.RawMessage(call.Input), Description: strings.TrimSpace(description), ExecutedBy: executedByServer, Status: toolExecutionStatusRunning})
-	start := time.Now()
-	var input interface{}
-	if len(call.Input) > 0 {
-		_ = json.Unmarshal(call.Input, &input)
-	}
-	// 危险操作确认门（P2-3）：permission_mode 命中时先等人工允许；拒绝按 rejected 工具结果回填。
-	approved, confirmErr := s.confirmServerToolIfNeeded(call, tool, json.RawMessage(call.Input), step, start)
-	if confirmErr != nil {
-		return llm.ToolResultContent{}, confirmErr
-	}
-	if !approved {
-		content := renderToolRejectedResult(tool, "")
-		_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: content, IsError: true, ExecutedBy: executedByServer, Status: toolExecutionStatusRejected, DurationMs: time.Since(start).Milliseconds()})
-		return llm.ToolResultContent{ToolUseID: call.ID, Content: content, IsError: true}, nil
-	}
-	// mcp 类型工具：转发给 MCP 客户端子进程执行（无鉴权，本机受信环境）。
-	if cfg, cfgErr := toolService.ParseToolConfig(tool.Config); cfgErr == nil && strings.TrimSpace(cfg.MCPServer) != "" {
-		timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
-		if timeout <= 0 {
-			timeout = 60 * time.Second
-		}
-		content, callErr := mcpclient.Call(cfg.MCPServer, cfg.MCPTool, call.Input, timeout)
-		normalized := normalizeToolResult(call.ID, content, callErr != nil, executedByServer)
-		if callErr != nil {
-			normalized.Content = callErr.Error()
-		}
-		_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, ResultRef: normalized.ResultRef, Truncated: normalized.Truncated, OmittedChars: normalized.OmittedChars, IsError: normalized.IsError, ExecutedBy: executedByServer, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds()})
-		return llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: normalized.IsError}, nil
-	}
-	content, err := toolService.ExecuteHTTPTool(s.runCtx, tool.Config, input, requestCookies(s.ctx))
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		cause := context.Cause(s.runCtx)
-		if errors.Is(cause, ErrReactRunCancelled) {
-			result := s.closeInterruptedToolUse(call, step, executedByServer, start, ErrReactRunCancelled)
-			return result, ErrReactRunCancelled
-		}
-		if errors.Is(cause, context.DeadlineExceeded) {
-			return llm.ToolResultContent{ToolUseID: call.ID, Content: "tool execution exceeded current step active timeout", IsError: true}, nil
-		}
-		result := s.closeInterruptedToolUse(call, step, executedByServer, start, ErrReactClientDisconnected)
-		return result, ErrReactClientDisconnected
-	}
-	normalized := normalizeToolResult(call.ID, content, err != nil, executedByServer)
-	if err != nil {
-		normalized.Content = err.Error()
-	}
-	if normalized.ResultRef != "" {
-		// resultRef 只保存完整大结果，给模型回填的是预览和可分页读取的引用，避免撑爆上下文。
-		if err := storeResultRef(s.ctx, s.sessionID, s.runID, call.ID, normalized.ResultRef, content); err != nil {
-			return llm.ToolResultContent{}, err
-		}
-	}
-	_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, ResultRef: normalized.ResultRef, Truncated: normalized.Truncated, OmittedChars: normalized.OmittedChars, IsError: normalized.IsError, ExecutedBy: executedByServer, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds()})
-	// 异步提交型工具成功后保留提交快照，作为 Session 级提醒注入后续 run 的模型上下文。
-	s.recordAsyncSubmit(tool, call.Input, content, normalized)
-	return llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: normalized.IsError}, nil
 }
 
 // finish 收敛 run 的最终状态，更新会话摘要，并向前端发送 done 事件。

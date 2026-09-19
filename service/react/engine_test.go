@@ -68,10 +68,12 @@ func TestCollectLLMStreamDoesNotTimeoutWhileChunksArrive(t *testing.T) {
 func TestCollectLLMStreamEmitsCumulativeCacheTokensInContentEnd(t *testing.T) {
 	var events []params.ReactEvent
 	state := &reactEngineState{
-		runCtx:          context.Background(),
-		inputTokens:     400,
-		outputTokens:    50,
-		cacheReadTokens: 1000,
+		runCtx: context.Background(),
+		reactEngineUsageState: reactEngineUsageState{
+			inputTokens:     400,
+			outputTokens:    50,
+			cacheReadTokens: 1000,
+		},
 		emitter: &runEventEmitter{
 			runID:     "run_test",
 			sessionID: "session_test",
@@ -116,10 +118,12 @@ func TestCollectLLMStreamEmitsCumulativeCacheTokensInContentEnd(t *testing.T) {
 func TestCollectLLMStreamEmitsCumulativeCacheTokensInThoughtEndWhenNoContent(t *testing.T) {
 	var events []params.ReactEvent
 	state := &reactEngineState{
-		runCtx:          context.Background(),
-		inputTokens:     400,
-		outputTokens:    50,
-		cacheReadTokens: 1000,
+		runCtx: context.Background(),
+		reactEngineUsageState: reactEngineUsageState{
+			inputTokens:     400,
+			outputTokens:    50,
+			cacheReadTokens: 1000,
+		},
 		emitter: &runEventEmitter{
 			runID:     "run_test",
 			sessionID: "session_test",

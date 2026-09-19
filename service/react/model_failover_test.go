@@ -23,10 +23,10 @@ func TestConfiguredReactModelRoutingUsesSelectedModelFirst(t *testing.T) {
 		MutualFailover: boolPointer(true),
 	}
 
-	selected, candidates := configuredReactModelRouting(&runtimeRequest{
+	selected, candidates := configuredReactModelRouting(&runtimeRequest{runtimeRequestModel: runtimeRequestModel{
 		resolvedModelKey:     "通义千问",
 		resolvedModelVersion: "qwen3.8-max",
-	})
+	}})
 	if selected.ModelKey != "通义千问" || selected.ModelVersion != "qwen3.8-max" {
 		t.Fatalf("unexpected selected model: %+v", selected)
 	}
@@ -47,10 +47,10 @@ func TestConfiguredReactModelRoutingDoesNotFailoverUnknownModel(t *testing.T) {
 		MutualFailover: boolPointer(true),
 	}
 
-	_, candidates := configuredReactModelRouting(&runtimeRequest{
+	_, candidates := configuredReactModelRouting(&runtimeRequest{runtimeRequestModel: runtimeRequestModel{
 		resolvedModelKey:     "OpenAI",
 		resolvedModelVersion: "gpt-5.2",
-	})
+	}})
 	if len(candidates) != 1 || candidates[0].ModelKey != "OpenAI" {
 		t.Fatalf("unknown selected model must not enter configured failover group: %+v", candidates)
 	}

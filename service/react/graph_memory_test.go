@@ -148,7 +148,7 @@ func TestGraphMemorySearchForcesServerSideGroups(t *testing.T) {
 		runCtx: context.Background(),
 		req: &runtimeRequest{
 			payload: params.ReactRunPayload{CallerKey: "demo-app"},
-			userName: "alice",
+			runtimeRequestIdentity: runtimeRequestIdentity{userName: "alice"},
 		},
 	}
 	content, isError, err := state.executeGraphMemorySearch(json.RawMessage(`{"query":"service-A 和 cluster-01 什么关系","limit":5}`))
@@ -182,7 +182,7 @@ func TestGraphMemorySearchForcesServerSideGroups(t *testing.T) {
 func TestGraphMemorySearchRejectsEmptyQuery(t *testing.T) {
 	state := &reactEngineState{
 		runCtx: context.Background(),
-		req:    &runtimeRequest{payload: params.ReactRunPayload{CallerKey: "demo-app"}, userName: "alice"},
+		req:    &runtimeRequest{payload: params.ReactRunPayload{CallerKey: "demo-app"}, runtimeRequestIdentity: runtimeRequestIdentity{userName: "alice"}},
 	}
 	if _, _, err := state.executeGraphMemorySearch(json.RawMessage(`{"query":"  "}`)); err == nil {
 		t.Fatalf("empty query should be rejected")
