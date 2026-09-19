@@ -71,19 +71,39 @@
 }
 
 .agent-ui-plan-step {
-  border-left: 2px solid $agent-ui-border-color-light;
+  position: relative;
   padding-left: $agent-ui-spacing-md;
 }
 
-.agent-ui-plan-step[data-status='RUNNING'] { border-left-color: $agent-ui-primary; }
-.agent-ui-plan-step[data-status='SUCCEEDED'] { border-left-color: $agent-ui-success; }
-.agent-ui-plan-step[data-status='FAILED'] { border-left-color: $agent-ui-danger; }
-.agent-ui-plan-step[data-status='WAIT_USER_INPUT'],
-.agent-ui-plan-step[data-status='WAIT_USER_ACTION'],
-.agent-ui-plan-step[data-status='WAIT_EXTERNAL_TASK'],
-.agent-ui-plan-step[data-status='WAITING'] { border-left-color: $agent-ui-warning; }
-.agent-ui-plan-step[data-status='CANCELLED'],
-.agent-ui-plan-step[data-status='SKIPPED'] { border-left-color: $agent-ui-border-color-strong; }
+// 时间线连接线：从本步骤圆点中心向下延伸，穿过行间 gap 接到下一行圆点。
+// 默认实线（进行中/待执行段）；本步骤终态（完成/取消/跳过）后其后的段变虚线。
+.agent-ui-plan-step::after {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 16px;
+  bottom: calc(-1 * $agent-ui-spacing-sm);
+  border-left: 2px solid $agent-ui-text-secondary;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.agent-ui-plan-step:last-child::after { display: none; }
+
+.agent-ui-plan-step[data-status='SUCCEEDED']::after,
+.agent-ui-plan-step[data-status='CANCELLED']::after,
+.agent-ui-plan-step[data-status='SKIPPED']::after {
+  border-left-style: dashed;
+}
+
+// 终态步骤名：删除线 + 变淡
+.agent-ui-plan-step[data-status='SUCCEEDED'] .agent-ui-plan-step-name,
+.agent-ui-plan-step[data-status='CANCELLED'] .agent-ui-plan-step-name,
+.agent-ui-plan-step[data-status='SKIPPED'] .agent-ui-plan-step-name {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  color: $agent-ui-text-secondary;
+}
 
 .agent-ui-plan-step-header {
   gap: $agent-ui-spacing-sm;
@@ -97,11 +117,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border: 2px solid $agent-ui-border-color-strong;
   background: $agent-ui-bg-secondary;
   color: $agent-ui-text-secondary;
   font-size: $agent-ui-font-size-xs;
   flex-shrink: 0;
 }
+
+.agent-ui-plan-step[data-status='RUNNING'] .agent-ui-plan-step-mark { border-color: $agent-ui-primary; }
+.agent-ui-plan-step[data-status='SUCCEEDED'] .agent-ui-plan-step-mark { border-color: $agent-ui-success; }
+.agent-ui-plan-step[data-status='FAILED'] .agent-ui-plan-step-mark { border-color: $agent-ui-danger; }
+.agent-ui-plan-step[data-status='WAIT_USER_INPUT'] .agent-ui-plan-step-mark,
+.agent-ui-plan-step[data-status='WAIT_USER_ACTION'] .agent-ui-plan-step-mark,
+.agent-ui-plan-step[data-status='WAIT_EXTERNAL_TASK'] .agent-ui-plan-step-mark,
+.agent-ui-plan-step[data-status='WAITING'] .agent-ui-plan-step-mark { border-color: $agent-ui-warning; }
 
 .agent-ui-plan-step-status { flex-shrink: 0; }
 

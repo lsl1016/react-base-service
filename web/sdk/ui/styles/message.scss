@@ -652,6 +652,10 @@
     .agent-ui-todo-create-status {
       color: $agent-ui-success;
     }
+
+    .agent-ui-todo-create-content {
+      text-decoration: line-through;
+    }
   }
 
   &[data-status='cancelled'] {
