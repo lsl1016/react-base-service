@@ -114,7 +114,7 @@ mcp_server:
 ## 6. playground 页面与管理台
 
 - **MCP 应用**（playground tab）：应用卡片（appKey 一键复制/secret 打码/绑定 caller/接入端点；可见工具=绑定作用域内启用的 http 工具）+ 创建与重置密钥弹窗（完整 secret 一次性展示）+ 调用记录分页弹层。「MCP 连接」「MCP 应用」两页工具栏有「网关管理台 ↗」入口。
-- **网关管理台**（`/react-base-service/react/mcp-admin`）：mcp-server 项目 Vue3 管理台的**原版前端**（`web/mcp-admin/dist` 经 go:embed 内嵌），含工具列表/批量注册（多草稿）/编辑/批量上下线与应用创建/授权页。后端为 `/api/manage/*` 协议兼容层（`controllers/http/mcpadmin`），字段映射：数字 id ↔ tblLlmTool 主键、bizTag ↔ caller 作用域、requestConfig/readOnly ↔ config 的 method/headers/timeout（GET=只读）、status 1/2 ↔ 0/1；应用创建默认绑定 default 作用域（改绑定走 playground「MCP 应用」页）。**工具的批量注册/编辑统一在管理台完成**（早期的 playground 原生「批量注册」弹窗与 `/tool/batch_register` 接口已随之移除）。
+- **网关管理台**（`/react-base-service/react/mcp-admin`）：mcp-server 项目 Vue3 管理台的**原版前端**（`web/mcp-admin/dist` 经 go:embed 内嵌），含工具列表/批量注册（多草稿）/编辑/批量上下线与应用管理页（创建时选绑定 caller，页面展示应用的可见工具清单）。后端为 `/api/manage/*` 协议兼容层（`controllers/http/mcpadmin`），字段映射：数字 id ↔ tblLlmTool 主键、bizTag ↔ caller 作用域、requestConfig/readOnly ↔ config 的 method/headers/timeout（GET=只读）、status 1/2 ↔ 0/1；应用创建时可填「绑定 caller」（缺省 default），建好即见该作用域内全部工具；改绑定走 playground「MCP 应用」页。**工具的批量注册/编辑统一在管理台完成**（早期的 playground 原生「批量注册」弹窗与 `/tool/batch_register` 接口已随之移除）。
 - **管理台鉴权**：`X-Admin-Token` 静态令牌；`mcp_server.admin_tokens` 配置白名单时按白名单校验，空列表 = 接受任意非空令牌（内网联调默认）；无效令牌返回 errNo 2001 触发右上角「管理令牌」弹窗。`X-Admin-User` 记录操作者。
 
 ## 7. 边界与决策
@@ -129,7 +129,7 @@ mcp_server:
 
 | 版本 | 日期 | 修改人 | 变更说明 |
 |---|---|---|---|
-| v1.3 | 2026-09-20 | react-base-service 项目组 | 移除按应用工具授权层（tblLlmMcpAppTool 及 grant_tools/list_tools 接口），作用域即权限；管理台授权接口改为兼容 no-op |
+| v1.3 | 2026-09-20 | react-base-service 项目组 | 移除按应用工具授权层（tblLlmMcpAppTool 及 grant_tools/list_tools 接口），作用域即权限；管理台重建：创建应用可选绑定 caller、授权区改为作用域说明与可见工具清单 |
 | v1.2 | 2026-09-20 | react-base-service 项目组 | 内嵌 mcp-server 原版 Vue3 管理台（/react/mcp-admin + /api/manage 兼容层 + X-Admin-Token 鉴权），playground 增加入口 |
 | v1.1 | 2026-09-20 | react-base-service 项目组 | 补齐 mcp-server 的按应用工具授权（tblLlmMcpAppTool 显式白名单 + grant_tools/list_tools 接口 + 授权弹窗） |
 | v1.0 | 2026-09-20 | react-base-service 项目组 | 自 mcp-server 移植网关核心，与 tblLlmTool 工具体系原生融合；新增应用凭证/审计两表与 playground 管理页 |

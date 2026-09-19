@@ -553,14 +553,15 @@ func adminOperator(ctx *gin.Context) string {
 // ---- 应用（凭证）兼容层 ----
 
 type adminAppView struct {
-	ID         int    `json:"id"`
-	AppName    string `json:"appName"`
-	AppKey     string `json:"appKey"`
-	AppSecret  string `json:"appSecret"`
+	ID          int    `json:"id"`
+	AppName     string `json:"appName"`
+	AppKey      string `json:"appKey"`
+	AppSecret   string `json:"appSecret"`
 	Description string `json:"description"`
-	Status     int    `json:"status"`
-	Owner      string `json:"owner"`
-	ToolCount  int64  `json:"toolCount"`
+	Status      int    `json:"status"`
+	Owner       string `json:"owner"`
+	ToolCount   int64  `json:"toolCount"`
+	CallerKey   string `json:"callerKey"`
 }
 
 type adminAppListRequest struct {
@@ -601,6 +602,7 @@ func ListApps(ctx *gin.Context) {
 			Status:      status,
 			Owner:       app.CreatedBy,
 			ToolCount:   toolCount,
+			CallerKey:   app.CallerKey,
 		})
 	}
 	components.RenderJsonSucc(ctx, gin.H{"list": views, "total": len(views)})
@@ -609,11 +611,12 @@ func ListApps(ctx *gin.Context) {
 type adminAppCreateRequest struct {
 	AppName     string `json:"appName"`
 	Owner       string `json:"owner"`
+	CallerKey   string `json:"callerKey"`
 	Description string `json:"description"`
 }
 
-// CreateApp 新增应用凭证（secret 完整返回仅此一次；绑定 caller 固定 default，
-// 如需绑定其它 caller 在 playground「MCP 应用」页修改）。
+// CreateApp 新增应用凭证（secret 完整返回仅此一次；callerKey 指定绑定的作用域，
+// 缺省 default——应用的可见工具 = 该作用域内启用的 http 工具）。
 func CreateApp(ctx *gin.Context) {
 	var req adminAppCreateRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -624,6 +627,21 @@ func CreateApp(ctx *gin.Context) {
 	if appName == "" {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("appName 不能为空"))
 		return
+	}
+	callerKey := strings.TrimSpace(req.CallerKey)
+	if callerKey == "" {
+		callerKey = "default"
+	}
+	if !model.IsReservedCallerKey(callerKey) {
+		caller, err := model.GetActiveCallerByKey(ctx, callerKey)
+		if err != nil {
+			components.RenderJsonFail(ctx, err)
+			return
+		}
+		if caller == nil {
+			components.RenderJsonFail(ctx, components.ParamInvalidf("绑定的 caller 不存在或已停用: %s", callerKey))
+			return
+		}
 	}
 	existing, err := model.ListMcpApps(ctx)
 	if err != nil {
@@ -642,7 +660,7 @@ func CreateApp(ctx *gin.Context) {
 		AppName:   appName,
 		AppKey:    mcpgateway.GenerateAppKey(),
 		AppSecret: secret,
-		CallerKey: "default",
+		CallerKey: callerKey,
 		Status:    1,
 		CreatedBy: adminOperator(ctx),
 		UpdatedBy: adminOperator(ctx),
@@ -651,7 +669,7 @@ func CreateApp(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, err)
 		return
 	}
-	zlog.Infof(ctx, "[MCPGW.Admin] 新增应用: name=%s operator=%s", appName, adminOperator(ctx))
+	zlog.Infof(ctx, "[MCPGW.Admin] 新增应用: name=%s callerKey=%s operator=%s", appName, callerKey, adminOperator(ctx))
 	components.RenderJsonSucc(ctx, gin.H{"app": adminAppView{
 		ID:         int(app.ID),
 		AppName:    app.AppName,
@@ -660,6 +678,7 @@ func CreateApp(ctx *gin.Context) {
 		Status:     adminStatusEnabled,
 		Owner:      app.CreatedBy,
 		ToolCount:  0,
+		CallerKey:  app.CallerKey,
 	}})
 }
 
