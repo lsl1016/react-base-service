@@ -99,6 +99,90 @@ func SoftDeleteMcpAppByAppID(ctx *gin.Context, appID string) error {
 	return nil
 }
 
+// McpAppTool 是应用与工具的授权绑定（tblLlmMcpAppTool，自 mcp-server 的 mcp_app_tool 移植）：
+// 授权是显式白名单——应用未授权任何工具时 tools/list 为空，须在「MCP 应用」页勾选授权。
+type McpAppTool struct {
+	ID        uint   `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	AppID     string `json:"appId" gorm:"column:app_id;not null"`
+	ToolID    string `json:"toolId" gorm:"column:tool_id;not null"`
+	Status    int    `json:"status" gorm:"column:status;not null;default:1"`
+	CreatedBy string `json:"createdBy" gorm:"column:created_by;not null;default:''"`
+	CreatedAt time.Time             `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt time.Time             `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt soft_delete.DeletedAt `json:"deletedAt" gorm:"column:deleted_at;not null;default:0"`
+}
+
+func (g *McpAppTool) TableName() string {
+	return "tblLlmMcpAppTool"
+}
+
+// ListMcpAppToolIDs 返回应用当前生效的授权工具 ID 清单（tool_id 指向 tblLlmTool.tool_id）。
+func ListMcpAppToolIDs(ctx *gin.Context, appID string) ([]string, error) {
+	var rows []McpAppTool
+	err := helpers.MysqlClientLLM.Model(&McpAppTool{}).WithContext(ctx).
+		Where("app_id = ? AND status = 1", appID).Find(&rows).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	toolIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		toolIDs = append(toolIDs, row.ToolID)
+	}
+	return toolIDs, nil
+}
+
+// ReplaceMcpAppTools 全量替换应用的授权工具（软删除缺席行、复活/新增传入行；空清单=清空授权）。
+func ReplaceMcpAppTools(ctx *gin.Context, appID string, toolIDs []string, operator string) error {
+	return helpers.MysqlClientLLM.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing []McpAppTool
+		if err := tx.Model(&McpAppTool{}).Where("app_id = ?", appID).Find(&existing).Error; err != nil {
+			return components.ErrorDbSelect.Wrap(err)
+		}
+		active := make(map[string]bool, len(toolIDs))
+		for _, toolID := range toolIDs {
+			active[toolID] = true
+		}
+		for _, toolID := range toolIDs {
+			if !active[toolID] {
+				continue
+			}
+			// 先复活（uk_app_tool 可能仍被软删行占用），未命中再新增。
+			result := tx.Unscoped().Model(&McpAppTool{}).
+				Where("app_id = ? AND tool_id = ?", appID, toolID).
+				Updates(map[string]interface{}{"status": 1, "created_by": operator, "deleted_at": 0})
+			if result.Error != nil {
+				return components.ErrorDbUpdate.Wrap(result.Error)
+			}
+			if result.RowsAffected == 0 {
+				if err := tx.Create(&McpAppTool{AppID: appID, ToolID: toolID, Status: 1, CreatedBy: operator}).Error; err != nil {
+					return components.ErrorDbInsert.Wrap(err)
+				}
+			}
+			active[toolID] = false
+		}
+		for _, row := range existing {
+			if row.DeletedAt == 0 && !containsString(toolIDs, row.ToolID) {
+				if err := tx.Where("app_id = ? AND tool_id = ?", appID, row.ToolID).
+					Delete(&McpAppTool{}).Error; err != nil {
+					return components.ErrorDbUpdate.Wrap(err)
+				}
+			}
+		}
+		return nil
+	})
+}
+
+// CountMcpAppTools 返回应用当前生效的授权工具数。
+func CountMcpAppTools(ctx *gin.Context, appID string) (int64, error) {
+	var count int64
+	err := helpers.MysqlClientLLM.Model(&McpAppTool{}).WithContext(ctx).
+		Where("app_id = ? AND status = 1", appID).Count(&count).Error
+	if err != nil {
+		return 0, components.ErrorDbSelect.Wrap(err)
+	}
+	return count, nil
+}
+
 // McpCallLog 是 MCP 网关调用审计（tblLlmMcpCallLog）：异步批量落库，只插不改。
 type McpCallLog struct {
 	ID            uint      `json:"id" gorm:"column:id;primaryKey;autoIncrement"`

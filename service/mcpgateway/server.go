@@ -64,7 +64,7 @@ func buildServer(req *http.Request) *sdk.Server {
 		return server
 	}
 
-	bindings, err := LoadTools(ginCtx, identity.CallerKey)
+	bindings, err := LoadTools(ginCtx, identity.AppID, identity.CallerKey)
 	if err != nil {
 		zlog.Errorf(ginCtx, "[MCPGW] load tools fail, app: %s, err: %s", identity.AppKey, err.Error())
 		return server

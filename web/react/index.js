@@ -980,6 +980,13 @@ const management = {
         if (logsAction === 'prev') this.logsState.page = Math.max(1, this.logsState.page - 1);
         if (logsAction === 'next') this.logsState.page += 1;
         this.loadMcpAppLogs();
+        return;
+      }
+      const grantsAction = event.target.closest('[data-grants-action]')?.dataset.grantsAction;
+      if (grantsAction) {
+        $('management-modal-body').querySelectorAll('[data-grant-tool]').forEach((box) => {
+          box.checked = grantsAction === 'all';
+        });
       }
     });
     $('management-modal-close').addEventListener('click', () => this.closeModal());
@@ -1262,6 +1269,7 @@ const management = {
           <span class="rp-mcp-endpoint" title="外部 MCP 客户端接入端点">${escapeHtml(item.endpoint)}</span>
           <div class="rp-row-actions rp-mcp-actions">
             <button class="rp-button rp-link-btn" data-action="copy-key" type="button" title="复制 appKey">key:${escapeHtml(shortText(item.appKey, 14))}</button>
+            <button class="rp-button rp-link-btn" data-action="grants" type="button">工具授权</button>
             <button class="rp-button rp-link-btn" data-action="reset-secret" type="button">重置密钥</button>
             <button class="rp-button rp-link-btn" data-action="logs" type="button">调用记录</button>
             <button class="rp-button rp-link-btn" data-action="edit" type="button">修改</button>
@@ -1271,6 +1279,7 @@ const management = {
         </div>
         <div class="rp-mcp-card-body">
           <div class="rp-mcp-bound">appKey：<code>${escapeHtml(item.appKey)}</code> · secret：<code>${escapeHtml(item.maskedSecret)}</code> · 接入头：<code>Authorization: Bearer &lt;appKey&gt;:&lt;appSecret&gt;</code></div>
+          <div class="rp-mcp-bound">已授权工具：<span class="rp-mcp-badge ${Number(item.grantedToolCount) > 0 ? 'rp-mcp-badge-ok' : 'rp-mcp-badge-bad'}">${item.grantedToolCount ?? 0} 个</span>${Number(item.grantedToolCount) > 0 ? '' : '（未授权任何工具，tools/list 为空，点击「工具授权」勾选）'}</div>
         </div>
       </div>`).join('');
     this.visibleItems = rows;
@@ -1340,6 +1349,54 @@ const management = {
         <span class="rp-mcp-endpoint">第 ${state.page}/${pages} 页 · 共 ${total} 条</span>
         <button class="rp-button" data-logs-action="next" type="button" ${state.page >= pages ? 'disabled' : ''}>下一页</button>
       </div>`;
+  },
+  // 工具授权：勾选 caller 作用域内可授权的 http 工具（显式白名单，空=看不到任何工具）。
+  async openMcpAppGrants(item) {
+    this.mode = 'mcpGrants';
+    this.draft = null;
+    this.grantsState = { app: item, data: null };
+    this.renderModal();
+    try {
+      this.grantsState.data = await post('/react/mcpapp/list_tools', { appId: item.appId });
+      if (this.mode === 'mcpGrants') this.renderModal();
+    } catch (error) {
+      this.setState(error.message || '加载可授权工具失败', true);
+    }
+  },
+  renderMcpAppGrantsBody() {
+    const state = this.grantsState;
+    if (!state) return '';
+    const tools = Array.isArray(state.data?.tools) ? state.data.tools : [];
+    if (!tools.length) {
+      return `<div class="rp-mcp-empty">应用绑定的 caller（${escapeHtml(state.data?.callerKey ?? state.app.callerKey)}）作用域内暂无启用的 http 工具，先到「工具管理」注册。</div>`;
+    }
+    const rowsHtml = tools.map((tool) => `
+      <label class="rp-field rp-span-all" style="flex-direction:row;align-items:center;gap:8px">
+        <input type="checkbox" data-grant-tool="${escapeHtml(tool.toolId)}" ${tool.granted ? 'checked' : ''} />
+        <span style="flex:1"><b>${escapeHtml(tool.name)}</b> <span class="rp-mcp-endpoint">${escapeHtml(tool.callerKey)}</span>${tool.description ? ` — ${escapeHtml(shortText(tool.description, 60))}` : ''}</span>
+      </label>`).join('');
+    const grantedCount = tools.filter((tool) => tool.granted).length;
+    return `
+      <div class="rp-operation-note">显式白名单：只有勾选的工具会出现在该应用的 tools/list 里（且须处于 caller 作用域并启用）。全不勾=清空授权。</div>
+      <div class="rp-row-actions" style="margin-bottom:8px">
+        <button class="rp-button" data-grants-action="all" type="button">全选</button>
+        <button class="rp-button" data-grants-action="none" type="button">清空</button>
+        <span class="rp-mcp-endpoint">当前授权 ${grantedCount}/${tools.length} 个</span>
+      </div>
+      <div class="rp-form-grid">${rowsHtml}</div>`;
+  },
+  async saveMcpAppGrants() {
+    const state = this.grantsState;
+    if (!state) return;
+    const toolIds = [...$('management-modal-body').querySelectorAll('[data-grant-tool]:checked')].map((box) => box.dataset.grantTool);
+    try {
+      await post('/react/mcpapp/grant_tools', { appId: state.app.appId, toolIds });
+      this.closeModal();
+      await this.reload();
+      this.setState(`已更新授权：${toolIds.length} 个工具（${state.app.appName}）`);
+    } catch (error) {
+      this.setState(error.message || '保存授权失败', true);
+    }
   },
   // 批量注册：多草稿 Tab 批量登记 http 工具（对齐 mcp-server 管理台的批量注册交互）。
   openBatchTools() {
@@ -1655,6 +1712,7 @@ const management = {
     if (action === 'uninstall') this.uninstallBundle(item);
     if (action === 'reset-secret') this.resetMcpAppSecret(item);
     if (action === 'logs') this.openMcpAppLogs(item);
+    if (action === 'grants') this.openMcpAppGrants(item);
     if (action === 'copy-key') {
       navigator.clipboard?.writeText(item.appKey ?? '');
       this.setState(`appKey 已复制：${item.appKey}`);
@@ -1743,6 +1801,15 @@ const management = {
       $('management-modal-mask').classList.add('rp-visible');
       return;
     }
+    if (this.mode === 'mcpGrants') {
+      $('management-modal-title').textContent = `工具授权 — ${this.grantsState?.app?.appName ?? ''}`;
+      $('management-modal-body').innerHTML = this.renderMcpAppGrantsBody();
+      saveButton.hidden = false;
+      saveButton.textContent = '保存授权';
+      cancelButton.textContent = '取消';
+      $('management-modal-mask').classList.add('rp-visible');
+      return;
+    }
     if (this.mode === 'batchTools') {
       $('management-modal-title').textContent = '批量注册工具';
       $('management-modal-body').innerHTML = `
@@ -1819,6 +1886,10 @@ const management = {
   },
   async save() {
     const resource = this.resource();
+    if (this.mode === 'mcpGrants') {
+      await this.saveMcpAppGrants();
+      return;
+    }
     if (this.mode === 'batchTools') {
       try {
         await this.submitBatchTools();

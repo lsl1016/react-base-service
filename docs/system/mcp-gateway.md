@@ -47,13 +47,20 @@ react-base-service 同时是 MCP **客户端**（`service/mcpclient`，连接上
 | `/react-base-service/react/mcpapp/delete` | POST | 软删凭证（持凭证客户端立即失联） | `react.DeleteMcpApp` |
 | `/react-base-service/react/mcpapp/reset_secret` | POST | 重置密钥（新 secret 仅本次响应返回） | `react.ResetMcpAppSecret` |
 | `/react-base-service/react/mcpapp/logs` | POST | 调用审计分页查询（appKey/toolName 过滤） | `react.ListMcpAppLogs` |
+| `/react-base-service/react/mcpapp/grant_tools` | POST | 全量替换应用的工具授权（空清单=清空） | `react.GrantMcpAppTools` |
+| `/react-base-service/react/mcpapp/list_tools` | POST | 可授权工具清单（caller 作用域内，含已授权标记） | `react.ListMcpAppGrantableTools` |
 | `/react-base-service/tool/batch_register` | POST | 工具批量注册（逐条成败；outputSchema 含投影时校验语法） | `tool.BatchRegisterTool` |
 
 ## 3. 核心逻辑
 
-### 3.1 鉴权与作用域
+### 3.1 鉴权与工具授权
 
-`Authorization: Bearer <app_key>:<app_secret>`（secret 可含冒号，按第一个冒号切分）。`mcpgateway.Auth` 查 `tblLlmMcpApp`（app_key 全局唯一，须 status=1）并常量时间比较 secret；失败返回 **403**（刻意不用 401，避免客户端触发 OAuth 发现丢弃错误体）。可选 `X-MCP-User` 头仅作审计维度。应用绑定一个 `caller_key` 作用域：**该 caller 名下 + default 通用作用域**的全部启用 http 工具即 tools/list 可见集合（`route_values` 不参与 MCP 可见性；client/mcp 型工具不对外）。tools/call 时按名复核（客户端可能缓存旧清单）。
+`Authorization: Bearer <app_key>:<app_secret>`（secret 可含冒号，按第一个冒号切分）。`mcpgateway.Auth` 查 `tblLlmMcpApp`（app_key 全局唯一，须 status=1）并常量时间比较 secret；失败返回 **403**（刻意不用 401，避免客户端触发 OAuth 发现丢弃错误体）。可选 `X-MCP-User` 头仅作审计维度。
+
+工具可见性是**双重过滤**（自 mcp-server 的授权模型移植）：
+
+1. **caller 作用域**：应用绑定一个 `caller_key`，候选工具 = 该 caller 名下 + default 通用作用域的全部启用 http 工具（`route_values` 不参与 MCP 可见性；client/mcp 型工具不对外）。
+2. **显式工具授权**（`tblLlmMcpAppTool` 白名单，全量替换式维护）：**应用未授权任何工具时 tools/list 为空**，须在「MCP 应用」页勾选授权；授权的工具还须落在作用域内且启用才可见。tools/call 时按名复核（客户端可能缓存旧清单），未授权/已回收返回无权或 unknown tool。
 
 ### 3.2 工具暴露与执行链路
 
@@ -89,6 +96,7 @@ tools/call → 复核可见性 → 入参 JSON Schema 校验（缺必填字段�
 | 表 | 模型 | 说明 |
 |---|---|---|
 | `tblLlmMcpApp` | `McpApp` | 应用凭证：app_id/app_name/app_key（均唯一）/app_secret/caller_key 作用域/status，软删除；secret 仅创建/重置时完整返回，列表打码 |
+| `tblLlmMcpAppTool` | `McpAppTool` | 应用工具授权（显式白名单，app_id+tool_id 唯一，全量替换式维护）：未授权任何工具 = tools/list 为空 |
 | `tblLlmMcpCallLog` | `McpCallLog` | 调用审计（只插不改）：app_key/user_name(X-MCP-User)/tool_name/arguments/response_text/result_code(0 成功/-1 工具错误/上游码)/cost_ms/client_ip/client_info |
 
 工具本体不建新表——就是 `tblLlmTool` 的 http 行（config 含 `url/method/headers/timeout_ms/inputSchema/outputSchema`）。建表脚本：`sql/mcp_gateway_v1.sql`（已并入 `sql/init.sql`）。
@@ -109,13 +117,13 @@ mcp_server:
 
 ## 6. playground 页面
 
-- **MCP 应用**（新 tab）：应用卡片（appKey 一键复制/secret 打码/绑定 caller/接入端点）+ 创建与重置密钥弹窗（完整 secret 一次性展示）+ 调用记录分页弹层。
+- **MCP 应用**（新 tab）：应用卡片（appKey 一键复制/secret 打码/绑定 caller/接入端点/已授权工具数）+ 创建与重置密钥弹窗（完整 secret 一次性展示）+ **工具授权**弹窗（勾选 caller 作用域内工具，全选/清空，全量替换）+ 调用记录分页弹层。
 - **工具管理 → 批量注册**：多草稿 Tab 批量登记 http 工具（名称/描述/URL/方法/超时/请求头/入参出参 Schema），统一提交 `/tool/batch_register`，逐条返回成败。
 
 ## 7. 边界与决策
 
 - 只暴露 `tool_type=http` 工具（client 型由前端执行、mcp 型是下游代理，不转发）；
-- per-app 工具级授权不移植（mcp-server 的 mcp_app_tool 表）——由 caller 作用域替代；
+- 工具授权采用 mcp-server 的显式白名单语义（tblLlmMcpAppTool 全量替换），叠加 caller 作用域过滤；
 - Redis 限流、Prometheus 指标、CodeMCP（local:// 代码检索工具）不移植；
 - 输出投影只作用于网关出口，LLM 运行时的 execute_tool 行为不变；
 - 独立网关进程与主服务共享 llm 库，可同时运行（同一凭证两处均可用）。
@@ -124,4 +132,5 @@ mcp_server:
 
 | 版本 | 日期 | 修改人 | 变更说明 |
 |---|---|---|---|
+| v1.1 | 2026-09-20 | react-base-service 项目组 | 补齐 mcp-server 的按应用工具授权（tblLlmMcpAppTool 显式白名单 + grant_tools/list_tools 接口 + 授权弹窗） |
 | v1.0 | 2026-09-20 | react-base-service 项目组 | 自 mcp-server 移植网关核心，与 tblLlmTool 工具体系原生融合；新增应用凭证/审计两表与 playground 管理页 |
