@@ -2,6 +2,23 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAgentClient, type AgentClient } from '../runtime/agent-client';
 
+// jsdom 的 WebSocket 实现会委托 npm ws 包，浏览器态直接抛 "ws does not work in the browser"，
+// 并以未处理拒绝形式拖红整个 CI 运行。本文件验证的是同步与恢复逻辑，不需要真实连接，
+// 用最小假 WebSocket 类替换全局实现。
+class FakeWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  readyState: number = FakeWebSocket.CONNECTING;
+  send(): void {}
+  close(): void { this.readyState = FakeWebSocket.CLOSED; }
+  addEventListener(): void {}
+  removeEventListener(): void {}
+  dispatchEvent(): boolean { return false; }
+}
+vi.stubGlobal('WebSocket', FakeWebSocket);
+
 function createMockFetch() {
   return vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url, 'http://test').pathname;

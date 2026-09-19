@@ -54,8 +54,8 @@ describe('playground SQL client tools', () => {
     const baselineSQL = String(baseline.content);
 
     const firstInput = {
-      old_string: 'select  -- 群聊',
-      new_string: 'select  -- 群聊（已修改）',
+      old_string: 'select  -- 订单日报示例',
+      new_string: 'select  -- 订单日报示例（已修改）',
     };
     const firstExecution = replaceTool.execute(firstInput, {
       toolUseId: 'replace_1',
@@ -74,8 +74,8 @@ describe('playground SQL client tools', () => {
 
     await vi.waitFor(() => expect(firstCreate).toHaveBeenCalledTimes(1));
     expect(firstOptions?.fileName).toBe('current.sql');
-    expect(firstOptions?.value).toContain('-select  -- 群聊');
-    expect(firstOptions?.value).toContain('+select  -- 群聊（已修改）');
+    expect(firstOptions?.value).toContain('-select  -- 订单日报示例');
+    expect(firstOptions?.value).toContain('+select  -- 订单日报示例（已修改）');
     expect(firstHost.textContent).toContain('current.sql');
     expect(firstHost.textContent).toContain('+1');
     expect(firstHost.textContent).toContain('-1');
@@ -114,14 +114,14 @@ describe('playground SQL client tools', () => {
       : undefined;
 
     await vi.waitFor(() => expect(replayCreate).toHaveBeenCalledTimes(1));
-    expect(replayOptions?.value).toContain('-select  -- 群聊');
-    expect(replayOptions?.value).toContain('+select  -- 群聊（已修改）');
+    expect(replayOptions?.value).toContain('-select  -- 订单日报示例');
+    expect(replayOptions?.value).toContain('+select  -- 订单日报示例（已修改）');
     expect(replayHost.textContent).toContain('已接受');
     replayView?.unmount();
 
     const secondInput = {
-      old_string: "where dt>='{@date-30}'",
-      new_string: "where dt>='{@date-7}'",
+      old_string: "where o.dt = '{@date}'",
+      new_string: "where o.dt >= '{@date-7}'",
     };
     const secondExecution = replaceTool.execute(secondInput, {
       toolUseId: 'replace_2',
@@ -138,9 +138,9 @@ describe('playground SQL client tools', () => {
       : undefined;
 
     await vi.waitFor(() => expect(secondCreate).toHaveBeenCalledTimes(1));
-    expect(secondOptions?.value).toContain('+select  -- 群聊（已修改）');
-    expect(secondOptions?.value).toMatch(/-\s+where dt>='\{@date-30\}'/);
-    expect(secondOptions?.value).toMatch(/\+\s+where dt>='\{@date-7\}'/);
+    expect(secondOptions?.value).toContain('+select  -- 订单日报示例（已修改）');
+    expect(secondOptions?.value).toMatch(/-\s*where o\.dt = '\{@date\}'/);
+    expect(secondOptions?.value).toMatch(/\+\s*where o\.dt >= '\{@date-7\}'/);
 
     secondHost.querySelector<HTMLButtonElement>('.rp-sql-diff-reject')!.click();
     await expect(secondExecution).resolves.toMatchObject({ isError: true });

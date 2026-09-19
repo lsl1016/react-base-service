@@ -373,9 +373,9 @@ describe('EventReducer - Plan runtime', () => {
       plan,
       onResume: onReject,
     }), rejectHost);
-    const rejectButton = [...rejectHost.querySelectorAll<HTMLButtonElement>('button')]
+    const freshRejectButton = [...rejectHost.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.includes('拒绝'))!;
-    rejectButton.click();
+    freshRejectButton.click();
     expect(onReject).toHaveBeenCalledWith('plan_action', 'wait_action', { approved: false });
     rejectDispose();
   });
