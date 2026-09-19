@@ -31,62 +31,27 @@ type ToolBinding struct {
 	ReadOnly bool
 }
 
-// LoadTools 返回应用在 caller 作用域内、且已被显式授权的全部 http 工具。
-//
-// 授权是显式白名单（tblLlmMcpAppTool，自 mcp-server 移植）：应用未授权任何工具时
-// 返回空清单——tools/list 为空，须先在「MCP 应用」页勾选授权；
-// 授权的工具还须落在 caller 作用域内且处于启用状态。
-func LoadTools(ctx *gin.Context, appID, callerKey string) ([]ToolBinding, error) {
-	grants, err := model.ListMcpAppToolIDs(ctx, appID)
-	if err != nil {
-		return nil, err
-	}
-	bindings, err := loadScopeTools(ctx, callerKey)
-	if err != nil {
-		return nil, err
-	}
-	return applyToolGrants(bindings, grants), nil
+// LoadTools 返回应用绑定的 caller 作用域内全部启用的 http 工具——
+// 作用域即权限：应用绑哪个 caller（含 default 通用作用域），就看得到、调得了哪些工具。
+func LoadTools(ctx *gin.Context, callerKey string) ([]ToolBinding, error) {
+	return loadScopeTools(ctx, callerKey)
 }
 
-// LookupTool 在 tools/call 阶段按工具名复核：caller 作用域内 + 已授权 + 启用。
+// LookupTool 在 tools/call 阶段按工具名复核：仍在 caller 作用域内且启用。
 //
-// tools/list 的结果可能被客户端缓存，授权回收或工具下线后仍可能被调用，
+// tools/list 的结果可能被客户端缓存，工具下线或换绑 caller 后仍可能被调用，
 // 因此每次调用都要重新确认。
-func LookupTool(ctx *gin.Context, appID, callerKey, name string) (*ToolBinding, error) {
-	grants, err := model.ListMcpAppToolIDs(ctx, appID)
-	if err != nil {
-		return nil, err
-	}
-	granted := make(map[string]bool, len(grants))
-	for _, toolID := range grants {
-		granted[toolID] = true
-	}
+func LookupTool(ctx *gin.Context, callerKey, name string) (*ToolBinding, error) {
 	bindings, err := loadScopeTools(ctx, callerKey)
 	if err != nil {
 		return nil, err
 	}
 	for _, binding := range bindings {
-		if binding.Name == name && granted[binding.ToolID] {
+		if binding.Name == name {
 			return &binding, nil
 		}
 	}
 	return nil, nil
-}
-
-// applyToolGrants 把作用域内工具按授权白名单过滤（纯函数，供单测）：
-// 授权清单为空 = 未授权任何工具，结果为空。
-func applyToolGrants(bindings []ToolBinding, grantedToolIDs []string) []ToolBinding {
-	granted := make(map[string]bool, len(grantedToolIDs))
-	for _, toolID := range grantedToolIDs {
-		granted[toolID] = true
-	}
-	filtered := make([]ToolBinding, 0, len(bindings))
-	for _, binding := range bindings {
-		if granted[binding.ToolID] {
-			filtered = append(filtered, binding)
-		}
-	}
-	return filtered
 }
 
 // loadScopeTools 加载 caller 作用域（caller 自身 + default 通用）内启用的 http 工具行。

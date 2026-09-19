@@ -31,8 +31,8 @@ func buildToolHandler(binding ToolBinding) sdk.ToolHandler {
 			return errorResult("服务内部错误：调用方身份缺失，请重新连接 MCP 服务。"), nil
 		}
 
-		// tools/list 结果可能被客户端缓存，每次调用都重新确认工具仍可见且已授权
-		current, err := LookupTool(ginCtx, identity.AppID, identity.CallerKey, toolName)
+		// tools/list 结果可能被客户端缓存，每次调用都重新确认工具仍在作用域内且启用
+		current, err := LookupTool(ginCtx, identity.CallerKey, toolName)
 		if err != nil {
 			zlog.Errorf(ginCtx, "[MCPGW] 工具信息加载失败: tool=%s err=%v", toolName, err)
 			return errorResult("服务内部错误：工具信息加载失败。"), nil

@@ -591,7 +591,8 @@ func ListApps(ctx *gin.Context) {
 		if app.Status == 1 {
 			status = adminStatusEnabled
 		}
-		toolCount, _ := model.CountMcpAppTools(ctx, app.AppID)
+		scopeTools, _ := model.ListGatewayHTTPToolsByCaller(ctx, app.CallerKey)
+		toolCount := int64(len(scopeTools))
 		views = append(views, adminAppView{
 			ID:          int(app.ID),
 			AppName:     app.AppName,
@@ -685,41 +686,23 @@ func fetchAppByNumericID(ctx *gin.Context, id int) *model.McpApp {
 	return nil
 }
 
-func numericIDsToToolIDs(ctx *gin.Context, ids []int) []string {
-	tools := fetchToolsByIDs(ctx, ids)
-	toolIDs := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		toolIDs = append(toolIDs, tool.ToolID)
-	}
-	return toolIDs
-}
-
-// GrantAppTools 全量替换应用授权（数字工具 ID → tool_id）。
+// GrantAppTools 保存应用工具勾选（兼容 mcp-server 前端；作用域即权限，无服务端状态）。
 func GrantAppTools(ctx *gin.Context) {
 	var req adminAppGrantRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
 		return
 	}
-	app := fetchAppByNumericID(ctx, req.AppID)
-	if app == nil {
+	if fetchAppByNumericID(ctx, req.AppID) == nil {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("应用不存在: %d", req.AppID))
 		return
 	}
-	toolIDs := numericIDsToToolIDs(ctx, req.ToolIDs)
-	if len(toolIDs) != len(req.ToolIDs) {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("存在无效的工具 ID"))
-		return
-	}
-	if err := model.ReplaceMcpAppTools(ctx, app.AppID, toolIDs, adminOperator(ctx)); err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
-	zlog.Infof(ctx, "[MCPGW.Admin] 更新应用授权: app=%s count=%d", app.AppName, len(toolIDs))
-	components.RenderJsonSucc(ctx, gin.H{"appId": req.AppID, "toolIds": req.ToolIDs, "count": len(toolIDs)})
+	// 作用域即权限：可见工具由应用绑定的 caller 决定，勾选仅作前端展示，无服务端状态。
+	zlog.Infof(ctx, "[MCPGW.Admin] 保存应用工具勾选(无操作,作用域即权限): appId=%d count=%d", req.AppID, len(req.ToolIDs))
+	components.RenderJsonSucc(ctx, gin.H{"appId": req.AppID, "toolIds": req.ToolIDs, "count": len(req.ToolIDs)})
 }
 
-// UpdateAppToolStatus 应用内工具启停（兼容 mcp-server 语义：下线=从授权白名单移除，上线=加入）。
+// UpdateAppToolStatus 应用内工具启停（兼容接口；作用域即权限，实际启停请用工具自身上下线）。
 func UpdateAppToolStatus(ctx *gin.Context) {
 	var req adminAppGrantRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -730,44 +713,11 @@ func UpdateAppToolStatus(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("status 只允许 1(停用)/2(启用)"))
 		return
 	}
-	app := fetchAppByNumericID(ctx, req.AppID)
-	if app == nil {
+	if fetchAppByNumericID(ctx, req.AppID) == nil {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("应用不存在: %d", req.AppID))
 		return
 	}
-	current, err := model.ListMcpAppToolIDs(ctx, app.AppID)
-	if err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
-	affected := numericIDsToToolIDs(ctx, req.ToolIDs)
-	affectedSet := make(map[string]bool, len(affected))
-	for _, toolID := range affected {
-		affectedSet[toolID] = true
-	}
-	next := make([]string, 0, len(current)+len(affected))
-	seen := make(map[string]bool)
-	if req.Status == adminStatusEnabled {
-		for _, toolID := range current {
-			next = append(next, toolID)
-			seen[toolID] = true
-		}
-		for _, toolID := range affected {
-			if !seen[toolID] {
-				next = append(next, toolID)
-			}
-		}
-	} else {
-		for _, toolID := range current {
-			if !affectedSet[toolID] {
-				next = append(next, toolID)
-			}
-		}
-	}
-	if err := model.ReplaceMcpAppTools(ctx, app.AppID, next, adminOperator(ctx)); err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
+	// 作用域即权限：无服务端授权状态，停用/启用单工具请用工具自身的上下线。
 	components.RenderJsonSucc(ctx, gin.H{"appId": req.AppID, "toolIds": req.ToolIDs, "status": req.Status})
 }
 
@@ -783,7 +733,7 @@ type adminAppToolBinding struct {
 	ReadOnly int   `json:"readOnly"`
 }
 
-// ListAppTools 应用可授权工具清单（status：0=未授权 1=已停用 2=已授权；本融合层不区分停用态，只报 0/2）。
+// ListAppTools 应用可见工具清单（作用域内全部启用 http 工具，恒为已启用状态）。
 func ListAppTools(ctx *gin.Context) {
 	var req adminAppScopeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -794,15 +744,6 @@ func ListAppTools(ctx *gin.Context) {
 	if app == nil {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("应用不存在: %d", req.AppID))
 		return
-	}
-	grants, err := model.ListMcpAppToolIDs(ctx, app.AppID)
-	if err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
-	granted := make(map[string]bool, len(grants))
-	for _, toolID := range grants {
-		granted[toolID] = true
 	}
 	tools, err := model.ListGatewayHTTPToolsByCaller(ctx, app.CallerKey)
 	if err != nil {
@@ -816,10 +757,7 @@ func ListAppTools(ctx *gin.Context) {
 		if strings.EqualFold(cfg.Method, "GET") {
 			readOnly = adminReadOnlyRead
 		}
-		status := 0
-		if granted[tool.ToolID] {
-			status = adminStatusEnabled
-		}
+		status := adminStatusEnabled
 		bindings = append(bindings, adminAppToolBinding{
 			ToolID:   int(tool.ID),
 			Name:     tool.Name,

@@ -58,8 +58,6 @@ type mcpAppView struct {
 	MaskedSecret string `json:"maskedSecret"`
 	CallerKey    string `json:"callerKey"`
 	Status       int    `json:"status"`
-	// GrantedToolCount 是当前生效的工具授权数（0=未授权任何工具，tools/list 为空）。
-	GrantedToolCount int64  `json:"grantedToolCount"`
 	// Endpoint 是外部 MCP 客户端的接入地址（主服务端点；独立网关二进制为 <host>/mcp）。
 	Endpoint   string `json:"endpoint"`
 	CreatedBy  string `json:"createdBy"`
@@ -69,15 +67,13 @@ type mcpAppView struct {
 }
 
 func mcpAppToView(ctx *gin.Context, app model.McpApp) mcpAppView {
-	granted, _ := model.CountMcpAppTools(ctx, app.AppID)
 	return mcpAppView{
-		AppID:            app.AppID,
-		AppName:          app.AppName,
-		AppKey:           app.AppKey,
-		MaskedSecret:     mcpgateway.MaskSecret(app.AppSecret),
-		CallerKey:        app.CallerKey,
-		Status:           app.Status,
-		GrantedToolCount: granted,
+		AppID:        app.AppID,
+		AppName:      app.AppName,
+		AppKey:       app.AppKey,
+		MaskedSecret: mcpgateway.MaskSecret(app.AppSecret),
+		CallerKey:    app.CallerKey,
+		Status:       app.Status,
 		Endpoint:         "/react-base-service/mcp",
 		CreatedBy:        app.CreatedBy,
 		UpdatedBy:        app.UpdatedBy,
@@ -392,115 +388,4 @@ func ListMcpAppLogs(ctx *gin.Context) {
 		})
 	}
 	components.RenderJsonSucc(ctx, gin.H{"total": total, "page": page, "pageSize": pageSize, "logs": views})
-}
-
-// GrantMcpAppTools 全量替换应用的工具授权（显式白名单：空清单=清空授权，应用立即看不到任何工具）。
-// @Summary      授权 MCP 应用工具
-// @Description  按 appId 全量替换授权工具清单（toolIds 为空即清空授权）
-// @Tags         React
-// @Accept       json
-// @Produce      json
-// @Router       /react/mcpapp/grant_tools [post]
-func GrantMcpAppTools(ctx *gin.Context) {
-	var req mcpAppGrantRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
-		return
-	}
-	appID := strings.TrimSpace(req.AppID)
-	if appID == "" {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("appId 不能为空"))
-		return
-	}
-	app, err := model.GetMcpAppByAppID(ctx, appID)
-	if err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
-	if app == nil {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("应用不存在: %s", appID))
-		return
-	}
-	if len(req.ToolIDs) > 200 {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("单次授权不能超过 200 个工具"))
-		return
-	}
-	normalized := make([]string, 0, len(req.ToolIDs))
-	seen := make(map[string]bool, len(req.ToolIDs))
-	for _, toolID := range req.ToolIDs {
-		toolID = strings.TrimSpace(toolID)
-		if toolID == "" || seen[toolID] {
-			continue
-		}
-		seen[toolID] = true
-		normalized = append(normalized, toolID)
-	}
-	if err := model.ReplaceMcpAppTools(ctx, appID, normalized, helpers.GetUserName(ctx)); err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
-	granted, _ := model.CountMcpAppTools(ctx, appID)
-	zlog.Infof(ctx, "[MCPGW] 更新应用工具授权: appId=%s name=%s granted=%d", appID, app.AppName, granted)
-	components.RenderJsonSucc(ctx, gin.H{"appId": appID, "grantedToolCount": granted})
-}
-
-// ListMcpAppGrantableTools 返回应用可授权的工具清单（caller 作用域内启用的 http 工具，含已授权标记）。
-// @Summary      可授权工具清单
-// @Description  按 appId 返回 caller 作用域内可勾选授权的工具与当前授权状态
-// @Tags         React
-// @Accept       json
-// @Produce      json
-// @Router       /react/mcpapp/list_tools [post]
-func ListMcpAppGrantableTools(ctx *gin.Context) {
-	var req mcpAppScopeRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
-		return
-	}
-	appID := strings.TrimSpace(req.AppID)
-	if appID == "" {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("appId 不能为空"))
-		return
-	}
-	app, err := model.GetMcpAppByAppID(ctx, appID)
-	if err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
-	if app == nil {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("应用不存在: %s", appID))
-		return
-	}
-	grants, err := model.ListMcpAppToolIDs(ctx, appID)
-	if err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
-	granted := make(map[string]bool, len(grants))
-	for _, toolID := range grants {
-		granted[toolID] = true
-	}
-	tools, err := model.ListGatewayHTTPToolsByCaller(ctx, app.CallerKey)
-	if err != nil {
-		components.RenderJsonFail(ctx, err)
-		return
-	}
-	type grantableView struct {
-		ToolID      string `json:"toolId"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		CallerKey   string `json:"callerKey"`
-		Granted     bool   `json:"granted"`
-	}
-	views := make([]grantableView, 0, len(tools))
-	for _, tool := range tools {
-		views = append(views, grantableView{
-			ToolID:      tool.ToolID,
-			Name:        tool.Name,
-			Description: tool.Description,
-			CallerKey:   tool.CallerKey,
-			Granted:     granted[tool.ToolID],
-		})
-	}
-	components.RenderJsonSucc(ctx, gin.H{"appId": appID, "callerKey": app.CallerKey, "tools": views})
 }

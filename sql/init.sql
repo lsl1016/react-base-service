@@ -726,16 +726,3 @@ CREATE TABLE IF NOT EXISTS `tblLlmMcpCallLog` (
     INDEX `idx_tool_created` (`tool_name`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP网关调用审计表';
 
--- MCP 网关应用工具授权表（显式白名单：应用未授权任何工具时 tools/list 为空）
-CREATE TABLE IF NOT EXISTS `tblLlmMcpAppTool` (
-    `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `app_id`     VARCHAR(64) NOT NULL COMMENT 'tblLlmMcpApp.app_id',
-    `tool_id`    VARCHAR(64) NOT NULL COMMENT 'tblLlmTool.tool_id',
-    `status`     TINYINT     NOT NULL DEFAULT 1 COMMENT '状态: 0=停用 1=授权生效',
-    `created_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '操作人',
-    `created_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    `deleted_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
-    UNIQUE KEY `uk_app_tool` (`app_id`, `tool_id`),
-    INDEX `idx_tool` (`tool_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP网关应用工具授权表';
