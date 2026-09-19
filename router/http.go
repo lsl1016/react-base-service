@@ -12,6 +12,7 @@ import (
 	"react-base-service/controllers/http/llmmodel"
 	"react-base-service/controllers/http/react"
 	"react-base-service/controllers/http/skill"
+	"react-base-service/controllers/http/setting"
 	"react-base-service/controllers/http/systemprompt"
 	"react-base-service/controllers/http/tool"
 	"react-base-service/helpers"
@@ -149,6 +150,13 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		agentGroup.POST("/list", agent.ListAgents)
 		agentGroup.POST("/detail", agent.GetAgentDetail)
 		agentGroup.POST("/import", agent.ImportAgent)
+	}
+
+	// 运行时设置接口（管理面板「运行时配置」：DB 覆盖 yaml，写后本进程立即生效，多实例靠 TTL 拉平）
+	settingGroup := router.Group("/setting")
+	{
+		settingGroup.POST("/subagent/get", setting.GetSubAgentSetting)
+		settingGroup.POST("/subagent/update", setting.UpdateSubAgentSetting)
 	}
 
 	// Tool 管理接口

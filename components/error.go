@@ -317,3 +317,9 @@ var ErrorAgentImportInvalid = base.Error{
 	ErrNo:  6090004,
 	ErrMsg: "Agent 定义文件非法: %s",
 }
+
+// 运行时设置相关错误 6100xxx（管理面板「运行时配置」在线覆盖 yaml 策略）
+var ErrorRuntimeSettingInvalid = base.Error{
+	ErrNo:  6100001,
+	ErrMsg: "运行时设置非法: %s",
+}

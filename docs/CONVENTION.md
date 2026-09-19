@@ -35,7 +35,7 @@ summary: 定义项目系统文档、变更记录、索引和校验规则
 | 服务 | `service/<模块>/` |
 | 数据 | `models/llm/` |
 
-当前模块枚举：`docs`、`react_runtime`、`plan`、`tool`、`skill`、`memory`、`graph_memory`、`agent`、`workspace`、`async_task`、`mcp`、`bundle`、`caller`、`model`、`system_prompt`、`api_key`、`credits`、`attachment`。
+当前模块枚举：`docs`、`react_runtime`、`plan`、`tool`、`skill`、`memory`、`graph_memory`、`agent`、`workspace`、`async_task`、`mcp`、`bundle`、`caller`、`model`、`system_prompt`、`api_key`、`credits`、`attachment`、`setting`。
 
 ## 3. 元信息规范
 
@@ -96,5 +96,6 @@ bash scripts/check-docs.sh
 
 | 版本 | 日期 | 修改人 | 变更说明 |
 |---|---|---|---|
+| v1.2 | 2026-09-19 | react-base-service 项目组 | 模块枚举新增 `setting`（运行时设置在线配置上线） |
 | v1.1 | 2026-09-19 | react-base-service 项目组 | 模块枚举新增 `plan`（Plan Runtime 上线） |
 | v1.0 | 2026-09-19 | react-base-service 项目组 | 建立文档分类、模块枚举、保留策略和机器校验规则 |

@@ -45,7 +45,8 @@ func outerExecutionProfile() ExecutionProfile {
 		AllowSkills:             true,
 		AllowMemory:             conf.CustomConf.LLM.React.Memory.MemoryEnabled(),
 		AllowGraphMemory:        conf.CustomConf.LLM.React.GraphMemory.GraphMemoryEnabled(),
-		AllowSubagent:           conf.CustomConf.LLM.React.SubAgent.SubAgentEnabled(),
+		// 经 GetReactRuntimeConfig 取值以合并管理面板「运行时配置」的 DB 覆盖（与 delegate/装配同口径）。
+		AllowSubagent:           conf.GetReactRuntimeConfig().SubAgent.SubAgentEnabled(),
 		AllowWorkspace:          conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled(),
 		AllowAnalysisTools:      true,
 		InjectAsyncTaskReminder: true,

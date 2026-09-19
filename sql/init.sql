@@ -2,7 +2,7 @@
 -- react-base-service 建库建表脚本（新环境全量初始化）
 --
 -- 说明：
--- 1. 本脚本整合基座服务运行所需的全部 25 张表（含 Plan Runtime V1 六张核心表与各历史迁移的最终列状态）。
+-- 1. 本脚本整合基座服务运行所需的全部 26 张表（含 Plan Runtime V1 六张核心表与各历史迁移的最终列状态）。
 -- 2. 基座服务不含知识库；Plan Runtime V1 使用独立持久化表，不改变 ReAct 核心三表。
 -- 3. tblLlmReactSession/tblLlmReactRun/tblLlmReactMessage 等表在源仓库中无
 --    CREATE TABLE 存档（仅存于现网库），此处按 GORM 模型定义忠实重建；
@@ -667,3 +667,17 @@ CREATE TABLE IF NOT EXISTS `tblLlmMemoryRevision` (
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     INDEX `idx_item` (`item_id`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='长期记忆修订流水表';
+
+-- ---------------------------------------------------------------------------
+-- 运行时设置（管理面板在线覆盖 yaml 策略；存量环境增量脚本见 sql/runtime_setting_v1.sql）
+-- ---------------------------------------------------------------------------
+-- 运行时设置表（setting_key 单行 JSON，当前仅 subagent 委派策略）
+CREATE TABLE IF NOT EXISTS `tblLlmRuntimeSetting` (
+    `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `setting_key` VARCHAR(64)  NOT NULL COMMENT '设置键(当前仅subagent,预留扩展)',
+    `value_json`  MEDIUMTEXT   NOT NULL COMMENT '设置值JSON(可空字段=未覆盖,回落yaml)',
+    `updated_by`  VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '最近更新人',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_setting_key` (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM运行时设置表(管理面板在线覆盖yaml策略)';

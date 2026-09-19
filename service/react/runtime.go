@@ -457,8 +457,9 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	toolsIndexSnapshotJSON := buildToolIndexSnapshotJSON(tools)
 
 	// 子 Agent 清单：subagent.enabled 时装配，用于 delegate_agent 工具描述动态渲染与委派解析。
+	// 经 GetReactRuntimeConfig 取值以合并管理面板「运行时配置」的 DB 覆盖（与 delegate/profile 同口径）。
 	var agents []model.Agent
-	if conf.CustomConf.LLM.React.SubAgent.SubAgentEnabled() {
+	if conf.GetReactRuntimeConfig().SubAgent.SubAgentEnabled() {
 		agents, err = services.agentResolver().FindVisible(ctx, payload.CallerKey, routeValues)
 		if err != nil {
 			return nil, err

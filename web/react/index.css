@@ -1078,3 +1078,81 @@
   color: #15803d;
   background: rgba(34, 197, 94, 0.12);
 }
+
+/* 运行时配置面板：每行 = 覆盖小开关 + 字段名/说明 + 值控件 + 来源徽标 */
+.rp-setting-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rp-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.35);
+}
+
+.rp-setting-row:last-child {
+  border-bottom: none;
+}
+
+/* 「覆盖」小开关：比 rp-switch 略小，行内语义是「本字段是否由面板接管」 */
+.rp-smaller-switch {
+  width: 28px;
+  height: 16px;
+  flex: none;
+}
+
+.rp-smaller-switch::after {
+  width: 12px;
+  height: 12px;
+}
+
+.rp-smaller-switch.rp-on::after {
+  transform: translateX(12px);
+}
+
+.rp-setting-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text, #1e293b);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rp-setting-hint {
+  font-size: 11px;
+  color: var(--muted, #64748b);
+}
+
+.rp-setting-input {
+  width: 110px;
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text, #1e293b);
+}
+
+.rp-setting-input:disabled {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted, #94a3b8);
+}
+
+.rp-setting-note {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  line-height: 1.6;
+}
+
+.rp-setting-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}

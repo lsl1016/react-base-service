@@ -553,17 +553,9 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 	memory.Reflection = reflection
 	cfg.Memory = memory
 
-	subAgent := cfg.SubAgent
-	if subAgent.MaxParallel <= 0 {
-		subAgent.MaxParallel = defaultReactSubAgentMaxParallel
-	}
-	if subAgent.DefaultMaxSteps <= 0 {
-		subAgent.DefaultMaxSteps = defaultReactSubAgentMaxSteps
-	}
-	if subAgent.MaxDepth <= 0 {
-		subAgent.MaxDepth = defaultReactSubAgentMaxDepth
-	}
-	cfg.SubAgent = subAgent
+	// subagent 策略统一经 EffectiveSubAgentConfig 合并管理面板「运行时配置」的 DB 覆盖
+	//（覆盖 > yaml > 内置默认），与 /setting/subagent 面板响应口径一致。
+	cfg.SubAgent = EffectiveSubAgentConfig(GetRuntimeSettingOverride().SubAgent)
 
 	workspace := cfg.Workspace
 	if strings.TrimSpace(workspace.RootDir) == "" {

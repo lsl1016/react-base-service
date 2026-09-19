@@ -889,6 +889,17 @@ const resources = {
     toDraft: (item) => ({ ...item }),
     columns: [],
   },
+  // 运行时配置：custom.yaml 策略的在线覆盖面板（DB 覆盖 > yaml > 默认；写后新 run 生效）。
+  runtimeSetting: {
+    title: '运行时配置',
+    tabText: '运行时配置',
+    idKey: 'settingKey',
+    cardList: true,
+    cardKind: 'setting',
+    noCreate: true,
+    listPath: '/setting/subagent/get',
+    columns: [],
+  },
 };
 
 const management = {
@@ -926,6 +937,12 @@ const management = {
     $('management-modal-save').addEventListener('click', () => this.save());
     $('management-body').addEventListener('click', (event) => this.handleTableClick(event));
     $('management-cards').addEventListener('click', (event) => this.handleTableClick(event));
+    // 运行时配置面板的数字输入（data-setting-input=字段名）走 input 事件委托。
+    $('management-cards').addEventListener('input', (event) => {
+      const field = event.target.closest('[data-setting-input]')?.dataset.settingInput;
+      if (!field || !this.settingDraft?.[field]) return;
+      this.settingDraft[field].value = event.target.value;
+    });
     this.renderShell();
   },
   resource() { return resources[this.type]; },
@@ -980,6 +997,13 @@ const management = {
       // Caller 筛选资源：选中值优先（空 = 全部 caller），未启用筛选的资源沿用全局 callerKey。
       const callerKey = resource.callerFilter ? callerFilterValue() : config.callerKey;
       const data = await post(resource.listPath, { callerKey, routeValues: config.routeValues });
+      // 运行时配置返回单个生效视图对象而非列表，单独落 draft。
+      if (resource.cardKind === 'setting') {
+        this.settingData = data;
+        this.setState('');
+        this.renderTable();
+        return;
+      }
       this.items = Array.isArray(data) ? data.map(resource.toDraft) : [];
       this.setState('');
       this.renderTable();
@@ -1031,6 +1055,10 @@ const management = {
   },
   renderTable() {
     const resource = this.resource();
+    if (resource.cardKind === 'setting') {
+      this.renderSettingPanel();
+      return;
+    }
     if (resource.cardKind === 'bundle') {
       this.renderBundleCards();
       return;
@@ -1184,6 +1212,124 @@ const management = {
       </div>`).join('');
     this.visibleItems = rows;
   },
+  // 运行时配置面板：DB 覆盖 > custom.yaml > 内置默认。每字段「覆盖开关 + 值控件 + 来源徽标」，
+  // 覆盖关闭 = 该字段回落 yaml/默认（保存时进 clearFields）；来源徽标展示当前生效值从哪来。
+  renderSettingPanel() {
+    const container = $('management-cards');
+    const data = this.settingData;
+    if (!data) {
+      container.innerHTML = '<div class="rp-mcp-empty">暂无配置数据</div>';
+      return;
+    }
+    if (!this.settingDraft || this.settingDraftKey !== 'subagent') {
+      const override = data.override ?? {};
+      this.settingDraftKey = 'subagent';
+      this.settingDraft = {
+        enabled: { useOverride: override.enabled != null, value: override.enabled ?? data.effective.enabled },
+        maxParallel: { useOverride: override.maxParallel != null, value: override.maxParallel ?? data.effective.maxParallel },
+        defaultMaxSteps: { useOverride: override.defaultMaxSteps != null, value: override.defaultMaxSteps ?? data.effective.defaultMaxSteps },
+        maxDepth: { useOverride: override.maxDepth != null, value: override.maxDepth ?? data.effective.maxDepth },
+      };
+    }
+    const draft = this.settingDraft;
+    const sourceLabel = { override: '覆盖', yaml: 'yaml', default: '默认' };
+    const rows = [
+      { field: 'enabled', label: '委派总开关', hint: 'subagent.enabled：开启后主 Agent 才会装配 delegate_agent 工具', type: 'switch', range: '' },
+      { field: 'maxParallel', label: '并行上限', hint: '同一轮多个 delegate_agent 调用的并行度（1-8）', type: 'number', range: '1-8' },
+      { field: 'defaultMaxSteps', label: '子 run 默认步数上限', hint: 'agent 未配置 max_steps 时的子 run 步数上限（1-64）', type: 'number', range: '1-64' },
+      { field: 'maxDepth', label: '委派嵌套深度上限', hint: '子 Agent 再委派的最大深度，防递归失控（1-4）', type: 'number', range: '1-4' },
+    ].map(({ field, label, hint, type, range }) => {
+      const state = draft[field];
+      const source = data.sources?.[field]?.source ?? 'default';
+      const effective = data.effective[field];
+      const control = type === 'switch'
+        ? `<button class="rp-button rp-switch ${state.value ? 'rp-on' : ''}" data-action="setting-switch" data-field="${field}" type="button" title="${state.value ? '开启' : '关闭'}" ${state.useOverride ? '' : 'disabled'}></button>`
+        : `<input class="rp-setting-input" data-setting-input="${field}" type="number" min="1" value="${state.value}" placeholder="${effective}" ${state.useOverride ? '' : 'disabled'}>`;
+      return `
+      <div class="rp-setting-row">
+        <label class="rp-button rp-switch rp-smaller-switch ${state.useOverride ? 'rp-on' : ''}" data-action="setting-override" data-field="${field}" type="button" title="${state.useOverride ? '覆盖中：保存时提交面板值' : '未覆盖：保存时清除覆盖，回落 yaml/默认值'}"></label>
+        <span class="rp-setting-label">${escapeHtml(label)}<span class="rp-setting-hint">${escapeHtml(hint)}${range ? `（${range}）` : ''}</span></span>
+        ${control}
+        <span class="rp-mcp-badge ${source === 'override' ? 'rp-mcp-badge-ok' : 'rp-mcp-badge-off'}" title="当前生效值来源：${source === 'override' ? 'DB 覆盖（本面板可改）' : source === 'yaml' ? 'custom.yaml 配置' : '内置默认值'}">${sourceLabel[source] || source}·生效 ${type === 'switch' ? (effective ? '开' : '关') : effective}</span>
+      </div>`;
+    }).join('');
+    const audit = data.updatedBy
+      ? `<span class="rp-mcp-endpoint">最近更新：${escapeHtml(data.updatedBy)} · ${escapeHtml(data.updatedAt || '-')}</span>`
+      : '<span class="rp-mcp-endpoint">尚未通过面板设置过（当前全部回落 yaml/默认值）</span>';
+    container.innerHTML = `
+      <div class="rp-mcp-card">
+        <div class="rp-mcp-card-head">
+          <span class="rp-mcp-name">subagent 委派策略</span>
+          <span class="rp-mcp-kind">delegate_agent</span>
+          ${data.effective.enabled ? '<span class="rp-mcp-badge rp-mcp-badge-ok">已开启</span>' : '<span class="rp-mcp-badge rp-mcp-badge-off">已关闭</span>'}
+          ${audit}
+        </div>
+        <div class="rp-mcp-card-body">
+          <div class="rp-setting-rows">${rows}</div>
+          <div class="rp-setting-note">每行左侧小开关 = 「覆盖」：开启时保存面板值进 DB，关闭时清除该字段覆盖、回落 custom.yaml / 默认值。保存后新 run / 下一次委派即生效，运行中的 run 不受影响；多实例部署约 10 秒内拉平。</div>
+          <div class="rp-setting-actions">
+            <button class="rp-button rp-primary-btn" data-action="setting-save" type="button">保存</button>
+            <button class="rp-button" data-action="setting-reload" type="button">放弃修改</button>
+          </div>
+        </div>
+      </div>`;
+  },
+  handleSettingClick(event, action) {
+    const field = event.target.closest('[data-field]')?.dataset.field;
+    if (action === 'setting-override' && field) {
+      const state = this.settingDraft[field];
+      state.useOverride = !state.useOverride;
+      // 打开覆盖时以当前生效值/DB 覆盖值为起点，避免一打开就提交出界值。
+      if (state.useOverride && (state.value == null || state.value === '')) {
+        state.value = this.settingData.effective[field];
+      }
+      this.renderSettingPanel();
+      return;
+    }
+    if (action === 'setting-switch' && field) {
+      this.settingDraft[field].value = !this.settingDraft[field].value;
+      this.renderSettingPanel();
+      return;
+    }
+    if (action === 'setting-reload') {
+      this.settingDraft = null;
+      this.reload();
+      return;
+    }
+    if (action === 'setting-save') {
+      this.saveSetting();
+    }
+  },
+  async saveSetting() {
+    const draft = this.settingDraft;
+    const payload = { clearFields: [] };
+    for (const [field, state] of Object.entries(draft)) {
+      if (!state.useOverride) {
+        payload.clearFields.push(field);
+        continue;
+      }
+      if (field === 'enabled') {
+        payload.enabled = Boolean(state.value);
+        continue;
+      }
+      const num = Number(state.value);
+      if (!Number.isFinite(num) || num < 1) {
+        this.setState(`${field} 需要填写 ≥1 的数字`, true);
+        return;
+      }
+      payload[field] = num;
+    }
+    this.setState('保存中...');
+    try {
+      const data = await post('/setting/subagent/update', payload);
+      this.settingData = data;
+      this.settingDraft = null;
+      this.setState('已保存（新 run / 下一次委派生效）');
+      this.renderSettingPanel();
+    } catch (error) {
+      this.setState(error.message || '保存失败', true);
+    }
+  },
   async uninstallBundle(item) {
     if (!confirm(`确认卸载 Bundle「${item.name}」吗？安装时新建的资源将被删除，覆盖的资源会恢复到安装前状态。`)) return;
     this.setState(`正在卸载 ${item.name}...`);
@@ -1215,6 +1361,11 @@ const management = {
   handleTableClick(event) {
     const action = event.target.closest('[data-action]')?.dataset.action;
     if (!action) return;
+    // 运行时配置面板的行内控件没有 data-index（非列表项），先于通用行分发处理。
+    if (this.type === 'runtimeSetting') {
+      this.handleSettingClick(event, action);
+      return;
+    }
     const item = this.itemFromEvent(event);
     if (!item) return;
     if (action === 'edit') this.openEdit(item);
