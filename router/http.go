@@ -33,8 +33,10 @@ func Http(engine *gin.Engine) {
 	registerHealthRoutes(engine)
 	registerMetricsRoute(engine)
 	// MCP 网关管理台（mcp-server 移植的 Vue SPA）：页面走业务前缀，
-	// 其构建产物引用根路径 /assets/* 与 /favicon.svg（Vite 绝对路径），一并挂根。
+	// 其构建产物引用根路径 /assets/* 与 /favicon.svg（Vite 绝对路径），一并挂根；
+	// SPA 的 axios baseURL 构建期为 /api，接口兼容层同样挂根 /api/manage/*。
 	registerMcpAdminRoutes(engine)
+	registerMcpAdminAPI(engine)
 
 	router := engine.Group("/react-base-service")
 
@@ -109,24 +111,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/mcpapp/delete", react.DeleteMcpApp)
 		reactGroup.POST("/mcpapp/reset_secret", react.ResetMcpAppSecret)
 		reactGroup.POST("/mcpapp/logs", react.ListMcpAppLogs)
-	reactGroup.POST("/mcpapp/grant_tools", react.GrantMcpAppTools)
+		reactGroup.POST("/mcpapp/grant_tools", react.GrantMcpAppTools)
 		reactGroup.POST("/mcpapp/list_tools", react.ListMcpAppGrantableTools)
-		// MCP 网关管理台（mcp-server Vue SPA）的 /api/manage 兼容接口
-		//（见 controllers/http/mcpadmin；页面在 /react/mcp-admin）。
-		adminAPI := router.Group("/api/manage")
-		adminAPI.Use(mcpadmin.Auth)
-		{
-			adminAPI.POST("/tools/list", mcpadmin.ListTools)
-			adminAPI.POST("/tools/search", mcpadmin.SearchTools)
-			adminAPI.POST("/tools/batchCreate", mcpadmin.BatchCreateTools)
-			adminAPI.POST("/tools/batchUpdate", mcpadmin.BatchUpdateTools)
-			adminAPI.POST("/tools/batchUpdateStatus", mcpadmin.BatchUpdateToolStatus)
-			adminAPI.POST("/app/list", mcpadmin.ListApps)
-			adminAPI.POST("/app/create", mcpadmin.CreateApp)
-			adminAPI.POST("/app/grantTools", mcpadmin.GrantAppTools)
-			adminAPI.POST("/app/updateToolStatus", mcpadmin.UpdateAppToolStatus)
-			adminAPI.POST("/app/listTools", mcpadmin.ListAppTools)
-		}
 		// Agent Bundle 插件包管理（P3：安装展开写入注册表、卸载回滚，见 controllers/http/react/bundle.go）
 		reactGroup.POST("/bundle/install", react.InstallBundle)
 		reactGroup.POST("/bundle/uninstall", react.UninstallBundle)
@@ -205,7 +191,6 @@ func InitLLMRouter(router *gin.RouterGroup) {
 	toolGroup := router.Group("/tool")
 	{
 		toolGroup.POST("/register", tool.RegisterTool)
-		toolGroup.POST("/batch_register", tool.BatchRegisterTool)
 		toolGroup.POST("/update", tool.UpdateTool)
 		toolGroup.POST("/delete", tool.DeleteTool)
 		toolGroup.POST("/list", tool.ListTools)
@@ -267,6 +252,25 @@ func registerMcpAdminRoutes(engine *gin.Engine) {
 	router.GET("/react/mcp-admin", serveMcpAdminIndex)
 	engine.GET("/favicon.svg", serveMcpAdminFavicon)
 	engine.GET("/assets/*path", serveMcpAdminAsset)
+}
+
+// registerMcpAdminAPI 挂载管理台的 /api/manage 协议兼容层（SPA 的 axios
+// baseURL 构建期固定为 /api，故必须挂根路径；见 controllers/http/mcpadmin）。
+func registerMcpAdminAPI(engine *gin.Engine) {
+	adminAPI := engine.Group("/api/manage")
+	adminAPI.Use(mcpadmin.Auth)
+	{
+		adminAPI.POST("/tools/list", mcpadmin.ListTools)
+		adminAPI.POST("/tools/search", mcpadmin.SearchTools)
+		adminAPI.POST("/tools/batchCreate", mcpadmin.BatchCreateTools)
+		adminAPI.POST("/tools/batchUpdate", mcpadmin.BatchUpdateTools)
+		adminAPI.POST("/tools/batchUpdateStatus", mcpadmin.BatchUpdateToolStatus)
+		adminAPI.POST("/app/list", mcpadmin.ListApps)
+		adminAPI.POST("/app/create", mcpadmin.CreateApp)
+		adminAPI.POST("/app/grantTools", mcpadmin.GrantAppTools)
+		adminAPI.POST("/app/updateToolStatus", mcpadmin.UpdateAppToolStatus)
+		adminAPI.POST("/app/listTools", mcpadmin.ListAppTools)
+	}
 }
 
 func serveMcpAdminIndex(ctx *gin.Context) {

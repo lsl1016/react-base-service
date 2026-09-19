@@ -957,25 +957,9 @@ const management = {
     });
     $('management-add').addEventListener('click', () => this.openCreate());
     $('management-import').addEventListener('click', () => this.openImport());
-    $('management-batch').addEventListener('click', () => this.openBatchTools());
     $('management-gwadmin').addEventListener('click', () => window.open('/react-base-service/react/mcp-admin', '_blank'));
     $('management-refresh').addEventListener('click', () => this.refresh());
     $('management-modal-body').addEventListener('click', (event) => {
-      const batchAction = event.target.closest('[data-batch-action]')?.dataset.batchAction;
-      if (batchAction) {
-        this.syncBatchDraftFromModal();
-        if (batchAction === 'tab') this.activeBatchIndex = Number(event.target.closest('[data-batch-action]').dataset.batchIndex) || 0;
-        if (batchAction === 'add') {
-          this.batchDrafts.push(this.emptyBatchToolDraft());
-          this.activeBatchIndex = this.batchDrafts.length - 1;
-        }
-        if (batchAction === 'remove') {
-          this.batchDrafts.splice(this.activeBatchIndex, 1);
-          this.activeBatchIndex = Math.max(0, this.activeBatchIndex - 1);
-        }
-        this.renderModal();
-        return;
-      }
       const logsAction = event.target.closest('[data-logs-action]')?.dataset.logsAction;
       if (logsAction) {
         if (logsAction === 'prev') this.logsState.page = Math.max(1, this.logsState.page - 1);
@@ -1024,9 +1008,8 @@ const management = {
     document.querySelector('.rp-caller-filter-field')?.classList.toggle('rp-hidden', !resource.callerFilter);
     document.querySelector('.rp-mcp-filter-field')?.classList.toggle('rp-hidden', !resource.mcpFilter);
     $('management-head').innerHTML = useCards ? '' : `<tr class="rp-table-row">${resource.columns.map(([, label]) => `<th class="rp-table-cell rp-table-header-cell">${label}</th>`).join('')}</tr>`;
-    // 工具管理页提供「批量注册」（多草稿 Tab 批量登记 http 工具），其余页隐藏；
-    // MCP 相关页提供「网关管理台」入口（mcp-server 风格的独立管理页）。
-    $('management-batch').hidden = this.type !== 'tool';
+    // MCP 相关页提供「网关管理台」入口（mcp-server 风格的独立管理页，
+    // 工具批量注册/编辑/上下线/应用授权都在管理台里做）。
     $('management-gwadmin').hidden = !(this.type === 'mcp' || this.type === 'mcpapp');
   },
   // 拉取 caller 清单填充筛选下拉：固定「全部 / 默认」+ 扁平的 caller 列表（平台并入文案）。
@@ -1401,101 +1384,6 @@ const management = {
       this.setState(error.message || '保存授权失败', true);
     }
   },
-  // 批量注册：多草稿 Tab 批量登记 http 工具（对齐 mcp-server 管理台的批量注册交互）。
-  openBatchTools() {
-    this.mode = 'batchTools';
-    this.batchDrafts = [this.emptyBatchToolDraft()];
-    this.activeBatchIndex = 0;
-    this.renderModal();
-  },
-  emptyBatchToolDraft() {
-    return {
-      name: '',
-      description: '',
-      url: '',
-      method: 'POST',
-      timeoutMs: 10000,
-      headersText: '{}',
-      inputSchemaText: '{\n  "type": "object",\n  "properties": {}\n}',
-      outputSchemaText: '',
-    };
-  },
-  renderBatchToolsBody() {
-    const drafts = this.batchDrafts;
-    const index = this.activeBatchIndex;
-    const draft = drafts[index] ?? drafts[0];
-    const methodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-    return `
-      <div class="rp-row-actions" style="flex-wrap:wrap;margin-bottom:8px">
-        ${drafts.map((item, i) => `<button class="rp-button ${i === index ? 'rp-primary-btn' : ''}" data-batch-action="tab" data-batch-index="${i}" type="button">${escapeHtml(item.name || `草稿${i + 1}`)}</button>`).join('')}
-        <button class="rp-button" data-batch-action="add" type="button">＋新增草稿</button>
-        ${drafts.length > 1 ? `<button class="rp-button rp-danger-link" data-batch-action="remove" type="button">删除当前草稿</button>` : ''}
-      </div>
-      <div class="rp-form-grid">
-        <label class="rp-field"><span class="rp-field-label">工具名称（英文标识）</span><input class="rp-control rp-control-size-default" data-batch-field="name" value="${escapeHtml(draft.name)}" /></label>
-        <label class="rp-field"><span class="rp-field-label">请求方法</span><select class="rp-control rp-control-size-default" data-batch-field="method">${methodOptions.map((m) => `<option value="${m}" ${draft.method === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
-        <label class="rp-field rp-span-all"><span class="rp-field-label">上游 URL</span><input class="rp-control rp-control-size-default" data-batch-field="url" value="${escapeHtml(draft.url)}" placeholder="https://api.example.com/endpoint" /></label>
-        <label class="rp-field"><span class="rp-field-label">超时(ms, 100-120000)</span><input class="rp-control rp-control-size-default" data-batch-field="timeoutMs" value="${escapeHtml(String(draft.timeoutMs))}" /></label>
-        <label class="rp-field"><span class="rp-field-label">归属 caller</span><input class="rp-control rp-control-size-default" value="${escapeHtml(createTargetCallerKey())}" readonly disabled /></label>
-        <label class="rp-field rp-span-all"><span class="rp-field-label">工具描述（给模型看）</span><textarea class="rp-control rp-textarea" data-batch-field="description">${escapeHtml(draft.description)}</textarea></label>
-        <label class="rp-field rp-span-all"><span class="rp-field-label">请求头 JSON</span><textarea class="rp-control rp-textarea rp-code-textarea" data-batch-field="headersText" spellcheck="false">${escapeHtml(draft.headersText)}</textarea></label>
-        <label class="rp-field rp-span-all"><span class="rp-field-label">入参 Schema（JSON Schema）</span><textarea class="rp-control rp-textarea rp-code-textarea" data-batch-field="inputSchemaText" spellcheck="false">${escapeHtml(draft.inputSchemaText)}</textarea></label>
-        <label class="rp-field rp-span-all"><span class="rp-field-label">出参 Schema（可选；加 "x-output-projection": true 启用网关投影+字段说明）</span><textarea class="rp-control rp-textarea rp-code-textarea" data-batch-field="outputSchemaText" spellcheck="false">${escapeHtml(draft.outputSchemaText)}</textarea></label>
-      </div>`;
-  },
-  syncBatchDraftFromModal() {
-    const draft = this.batchDrafts?.[this.activeBatchIndex];
-    if (!draft) return;
-    $('management-modal-body').querySelectorAll('[data-batch-field]').forEach((field) => {
-      draft[field.dataset.batchField] = field.value;
-    });
-  },
-  async submitBatchTools() {
-    this.syncBatchDraftFromModal();
-    const callerKey = createTargetCallerKey();
-    const tools = [];
-    for (const [i, draft] of (this.batchDrafts ?? []).entries()) {
-      if (!draft.name?.trim() || !draft.url?.trim()) throw new Error(`草稿 ${i + 1} 缺少工具名称或上游 URL`);
-      let headers = {};
-      let inputSchema = {};
-      let outputSchema = null;
-      try {
-        headers = draft.headersText?.trim() ? JSON.parse(draft.headersText) : {};
-      } catch (error) { throw new Error(`草稿 ${i + 1} 请求头不是合法 JSON：${error.message}`); }
-      try {
-        inputSchema = draft.inputSchemaText?.trim() ? JSON.parse(draft.inputSchemaText) : {};
-      } catch (error) { throw new Error(`草稿 ${i + 1} 入参 Schema 不是合法 JSON：${error.message}`); }
-      try {
-        if (draft.outputSchemaText?.trim()) outputSchema = JSON.parse(draft.outputSchemaText);
-      } catch (error) { throw new Error(`草稿 ${i + 1} 出参 Schema 不是合法 JSON：${error.message}`); }
-      const config = {
-        url: draft.url.trim(),
-        method: draft.method,
-        timeout_ms: Number(draft.timeoutMs) || 10000,
-        headers,
-        inputSchema,
-      };
-      if (outputSchema) config.outputSchema = outputSchema;
-      tools.push({
-        name: draft.name.trim(),
-        description: draft.description?.trim() || draft.name.trim(),
-        toolType: 'http',
-        callerKey,
-        routeValues: [],
-        config,
-      });
-    }
-    this.setState('正在批量注册...');
-    const result = await post('/tool/batch_register', { tools });
-    this.closeModal();
-    await this.reload();
-    const failed = Array.isArray(result?.results) ? result.results.filter((item) => item.error) : [];
-    if (failed.length) {
-      this.setState(`批量注册完成：成功 ${result?.created ?? 0} 条，失败 ${failed.length} 条（${failed.map((item) => `${item.name}: ${shortText(item.error, 60)}`).join('；')}）`, true);
-    } else {
-      this.setState(`批量注册完成：成功 ${result?.created ?? 0} 条`);
-    }
-  },
   // P3 Bundle 已装卡片：名称/版本/来源与钉住的 commit/资源计数/卸载。
   renderBundleCards() {
     const rows = this.filteredItems();
@@ -1813,17 +1701,6 @@ const management = {
       $('management-modal-mask').classList.add('rp-visible');
       return;
     }
-    if (this.mode === 'batchTools') {
-      $('management-modal-title').textContent = '批量注册工具';
-      $('management-modal-body').innerHTML = `
-        <div class="rp-operation-note">多草稿批量登记 http 工具（归属 caller 跟随 Caller 筛选）。工具经 MCP 网关对外暴露；出参 Schema 加 "x-output-projection": true 可启用服务端投影裁剪与字段说明渲染。</div>
-        ${this.renderBatchToolsBody()}`;
-      saveButton.hidden = false;
-      saveButton.textContent = '统一提交';
-      cancelButton.textContent = '取消';
-      $('management-modal-mask').classList.add('rp-visible');
-      return;
-    }
     saveButton.hidden = false;
     saveButton.textContent = '保存';
     cancelButton.textContent = '取消';
@@ -1891,14 +1768,6 @@ const management = {
     const resource = this.resource();
     if (this.mode === 'mcpGrants') {
       await this.saveMcpAppGrants();
-      return;
-    }
-    if (this.mode === 'batchTools') {
-      try {
-        await this.submitBatchTools();
-      } catch (error) {
-        this.setState(error.message || '批量注册失败', true);
-      }
       return;
     }
     this.syncDraftFromModal();

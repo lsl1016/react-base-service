@@ -49,7 +49,7 @@ react-base-service 同时是 MCP **客户端**（`service/mcpclient`，连接上
 | `/react-base-service/react/mcpapp/logs` | POST | 调用审计分页查询（appKey/toolName 过滤） | `react.ListMcpAppLogs` |
 | `/react-base-service/react/mcpapp/grant_tools` | POST | 全量替换应用的工具授权（空清单=清空） | `react.GrantMcpAppTools` |
 | `/react-base-service/react/mcpapp/list_tools` | POST | 可授权工具清单（caller 作用域内，含已授权标记） | `react.ListMcpAppGrantableTools` |
-| `/react-base-service/tool/batch_register` | POST | 工具批量注册（逐条成败；outputSchema 含投影时校验语法） | `tool.BatchRegisterTool` |
+| `/api/manage/*` | POST | 网关管理台（Vue SPA）协议兼容层（tools×5 + app×5；SPA 的 axios baseURL 构建期固定为 /api，故挂根路径） | `mcpadmin` |
 
 ## 3. 核心逻辑
 
@@ -83,7 +83,7 @@ tools/call → 复核可见性 → 入参 JSON Schema 校验（缺必填字段�
 
 1. **裁剪**：按 schema 递归投影上游响应——`properties`/`patternProperties`/`additionalProperties`/`items`/`prefixItems` 声明内的字段保留，未声明的丢弃；支持 `$ref`（本地）合并、`allOf`、`oneOf`/`anyOf`（按值匹配分支）、`if/then/else`；深度上限 64，字段说明上限 200 条。
 2. **描述渲染**：schema 里的根 `description` 与各字段 `description` 渲染进 Content 文本——「结果说明：… / 字段说明：- path：description / 结果：{json}」；`StructuredContent` 同时携带投影后的结构化 JSON。
-3. **注册时校验**：批量注册与 buildToolDefinition 均调 `toolconfig.ValidateOutputSchema`——投影语法（循环 $ref、外部 $ref、非法 patternProperties 正则等）在保存阶段拒绝。
+3. **注册时校验**：管理台批量注册与 buildToolDefinition 均调 `toolconfig.ValidateOutputSchema`——投影语法（循环 $ref、外部 $ref、非法 patternProperties 正则等）在保存阶段拒绝。
 
 未开启投影时行为完全兼容：成功保留完整结构化 JSON，失败只回传上游错误文案。
 
@@ -118,9 +118,8 @@ mcp_server:
 ## 6. playground 页面与管理台
 
 - **MCP 应用**（playground tab）：应用卡片（appKey 一键复制/secret 打码/绑定 caller/接入端点/已授权工具数）+ 创建与重置密钥弹窗（完整 secret 一次性展示）+ **工具授权**弹窗（勾选 caller 作用域内工具，全选/清空，全量替换）+ 调用记录分页弹层。「MCP 连接」「MCP 应用」两页工具栏有「网关管理台 ↗」入口。
-- **网关管理台**（`/react-base-service/react/mcp-admin`）：mcp-server 项目 Vue3 管理台的**原版前端**（`web/mcp-admin/dist` 经 go:embed 内嵌），含工具列表/批量注册（多草稿）/编辑/批量上下线与应用创建/授权页。后端为 `/api/manage/*` 协议兼容层（`controllers/http/mcpadmin`），字段映射：数字 id ↔ tblLlmTool 主键、bizTag ↔ caller 作用域、requestConfig/readOnly ↔ config 的 method/headers/timeout（GET=只读）、status 1/2 ↔ 0/1；应用创建默认绑定 default 作用域（改绑定走 playground「MCP 应用」页）。
+- **网关管理台**（`/react-base-service/react/mcp-admin`）：mcp-server 项目 Vue3 管理台的**原版前端**（`web/mcp-admin/dist` 经 go:embed 内嵌），含工具列表/批量注册（多草稿）/编辑/批量上下线与应用创建/授权页。后端为 `/api/manage/*` 协议兼容层（`controllers/http/mcpadmin`），字段映射：数字 id ↔ tblLlmTool 主键、bizTag ↔ caller 作用域、requestConfig/readOnly ↔ config 的 method/headers/timeout（GET=只读）、status 1/2 ↔ 0/1；应用创建默认绑定 default 作用域（改绑定走 playground「MCP 应用」页）。**工具的批量注册/编辑统一在管理台完成**（早期的 playground 原生「批量注册」弹窗与 `/tool/batch_register` 接口已随之移除）。
 - **管理台鉴权**：`X-Admin-Token` 静态令牌；`mcp_server.admin_tokens` 配置白名单时按白名单校验，空列表 = 接受任意非空令牌（内网联调默认）；无效令牌返回 errNo 2001 触发右上角「管理令牌」弹窗。`X-Admin-User` 记录操作者。
-- **工具管理 → 批量注册**（playground 原生实现）：多草稿 Tab 批量登记 http 工具（名称/描述/URL/方法/超时/请求头/入参出参 Schema），统一提交 `/tool/batch_register`，逐条返回成败。
 
 ## 7. 边界与决策
 
