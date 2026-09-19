@@ -36,7 +36,7 @@
  */
 import { WsClient } from '../client/ws-client';
 import { RECOVERY_CONTINUE_FLAG } from '../protocol/types';
-import type { ApiResponse, AskQuestionAnswerContent, ChatFileUpload, ClientToolUseStartPayload, LlmContext, ReactAttachmentRef, ReactEvent, ReactModelInfo, ReactModelsResp, RunPayload, UserInputOrigin } from '../protocol/types';
+import type { ApiResponse, AskQuestionAnswerContent, ChatFileUpload, ClientToolUseStartPayload, ExecutionMode, LlmContext, ReactAttachmentRef, ReactEvent, ReactModelInfo, ReactModelsResp, RunPayload, UserInputOrigin, WsMessageType } from '../protocol/types';
 import { SessionManager } from '../session/session-manager';
 import type { AsyncTaskItem, HistoryEvent, SessionListParams, SessionListResp } from '../session/types';
 import type { SessionMeta } from '../storage/event-ledger';
@@ -123,6 +123,8 @@ export interface RunOptions {
   modelVersion?: string;
   modelHash?: string;
   maxSteps?: number;
+  /** 本轮执行范式；默认 react。 */
+  executionMode?: ExecutionMode;
   /** 本轮随用户消息发送的已上传附件 */
   attachments?: ReactAttachmentRef[];
   /** 本轮用户输入来源 */
@@ -396,6 +398,7 @@ export class AgentClient {
       modelVersion: options?.modelVersion ?? this.config.modelVersion,
       modelHash: options?.modelHash ?? this.config.modelHash,
       maxSteps: options?.maxSteps ?? this.config.maxSteps,
+      executionMode: options?.executionMode ?? 'react',
     };
     this.pendingLiveRunPayload = payload;
 
@@ -750,19 +753,51 @@ export class AgentClient {
     return this.registry.getFirst([name, ...aliases]);
   }
 
-  /** 从 Plan 等待卡片发起一轮明确的恢复请求；response 仅用于 USER_INPUT。 */
-  resumePlanWithResponse(planExecutionId: string, waitRequestId: string, response: Record<string, unknown> = {}): void | Promise<void> {
-    if (!planExecutionId || !waitRequestId || this.isRunInProgress()) return;
-    const hasResponse = Object.keys(response).length > 0;
-    const prompt = [
-      hasResponse
-        ? '继续下面明确指定的 Plan，并使用用户提供的当前 Step 临时回答恢复等待步骤。'
-        : '继续下面明确指定的 Plan；用户已完成等待请求中的外部操作。',
-      `plan_execution_id: ${planExecutionId}`,
-      `wait_request_id: ${waitRequestId}`,
-      ...(hasResponse ? [`response: ${JSON.stringify(response)}`] : []),
-    ].join('\n');
-    return this.run(prompt, { inputOrigin: { type: 'manual' } });
+  /** 从 Plan 等待卡片恢复持久化 Plan；不会再伪装成一条新的用户消息。 */
+  resumePlanWithResponse(planExecutionId: string, waitRequestId: string, response: Record<string, unknown> = {}): void {
+    this.sendPlanCommand('plan_resume', planExecutionId, {
+      planExecutionId,
+      waitRequestId,
+      response,
+    });
+  }
+
+  /** 为 FAILED Step 创建一个新的不可变 Attempt 并继续执行。 */
+  retryPlanStep(planExecutionId: string, stepId: string): void {
+    this.sendPlanCommand('plan_retry', planExecutionId, { planExecutionId, stepId });
+  }
+
+  /** 跳过非 required 的 PENDING/FAILED/WAITING Step 并继续。 */
+  skipPlanStep(planExecutionId: string, stepId: string): void {
+    this.sendPlanCommand('plan_skip', planExecutionId, { planExecutionId, stepId });
+  }
+
+  /** 取消当前持久化 Plan；主要用于 WAIT/FAILED 等没有活跃 goroutine 的状态。 */
+  cancelPlanExecution(planExecutionId: string): void {
+    this.sendPlanCommand('plan_cancel', planExecutionId, { planExecutionId });
+  }
+
+  private sendPlanCommand(type: WsMessageType, planExecutionId: string, payload: Record<string, unknown>): void {
+    if (!planExecutionId || this.isRunInProgress() || this.reducer.getState().status === 'recovering') return;
+    const state = this.reducer.getState();
+    const plan = state.plans[planExecutionId];
+    if (!plan) return;
+
+    this.reducer.markPlanCommandRunning();
+    this.sessionViewVersion += 1;
+    this.localLastSeq = 0;
+    this.localLastSeqByRunId.clear();
+    this.sessionEventAssembler.reset();
+
+    if (!this.wsClient.isConnected) {
+      this.wsClient.connect();
+    }
+    this.wsClient.send({
+      type,
+      runId: plan.outerRunId ?? state.currentRunId ?? undefined,
+      sessionId: state.sessionId ?? undefined,
+      payload,
+    });
   }
 
   /** 拉取 Plan 最新视图和 Attempt 索引并合并到 SDK 状态。 */

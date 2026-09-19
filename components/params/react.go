@@ -15,6 +15,13 @@ type ReactAttachmentRef struct {
 	Description string `json:"description,omitempty"`
 }
 
+type ReactExecutionMode string
+
+const (
+	ReactExecutionModeReact ReactExecutionMode = "react"
+	ReactExecutionModePlan  ReactExecutionMode = "plan"
+)
+
 type ReactRunPayload struct {
 	CallerKey   string               `json:"callerKey"`
 	RouteValues []string             `json:"routeValues"`
@@ -31,6 +38,8 @@ type ReactRunPayload struct {
 	ModelVersion string          `json:"modelVersion"`
 	ModelHash    string          `json:"modelHash"`
 	MaxSteps     int             `json:"maxSteps"`
+	// ExecutionMode 控制本轮执行范式；空值按 react 兼容旧客户端。
+	ExecutionMode ReactExecutionMode `json:"executionMode,omitempty"`
 }
 
 type ReactModelInfo struct {
@@ -113,6 +122,8 @@ type ReactClientToolUseStartPayload struct {
 	Description  string          `json:"description,omitempty"`
 	FrontendHint string          `json:"frontendHint,omitempty"`
 	Status       string          `json:"status"`
+	PlanExecutionID string       `json:"planExecutionId,omitempty"`
+	StepAttemptID   string       `json:"stepAttemptId,omitempty"`
 }
 
 type ReactToolUseEndPayload struct {
@@ -137,7 +148,9 @@ type ReactClientToolOutput struct {
 }
 
 type ReactClientToolUseEndPayload struct {
-	ToolOutputs []ReactClientToolOutput `json:"toolOutputs"`
+	ToolOutputs     []ReactClientToolOutput `json:"toolOutputs"`
+	PlanExecutionID string                  `json:"planExecutionId,omitempty"`
+	StepAttemptID   string                  `json:"stepAttemptId,omitempty"`
 }
 
 // ReactToolConfirmRequestPayload 是危险操作确认请求（P2-3）：服务端工具执行前
@@ -304,4 +317,131 @@ type ReactSessionFeedbackReq struct {
 // ReactSessionFeedbackResp 会话维度轮次反馈列表
 type ReactSessionFeedbackResp struct {
 	Items []ReactRunFeedbackResp `json:"items"`
+}
+
+
+// PlanStepResultRef 是 Step Result 的公开引用，详情通过 plan_execution/events 等接口按需读取。
+type PlanStepResultRef struct {
+	PlanExecutionID string `json:"plan_execution_id,omitempty"`
+	PlanVersionID   string `json:"plan_version_id,omitempty"`
+	StepID          string `json:"step_id,omitempty"`
+	StepAttemptID   string `json:"step_attempt_id"`
+	StepResultID    string `json:"step_result_id"`
+}
+
+type PlanStepPublicView struct {
+	StepID        string             `json:"step_id"`
+	StepOrder     int                `json:"step_order"`
+	StepName      string             `json:"step_name,omitempty"`
+	StepType      string             `json:"step_type,omitempty"`
+	Required      bool               `json:"required"`
+	Status        string             `json:"status"`
+	Summary       string             `json:"summary"`
+	PublicFields  map[string]any     `json:"public_fields,omitempty"`
+	StepResultRef *PlanStepResultRef `json:"step_result_ref,omitempty"`
+}
+
+type PlanWaitRequest struct {
+	RequestID         string         `json:"request_id,omitempty"`
+	Type              string         `json:"type"`
+	Question          string         `json:"question,omitempty"`
+	ResponseSchema    map[string]any `json:"response_schema,omitempty"`
+	ToolUseID         string         `json:"tool_use_id,omitempty"`
+	FrontendHint      string         `json:"frontend_hint,omitempty"`
+	PendingToolUseIDs []string       `json:"pending_tool_use_ids,omitempty"`
+	Data              any            `json:"data,omitempty"`
+}
+
+type PlanPublicError struct {
+	Code    string `json:"code"`
+	Summary string `json:"summary"`
+}
+
+type PlanPublicView struct {
+	PlanExecutionID string                `json:"plan_execution_id"`
+	Status          string                `json:"status"`
+	Summary         string                `json:"summary"`
+	Steps           []PlanStepPublicView  `json:"steps"`
+	CurrentStep     *PlanStepPublicView   `json:"current_step,omitempty"`
+	Result          map[string]any        `json:"result,omitempty"`
+	WaitRequest     *PlanWaitRequest      `json:"wait_request,omitempty"`
+	Error           *PlanPublicError      `json:"error,omitempty"`
+	CanResume       bool                  `json:"can_resume"`
+	UpdatedAt       string                `json:"updated_at"`
+}
+
+type PlanAttemptItem struct {
+	PlanExecutionID string `json:"planExecutionId"`
+	StepID          string `json:"stepId"`
+	StepAttemptID   string `json:"stepAttemptId"`
+	AttemptNo       int    `json:"attemptNo"`
+	Status          string `json:"status"`
+	StepRunID       string `json:"stepRunId,omitempty"`
+	ErrorCode       string `json:"errorCode,omitempty"`
+	ErrorSummary    string `json:"errorSummary,omitempty"`
+	CreatedAt       string `json:"createdAt"`
+	UpdatedAt       string `json:"updatedAt"`
+}
+
+type PlanExecutionDetailReq struct {
+	PlanExecutionID string `json:"planExecutionId" binding:"required"`
+	SessionID       string `json:"sessionId" binding:"required"`
+	CallerKey       string `json:"callerKey" binding:"required"`
+}
+
+type PlanExecutionDetailResp struct {
+	View     PlanPublicView    `json:"view"`
+	Attempts []PlanAttemptItem `json:"attempts"`
+}
+
+type PlanStepEventsReq struct {
+	PlanExecutionID string `json:"planExecutionId" binding:"required"`
+	StepAttemptID   string `json:"stepAttemptId" binding:"required"`
+	SessionID       string `json:"sessionId" binding:"required"`
+	CallerKey       string `json:"callerKey" binding:"required"`
+}
+
+type PlanStepEventsResp struct {
+	PlanExecutionID string              `json:"planExecutionId"`
+	StepAttemptID   string              `json:"stepAttemptId"`
+	StepID          string              `json:"stepId"`
+	AttemptNo       int                 `json:"attemptNo"`
+	Events          []ReactHistoryEvent `json:"events"`
+}
+
+type ReactPlanViewUpdatePayload struct {
+	PlanExecutionID string         `json:"planExecutionId"`
+	View            PlanPublicView `json:"view"`
+}
+
+type ReactPlanStepEventPayload struct {
+	PlanExecutionID string     `json:"planExecutionId"`
+	PlanVersionID   string     `json:"planVersionId"`
+	StepID          string     `json:"stepId"`
+	StepOrder       int        `json:"stepOrder"`
+	StepAttemptID   string     `json:"stepAttemptId"`
+	AttemptNo       int        `json:"attemptNo"`
+	StepRunID       string     `json:"stepRunId"`
+	Event           ReactEvent `json:"event"`
+}
+
+
+type PlanResumeReq struct {
+	PlanExecutionID string         `json:"planExecutionId" binding:"required"`
+	WaitRequestID   string         `json:"waitRequestId" binding:"required"`
+	Response        map[string]any `json:"response"`
+}
+
+type PlanRetryReq struct {
+	PlanExecutionID string `json:"planExecutionId" binding:"required"`
+	StepID          string `json:"stepId" binding:"required"`
+}
+
+type PlanSkipReq struct {
+	PlanExecutionID string `json:"planExecutionId" binding:"required"`
+	StepID          string `json:"stepId" binding:"required"`
+}
+
+type PlanCancelReq struct {
+	PlanExecutionID string `json:"planExecutionId" binding:"required"`
 }

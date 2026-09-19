@@ -42,7 +42,7 @@ export class ClientToolExecutor {
    * 返回的 Promise 在工具执行完毕后 resolve。
    */
   async handleClientToolUseStart(payload: ClientToolUseStartPayload): Promise<void> {
-    const { toolUseId, toolName, toolInput, frontendHint, description } = payload;
+    const { toolUseId, toolName, toolInput, frontendHint, description, planExecutionId, stepAttemptId } = payload;
 
     const execution = this.executeTool(
       {
@@ -50,6 +50,8 @@ export class ClientToolExecutor {
         toolName,
         frontendHint,
         description,
+        planExecutionId,
+        stepAttemptId,
       },
       toolInput ?? {},
     ).finally(() => {
@@ -66,6 +68,8 @@ export class ClientToolExecutor {
       toolName: string;
       frontendHint?: string;
       description?: string;
+      planExecutionId?: string;
+      stepAttemptId?: string;
     },
     input: Record<string, unknown>,
   ): Promise<void> {
@@ -76,7 +80,7 @@ export class ClientToolExecutor {
     const toolUseId = context.toolUseId;
 
     if (!tool) {
-      this.sendResult(toolUseId, {
+      this.sendResult(context, {
         toolUseId,
         content: `Tool not registered: ${context.toolName}`,
         isError: true,
@@ -86,14 +90,14 @@ export class ClientToolExecutor {
 
     try {
       const result = await tool.execute(input, context);
-      this.sendResult(toolUseId, {
+      this.sendResult(context, {
         toolUseId,
         content: result.content,
         meta: result.meta,
         isError: result.isError,
       });
     } catch (err) {
-      this.sendResult(toolUseId, {
+      this.sendResult(context, {
         toolUseId,
         content: err instanceof Error ? err.message : String(err),
         isError: true,
@@ -102,12 +106,17 @@ export class ClientToolExecutor {
   }
 
   /** 组装 client_tool_use_end 消息并发送 */
-  private sendResult(toolUseId: string, output: ClientToolOutput): void {
+  private sendResult(
+    context: { toolUseId: string; planExecutionId?: string; stepAttemptId?: string },
+    output: ClientToolOutput,
+  ): void {
     this.sendFn({
       type: 'client_tool_use_end',
       runId: undefined,
       payload: {
         toolOutputs: [output],
+        planExecutionId: context.planExecutionId,
+        stepAttemptId: context.stepAttemptId,
       } as Record<string, unknown>,
     });
   }

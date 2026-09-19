@@ -15,7 +15,7 @@ import IconMdiClose from "~icons/mdi/close";
 import IconMdiHistory from "~icons/mdi/history";
 import IconMdiPlus from "~icons/mdi/plus";
 import type { AgentClient } from "../../runtime/agent-client";
-import type { AskQuestionAnswerContent, ReactAttachmentRef, ReactModelInfo, UserInputOrigin } from "../../protocol/types";
+import type { AskQuestionAnswerContent, ExecutionMode, ReactAttachmentRef, ReactModelInfo, UserInputOrigin } from "../../protocol/types";
 import type { RunFeedbackPayload, RunFeedbackState } from "../../runtime/types";
 import type { AsyncTaskItem } from "../../session/types";
 import type { SessionMeta } from "../../storage/event-ledger";
@@ -161,6 +161,8 @@ export function AgentPanel(props: AgentPanelProps) {
   const [models, setModels] = createSignal<ReactModelInfo[]>([]);
   const configuredModel = () => props.client.getConfiguredModel?.() ?? null;
   const [selectedModel, setSelectedModel] = createSignal<ReactModelInfo | null>(configuredModel());
+  // 用户主动选择 Plan 才进入 Plan Runtime；默认继续保持现有 ReAct 行为。
+  const [executionMode, setExecutionMode] = createSignal<ExecutionMode>('react');
   let panelMessageTimer: ReturnType<typeof setTimeout> | undefined;
   let asyncTaskNoticeTimer: ReturnType<typeof setTimeout> | undefined;
   let toolHighlightTimer: ReturnType<typeof setTimeout> | undefined;
@@ -248,6 +250,12 @@ export function AgentPanel(props: AgentPanelProps) {
 
   const isRunning = () => store.state.status === "running" || store.state.status === "waiting_client_tool" || store.state.status === "compacting" || store.state.status === "recovering";
   const isRecovering = () => store.state.status === "recovering";
+  // plans 空值保护（D7）：宿主手工构造的 AgentState 可能没有 plans 字段，不能因派生 memo 抛错。
+  const hasBlockingPlanWait = createMemo(() => Object.values(store.state.plans ?? {}).some((plan) => (
+    plan.view.status === 'WAIT_USER_INPUT'
+    || plan.view.status === 'WAIT_USER_ACTION'
+    || plan.view.status === 'WAIT_EXTERNAL_TASK'
+  )));
   const showSessionControls = () => !props.readOnly && (props.showSidebar ?? true);
   const emitUIEvent = (event: AgentUIEvent) => {
     try {
@@ -418,6 +426,10 @@ export function AgentPanel(props: AgentPanelProps) {
     model?: ReactModelInfo,
     inputOrigin: UserInputOrigin = { type: 'manual' },
   ): void | Promise<void> => {
+    if (hasBlockingPlanWait()) {
+      showPanelMessage("请先处理当前 Plan 的等待项");
+      return;
+    }
     const effectiveModel = model ?? selectedModel() ?? undefined;
     const result = props.client.run(content, {
       displayParts,
@@ -425,6 +437,7 @@ export function AgentPanel(props: AgentPanelProps) {
       inputOrigin,
       modelKey: effectiveModel?.modelKey,
       modelVersion: effectiveModel?.modelVersion,
+      executionMode: executionMode(),
     });
     props.onAfterSend?.(content, { inputOrigin });
     return result;
@@ -704,7 +717,16 @@ export function AgentPanel(props: AgentPanelProps) {
             activeAskQuestion={props.readOnly ? undefined : activeAskQuestion()}
             plans={store.state.plans}
             onPlanResume={props.readOnly ? undefined : (planExecutionId, waitRequestId, response) => {
-              void props.client.resumePlanWithResponse(planExecutionId, waitRequestId, response);
+              props.client.resumePlanWithResponse(planExecutionId, waitRequestId, response);
+            }}
+            onPlanRetry={props.readOnly ? undefined : (planExecutionId, stepId) => {
+              props.client.retryPlanStep(planExecutionId, stepId);
+            }}
+            onPlanSkip={props.readOnly ? undefined : (planExecutionId, stepId) => {
+              props.client.skipPlanStep(planExecutionId, stepId);
+            }}
+            onPlanCancel={props.readOnly ? undefined : (planExecutionId) => {
+              props.client.cancelPlanExecution(planExecutionId);
             }}
             onLoadPlan={(planExecutionId) => props.client.loadPlanExecutionDetail(planExecutionId)}
             onLoadPlanAttempt={(planExecutionId, stepAttemptId) => props.client.loadPlanStepEvents(planExecutionId, stepAttemptId)}
@@ -769,6 +791,8 @@ export function AgentPanel(props: AgentPanelProps) {
         <div class="agent-ui-panel-footer">
           <InputArea
           isRunning={isRunning()}
+          executionMode={executionMode()}
+          onExecutionModeChange={setExecutionMode}
           onSend={handleSend}
           models={models()}
           selectedModel={selectedModel()}
@@ -800,7 +824,7 @@ export function AgentPanel(props: AgentPanelProps) {
             group: item.group,
             tag: item.data.tag,
           })}
-          disabled={!store.state.connected}
+          disabled={!store.state.connected || hasBlockingPlanWait()}
           draft={inputDraft()}
           placeholder={props.placeholder}
           quickInsertItems={props.quickInsertItems}

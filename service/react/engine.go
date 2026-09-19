@@ -50,6 +50,8 @@ type collectLLMStreamResult struct {
 	ToolCalls          []llm.ToolCall
 	InputTokens        int
 	OutputTokens       int
+	CacheReadTokens    int
+	CacheCreateTokens  int
 	StopReason         string
 	TerminationReason  string
 }
@@ -324,6 +326,8 @@ func (s *reactEngineState) collectLLMStreamWithEmitter(stream <-chan llm.StreamC
 			ToolCalls:          toolCalls,
 			InputTokens:        inputTokens,
 			OutputTokens:       outputTokens,
+			CacheReadTokens:    cacheReadTokens,
+			CacheCreateTokens:  cacheCreateTokens,
 			StopReason:         stopReason,
 			TerminationReason:  terminationReason,
 		}

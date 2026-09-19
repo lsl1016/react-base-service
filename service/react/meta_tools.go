@@ -483,7 +483,8 @@ func (s *reactEngineState) persistLoadedSkills() error {
 	return model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"loaded_skill_ids": string(idsJSON)})
 }
 
-// readToolResult 读取 resultRef 的局部分片，避免一次把完整大结果重新塞入模型上下文。
+// readToolResult 读取普通 Tool resultRef 或 Plan StepResultRef 的局部分片。
+// 两种引用统一做 Session 范围授权，避免模型拿到其它会话的引用后跨会话读取结果。
 func (s *reactEngineState) readToolResult(input json.RawMessage) (string, bool, error) {
 	var req struct {
 		ResultRef string `json:"resultRef"`
@@ -491,16 +492,27 @@ func (s *reactEngineState) readToolResult(input json.RawMessage) (string, bool, 
 		Limit     int    `json:"limit"`
 	}
 	_ = json.Unmarshal(input, &req)
+	req.ResultRef = strings.TrimSpace(req.ResultRef)
+	if req.ResultRef == "" {
+		return "", true, fmt.Errorf("resultRef is required")
+	}
+
 	content, ok, err := readResultRef(s.ctx, s.sessionID, s.runID, req.ResultRef)
 	if err != nil {
 		return "", true, err
+	}
+	if !ok {
+		content, ok, err = s.readPlanStepResultRef(req.ResultRef)
+		if err != nil {
+			return "", true, err
+		}
 	}
 	if !ok {
 		return "", true, fmt.Errorf("resultRef not found or expired")
 	}
 	part, hasMore, nextOffset := sliceResultContent(content, req.Offset, req.Limit)
 	payload := map[string]interface{}{
-		"resultRef":  strings.TrimSpace(req.ResultRef),
+		"resultRef":  req.ResultRef,
 		"offset":     req.Offset,
 		"limit":      req.Limit,
 		"content":    part,
@@ -509,4 +521,53 @@ func (s *reactEngineState) readToolResult(input json.RawMessage) (string, bool, 
 	}
 	data, _ := json.Marshal(payload)
 	return string(data), false, nil
+}
+
+// readPlanStepResultRef 读取 Plan Step 的不可变结果。
+// V1 以 session_id 作为授权边界：同一 Plan 的后续 Scoped ReactRun 与 outer Run 共用 Session，
+// 因而可以按需读取前序 StepResult；其它 Session 即使知道 step_result_id 也无法读取。
+// 边界约定（D9）：react 服务层不 import service/plan；此处经共享的 models 层读取
+// plan_result_ 前缀引用是 plan → react 单向依赖下唯一的既定例外，禁止在此扩展
+// 对 Plan 状态机的任何写操作或其它 Plan 表访问。
+func (s *reactEngineState) readPlanStepResultRef(resultRef string) (string, bool, error) {
+	if !strings.HasPrefix(strings.TrimSpace(resultRef), "plan_result_") {
+		return "", false, nil
+	}
+	db := model.GetLLMDB().WithContext(s.ctx)
+	var result model.PlanStepResult
+	query := db.Where("step_result_id = ?", resultRef).Limit(1).Find(&result)
+	if query.Error != nil {
+		return "", false, query.Error
+	}
+	if query.RowsAffected == 0 {
+		return "", false, nil
+	}
+
+	var execution model.PlanExecution
+	query = db.Where("plan_execution_id = ? AND session_id = ?", result.PlanExecutionID, s.sessionID).
+		Limit(1).Find(&execution)
+	if query.Error != nil {
+		return "", false, query.Error
+	}
+	if query.RowsAffected == 0 {
+		return "", false, nil
+	}
+
+	var resultValue any
+	if strings.TrimSpace(result.ResultJSON) != "" && json.Valid([]byte(result.ResultJSON)) {
+		_ = json.Unmarshal([]byte(result.ResultJSON), &resultValue)
+	} else {
+		resultValue = result.ResultJSON
+	}
+	payload := map[string]interface{}{
+		"stepResultId":    result.StepResultID,
+		"planExecutionId": result.PlanExecutionID,
+		"stepId":          result.StepID,
+		"stepAttemptId":   result.StepAttemptID,
+		"status":          result.Status,
+		"summary":         result.Summary,
+		"result":          resultValue,
+	}
+	data, _ := json.Marshal(payload)
+	return string(data), true, nil
 }

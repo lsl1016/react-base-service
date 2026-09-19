@@ -59,6 +59,105 @@ describe('EventReducer - Plan runtime', () => {
     expect(state.steps).toHaveLength(0);
   });
 
+  it('原生 Plan 等待态保留 outerRunId 并回到 idle（输入锁定由 hasBlockingPlanWait 承担）', () => {
+    const reducer = new EventReducer();
+    reducer.resetForNewRun();
+    reducer.addUserStep('请检查任务并在修改前确认');
+
+    reducer.applyEvent({
+      type: 'plan_view_update',
+      seq: 1,
+      runId: 'run_plan_outer',
+      sessionId: 'session_plan',
+      payload: {
+        planExecutionId: 'plan_wait_action',
+        view: {
+          plan_execution_id: 'plan_wait_action',
+          status: 'WAIT_USER_ACTION',
+          summary: '等待确认修改方案',
+          steps: [{
+            step_id: 'approve_fix',
+            step_order: 2,
+            step_name: '确认修改方案',
+            step_type: 'USER_ACTION',
+            required: true,
+            status: 'WAIT_USER_ACTION',
+            summary: '',
+          }],
+          current_step: {
+            step_id: 'approve_fix',
+            step_order: 2,
+            step_name: '确认修改方案',
+            step_type: 'USER_ACTION',
+            required: true,
+            status: 'WAIT_USER_ACTION',
+            summary: '',
+          },
+          wait_request: {
+            request_id: 'wait_confirm',
+            type: 'USER_ACTION',
+            question: '确认执行上述修改吗？',
+          },
+          can_resume: true,
+          updated_at: '2026-09-19T13:00:00+08:00',
+        },
+      },
+    });
+
+    const state = reducer.getState();
+    // 服务端 WAIT 时执行 goroutine 已结束，reducer 置回 idle；输入区锁定由 AgentPanel 的
+    // hasBlockingPlanWait（plans 派生）承担，不再使用全局 waiting_plan 状态。
+    expect(state.status).toBe('idle');
+    expect(state.currentRunId).toBe('run_plan_outer');
+    expect(state.plans.plan_wait_action.outerRunId).toBe('run_plan_outer');
+    expect(state.steps[0].runId).toBe('run_plan_outer');
+  });
+
+  it('历史回放遇到持久化等待 Plan 后仍恢复等待视图并回到 idle', () => {
+    const reducer = new EventReducer();
+    reducer.replayEvents([
+      {
+        type: 'run',
+        seq: 1,
+        runId: 'run_plan_history',
+        sessionId: 'session_plan_history',
+        payload: {
+          callerKey: 'demo',
+          type: 'chat',
+          userPrompt: '执行一个需要确认的任务',
+          executionMode: 'plan',
+        },
+      },
+      {
+        type: 'plan_view_update',
+        seq: 2,
+        runId: 'run_plan_history',
+        sessionId: 'session_plan_history',
+        payload: {
+          planExecutionId: 'plan_history',
+          view: {
+            plan_execution_id: 'plan_history',
+            status: 'WAIT_USER_INPUT',
+            summary: '等待补充环境',
+            steps: [],
+            wait_request: {
+              request_id: 'wait_env',
+              type: 'USER_INPUT',
+              question: '目标环境是什么？',
+            },
+            can_resume: true,
+            updated_at: '2026-09-19T13:00:00+08:00',
+          },
+        },
+      },
+    ]);
+
+    const state = reducer.getState();
+    // 回放结束后会话处于 idle，currentRunId 已收敛为空；等待视图经 plans 记录与 outerRunId 归属还原。
+    expect(state.status).toBe('idle');
+    expect(state.plans.plan_history.outerRunId).toBe('run_plan_history');
+  });
+
   it('内层 thought_end 和 content_end 沿用现有方式更新用量统计', () => {
     const reducer = new EventReducer();
     const basePayload = {
@@ -229,16 +328,16 @@ describe('EventReducer - Plan runtime', () => {
     expect(ordered.afterContent.map((tool) => tool.toolUseId)).toEqual(['after_1', 'after_2']);
   });
 
-  it('USER_ACTION 等待只展示完成并继续按钮', () => {
+  it('USER_ACTION 等待展示确认和拒绝，并显式提交 approved', () => {
     const onResume = vi.fn();
     const plan: PlanRuntimeState = {
       planExecutionId: 'plan_action',
       view: {
         plan_execution_id: 'plan_action',
-        status: 'WAIT_USER_INPUT',
+        status: 'WAIT_USER_ACTION',
         summary: '等待权限申请',
         steps: [],
-        wait_request: { request_id: 'wait_action', type: 'USER_ACTION', question: '请先申请表权限' },
+        wait_request: { request_id: 'wait_action', type: 'USER_ACTION', question: '请确认是否执行修复' },
         can_resume: true,
         updated_at: '2026-09-03T20:00:00+08:00',
       },
@@ -248,21 +347,41 @@ describe('EventReducer - Plan runtime', () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const dispose = render(() => createComponent(PlanRuntimeCard, {
-      toolCall: { toolUseId: 'plan_tool', toolName: 'start_template_plan', input: {}, status: 'done', executedBy: 'internal' },
+      toolCall: { toolUseId: 'plan_tool', toolName: 'plan_runtime', input: {}, status: 'running', executedBy: 'internal' },
       plan,
       onResume,
     }), host);
 
-    const button = host.querySelector<HTMLButtonElement>('.agent-ui-plan-resume-button')!;
     expect(host.textContent).toContain('需要完成操作');
-    expect(button.textContent).toContain('我已完成，继续执行');
-    expect(button.disabled).toBe(false);
-    button.click();
-    expect(onResume).toHaveBeenCalledWith('plan_action', 'wait_action', {});
+    const confirmButton = [...host.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('确认执行'))!;
+    const rejectButton = [...host.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('拒绝'))!;
+    expect(confirmButton.disabled).toBe(false);
+    expect(rejectButton.disabled).toBe(false);
+
+    confirmButton.click();
+    expect(onResume).toHaveBeenCalledWith('plan_action', 'wait_action', { approved: true });
     dispose();
+
+    // 提交后卡片进入 submitting 态，同一实例不再响应后续点击；拒绝路径在新实例上验证。
+    const onReject = vi.fn();
+    const rejectHost = document.createElement('div');
+    document.body.appendChild(rejectHost);
+    const rejectDispose = render(() => createComponent(PlanRuntimeCard, {
+      toolCall: { toolUseId: 'plan_tool', toolName: 'plan_runtime', input: {}, status: 'running', executedBy: 'internal' },
+      plan,
+      onResume: onReject,
+    }), rejectHost);
+    const rejectButton = [...rejectHost.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('拒绝'))!;
+    rejectButton.click();
+    expect(onReject).toHaveBeenCalledWith('plan_action', 'wait_action', { approved: false });
+    rejectDispose();
   });
 
-  it('EXTERNAL_TASK 提示用户稍后发送消息且不展示恢复按钮', () => {
+  it('EXTERNAL_TASK 展示等待文案并支持手动恢复继续执行', () => {
+    const onResume = vi.fn();
     const plan: PlanRuntimeState = {
       planExecutionId: 'plan_external',
       view: {
@@ -282,13 +401,17 @@ describe('EventReducer - Plan runtime', () => {
     const dispose = render(() => createComponent(PlanRuntimeCard, {
       toolCall: { toolUseId: 'plan_tool', toolName: 'start_template_plan', input: {}, status: 'done', executedBy: 'internal' },
       plan,
+      onResume,
     }), host);
 
     expect(host.textContent).toContain('外部任务执行中');
     expect(host.textContent).toContain('任务正在执行，请等待任务完成。');
-    expect(host.textContent).toContain('如需继续，请在任务完成后发送消息。');
-    expect(host.textContent).not.toContain('自动恢复');
-    expect(host.querySelector('.agent-ui-plan-resume-button')).toBeNull();
+    // 第一版不自动轮询外部任务：提供手动恢复按钮，点击后以空响应 resume。
+    const resumeButton = host.querySelector<HTMLButtonElement>('.agent-ui-plan-resume-button');
+    expect(resumeButton).not.toBeNull();
+    expect(resumeButton?.textContent).toContain('任务已完成，继续执行');
+    resumeButton!.click();
+    expect(onResume).toHaveBeenCalledWith('plan_external', 'wait_external', {});
     dispose();
   });
 

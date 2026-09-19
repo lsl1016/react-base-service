@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"react-base-service/components"
@@ -129,11 +130,29 @@ func GetReactMessagesBySessionIDTimelineWithDB(ctx *gin.Context, db *gorm.DB, se
 	if err != nil {
 		return nil, err
 	}
-	// 回放需要完整还原全过程：外层与 delegate 子 run 的消息全部返回，按真实时间线混排。
+	// 主会话回放保留普通外层与 delegate 子 run；Plan Step Run(agentPath=plan/*)
+	// 只在 PlanRuntimeCard 的 Attempt 详情里按需回放，不能混入主 Agent Lane。
+	visibleRuns := make([]ReactRun, 0, len(runs))
+	visibleRunIDs := make(map[string]bool, len(runs))
+	for _, run := range runs {
+		if strings.HasPrefix(strings.TrimSpace(run.AgentPath), "plan/") {
+			continue
+		}
+		visibleRunIDs[run.RunID] = true
+		visibleRuns = append(visibleRuns, run)
+	}
 	messages, err := GetReactMessagesBySessionIDWithDB(ctx, db, sessionID)
 	if err != nil {
 		return nil, err
 	}
+	filteredMessages := make([]ReactMessage, 0, len(messages))
+	for _, message := range messages {
+		if visibleRunIDs[message.RunID] {
+			filteredMessages = append(filteredMessages, message)
+		}
+	}
+	messages = filteredMessages
+	runs = visibleRuns
 
 	runOrder := make(map[string]int, len(runs))
 	for i, run := range runs {

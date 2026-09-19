@@ -3,6 +3,7 @@
 | 文档 | 模块 | 版本 | 最近更新 | 说明 |
 |---|---|---|---|---|
 | [ReAct Runtime](react_runtime.md) | `react_runtime` | v1.0 | 2026-09-19 | Agent Run 主循环、WebSocket、Tool/HITL、上下文与持久化边界 |
+| [Plan](plan.md) | `plan` | v1.0 | 2026-09-19 | Plan Runtime：结构化规划、Scoped ReactRun 逐步执行、持久化等待与恢复、控制命令与事件 |
 | [Tool](tool.md) | `tool` | v1.0 | 2026-09-19 | 业务 Tool 注册表、白名单可见性、HTTP/MCP 转发执行、get_tool/execute_tool 两阶段协议 |
 | [Skill](skill.md) | `skill` | v1.1 | 2026-09-19 | Skill 注册、SKILL.md 导入、路由作用域与运行期加载 |
 | [Memory](memory.md) | `memory` | v1.0 | 2026-09-19 | 长期记忆作用域、分层注入、写入审计、管理接口与限制 |

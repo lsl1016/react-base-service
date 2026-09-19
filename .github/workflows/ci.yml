@@ -49,6 +49,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Unit tests
+        run: npm run test:run
+
   integration:
     name: Integration tests (MySQL)
     # 环境依赖用例（//go:build integration）：需要真实 MySQL，默认跳过，手动触发。

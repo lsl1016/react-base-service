@@ -17,7 +17,16 @@
 // ─── 客户端 → 服务端 ───────────────────────────────────────────────
 
 /** 客户端可发送的消息类型 */
-export type WsMessageType = 'run' | 'cancel' | 'client_tool_use_end' | 'tool_use_answer' | 'tool_confirm_answer';
+export type WsMessageType =
+  | 'run'
+  | 'cancel'
+  | 'client_tool_use_end'
+  | 'tool_use_answer'
+  | 'tool_confirm_answer'
+  | 'plan_resume'
+  | 'plan_retry'
+  | 'plan_skip'
+  | 'plan_cancel';
 
 /**
  * WebSocket 消息帧
@@ -58,6 +67,8 @@ export type LlmContext = string | Record<string, unknown>;
  *   maxSteps: 10,
  * }
  */
+export type ExecutionMode = 'react' | 'plan';
+
 export interface RunPayload {
   /** 业务标识，用于后端区分不同调用方（如 'report-editor'） */
   callerKey: string;
@@ -83,6 +94,8 @@ export interface RunPayload {
   modelHash?: string;
   /** ReAct 最大推理步骤数，超过后强制结束 */
   maxSteps?: number;
+  /** 执行范式；未传时服务端按 react 兼容旧客户端。 */
+  executionMode?: ExecutionMode;
 }
 
 /**
@@ -223,6 +236,8 @@ export interface PlanStepPublicView {
   step_id: string;
   step_order: number;
   step_name?: string;
+  step_type?: 'AGENT' | 'USER_INPUT' | 'USER_ACTION' | string;
+  required?: boolean;
   status: string;
   summary: string;
   public_fields?: Record<string, unknown>;
@@ -282,6 +297,26 @@ export interface PlanStepEventsResp {
   stepId: string;
   attemptNo: number;
   events: ReactEvent[];
+}
+
+export interface PlanResumeRequest {
+  planExecutionId: string;
+  waitRequestId: string;
+  response: Record<string, unknown>;
+}
+
+export interface PlanRetryRequest {
+  planExecutionId: string;
+  stepId: string;
+}
+
+export interface PlanSkipRequest {
+  planExecutionId: string;
+  stepId: string;
+}
+
+export interface PlanCancelRequest {
+  planExecutionId: string;
 }
 
 export interface PlanViewUpdatePayload {

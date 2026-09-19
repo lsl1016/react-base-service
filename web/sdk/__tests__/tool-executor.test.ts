@@ -99,6 +99,33 @@ describe('ClientToolExecutor', () => {
     expect((sentMessages[0].payload as any).toolOutputs[0].isError).toBeUndefined();
   });
 
+  it('should preserve Plan execution attribution in client tool result', async () => {
+    const registry = new ClientToolRegistry();
+    const sentMessages: WsMessage[] = [];
+    const sendFn = vi.fn((msg: WsMessage) => sentMessages.push(msg));
+
+    registry.register({
+      name: 'PlanClientTool',
+      execute: async () => ({ content: 'plan-client-ok' }),
+    });
+
+    const executor = new ClientToolExecutor(registry, sendFn);
+    await executor.handleClientToolUseStart({
+      toolUseId: 'plan_tool_use_1',
+      toolName: 'PlanClientTool',
+      toolInput: {},
+      status: 'waiting',
+      planExecutionId: 'plan_exec_1',
+      stepAttemptId: 'plan_attempt_1',
+    });
+
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(sentMessages[0].type).toBe('client_tool_use_end');
+    expect((sentMessages[0].payload as any).planExecutionId).toBe('plan_exec_1');
+    expect((sentMessages[0].payload as any).stepAttemptId).toBe('plan_attempt_1');
+    expect((sentMessages[0].payload as any).toolOutputs[0].content).toBe('plan-client-ok');
+  });
+
   it('should execute tool matched by frontend hint alias', async () => {
     const registry = new ClientToolRegistry();
     const sentMessages: WsMessage[] = [];

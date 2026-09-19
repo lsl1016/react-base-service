@@ -15,6 +15,7 @@ import (
 const (
 	ReactRunStateRunning              = "running"
 	ReactRunStateWaitingClientMessage = "waiting_client_message"
+	ReactRunStateWaitingPlan          = "waiting_plan"
 	ReactRunStateCancelling           = "cancelling"
 	ReactRunStateFinished             = "finished"
 	ReactRunStateError                = "error"
@@ -134,6 +135,7 @@ func ExpireReactRunsByRunIDs(ctx context.Context, runIDs []string) error {
 		Where("run_id IN ? AND state IN ?", runIDs, []string{
 			ReactRunStateRunning,
 			ReactRunStateWaitingClientMessage,
+			ReactRunStateWaitingPlan,
 			ReactRunStateCancelling,
 		}).Updates(map[string]any{
 		"state": ReactRunStateExpired,
@@ -145,6 +147,8 @@ func ExpireReactRunsByRunIDs(ctx context.Context, runIDs []string) error {
 }
 
 // staleActiveReactRunCondition 是陈旧活跃 run 清理的过滤条件，独立成函数供 DryRun 单测断言。
+// waiting_plan 不参与 stale 过期：Plan 等待可以无限长，等待态的权威状态在 tblLlmPlanExecution，
+// 由 plan_resume/plan_cancel 管理生命周期；误过期会让会话解锁但计划仍悬挂（D2）。
 func staleActiveReactRunCondition(cutoff time.Time) (string, []any) {
 	return "state IN ? AND updated_at < ?", []any{
 		[]string{
@@ -157,7 +161,7 @@ func staleActiveReactRunCondition(cutoff time.Time) (string, []any) {
 }
 
 // ExpireStaleActiveReactRuns 把超过 olderThan 未更新的活跃 run（running / waiting_client_message /
-// cancelling）批量置为 expired，返回受影响行数。
+// cancelling）批量置为 expired，返回受影响行数。waiting_plan 有意不在清理范围（见上方条件说明）。
 //
 // 服务重启后取消注册表与等待中的 goroutine 已随进程丢失，DB 中残留的活跃 run 会让
 // HasActiveReactRun 永远命中，该会话的新消息被「run is active」静默拒绝；启动时调用一次兜底。
@@ -190,6 +194,7 @@ func HasActiveReactRunWithDB(ctx *gin.Context, db *gorm.DB, sessionID string) (b
 		Where("session_id = ? AND state IN ?", sessionID, []string{
 			ReactRunStateRunning,
 			ReactRunStateWaitingClientMessage,
+			ReactRunStateWaitingPlan,
 			ReactRunStateCancelling,
 		}).Count(&count).Error
 	if err != nil {

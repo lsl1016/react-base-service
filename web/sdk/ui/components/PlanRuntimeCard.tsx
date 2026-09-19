@@ -17,17 +17,25 @@ export interface PlanRuntimeCardProps {
   disabled?: boolean;
   resolveTool?: (toolName: string, frontendHint?: string) => ClientTool | undefined;
   onResume?: (planExecutionId: string, waitRequestId: string, response: Record<string, unknown>) => void;
+  onRetry?: (planExecutionId: string, stepId: string) => void;
+  onSkip?: (planExecutionId: string, stepId: string) => void;
+  onCancel?: (planExecutionId: string) => void;
   onLoadPlan?: (planExecutionId: string) => void | Promise<void>;
   onLoadAttempt?: (planExecutionId: string, stepAttemptId: string) => void | Promise<void>;
 }
 
 const STATUS_LABELS: Record<string, string> = {
   CREATED: '准备中',
+  PLANNING: '规划中',
   RUNNING: '执行中',
   PENDING: '等待执行',
+  WAITING: '等待中',
   WAIT_USER_INPUT: '等待补充信息',
+  WAIT_USER_ACTION: '等待确认',
   WAIT_EXTERNAL_TASK: '等待外部任务',
   STOPPED: '已停止',
+  CANCELLED: '已取消',
+  SKIPPED: '已跳过',
   SUCCEEDED: '已完成',
   FAILED: '执行失败',
   INVALIDATED: '结果已失效',
@@ -52,9 +60,13 @@ function statusMark(status?: string): string {
     case 'SUCCEEDED': return '✓';
     case 'FAILED': return '×';
     case 'RUNNING': return '●';
-    case 'WAIT_USER_INPUT': return '?';
-    case 'WAIT_EXTERNAL_TASK': return '…';
-    case 'STOPPED': return 'Ⅱ';
+    case 'WAIT_USER_INPUT':
+    case 'WAIT_USER_ACTION': return '?';
+    case 'WAIT_EXTERNAL_TASK':
+    case 'WAITING': return '…';
+    case 'STOPPED':
+    case 'CANCELLED': return 'Ⅱ';
+    case 'SKIPPED': return '↷';
     case 'INVALIDATED': return '↺';
     default: return '○';
   }
@@ -193,7 +205,7 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
   ));
   const isResumingUserWait = createMemo(() => (
     isResumeRunning()
-    && view()?.status === 'WAIT_USER_INPUT'
+    && (view()?.status === 'WAIT_USER_INPUT' || view()?.status === 'WAIT_USER_ACTION')
     && !!view()?.wait_request
   ));
   const commandFailed = createMemo(() => props.toolCall.status === 'error' && !view());
@@ -216,7 +228,8 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
   const [submitting, setSubmitting] = createSignal(false);
 
   createEffect(() => {
-    if (props.useLiveView !== false && !props.disabled && view()?.status === 'WAIT_USER_INPUT') {
+    if (props.useLiveView !== false && !props.disabled
+      && (view()?.status === 'WAIT_USER_INPUT' || view()?.status === 'WAIT_USER_ACTION')) {
       setSubmitting(false);
     }
   });
@@ -248,7 +261,7 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
     && !props.disabled
     && !!props.onResume
     && !submitting()
-    && view()?.status === 'WAIT_USER_INPUT'
+    && (view()?.status === 'WAIT_USER_INPUT' || view()?.status === 'WAIT_USER_ACTION')
     && !!view()?.plan_execution_id
     && !!waitRequest()?.request_id
     && (isUserAction() || (
@@ -263,7 +276,7 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
     const request = waitRequest();
     if (!currentView || !request?.request_id || !canSubmit()) return;
     const response = isUserAction()
-      ? {}
+      ? { approved: true }
       : Object.fromEntries(responseFields().flatMap((field) => {
         const raw = (responseValues()[field.name] ?? '').trim();
         return raw ? [[field.name, parseWaitResponseValue(field, raw)]] : [];
@@ -271,6 +284,37 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
     setSubmitting(true);
     props.onResume?.(currentView.plan_execution_id, request.request_id, response);
   };
+
+  const rejectUserAction = () => {
+    const currentView = view();
+    const request = waitRequest();
+    if (!currentView || !request?.request_id || props.useLiveView === false || props.disabled || submitting()) return;
+    setSubmitting(true);
+    props.onResume?.(currentView.plan_execution_id, request.request_id, { approved: false });
+  };
+
+  const canRetryStep = (status: string) => (
+    props.useLiveView !== false
+    && !props.disabled
+    && !!props.onRetry
+    && status === 'FAILED'
+  );
+
+  const canSkipStep = (step: PlanPublicView['steps'][number]) => (
+    props.useLiveView !== false
+    && !props.disabled
+    && !!props.onSkip
+    && step.required === false
+    && ['PENDING', 'FAILED', 'WAITING', 'WAIT_USER_INPUT', 'WAIT_USER_ACTION'].includes(step.status)
+  );
+
+  const canCancelPlan = () => (
+    props.useLiveView !== false
+    && !props.disabled
+    && !!props.onCancel
+    && !!view()?.plan_execution_id
+    && !['SUCCEEDED', 'CANCELLED'].includes(view()?.status ?? '')
+  );
 
   const toggleCollapsed = () => {
     const next = !collapsed();
@@ -340,6 +384,26 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
                                   />
                                 )}
                               </For>
+                              <Show when={canRetryStep(step.status) || canSkipStep(step)}>
+                                <div class="agent-ui-plan-step-actions">
+                                  <Show when={canRetryStep(step.status)}>
+                                    <button
+                                      type="button"
+                                      onClick={() => props.onRetry?.(currentView().plan_execution_id, step.step_id)}
+                                    >
+                                      重试此步骤
+                                    </button>
+                                  </Show>
+                                  <Show when={canSkipStep(step)}>
+                                    <button
+                                      type="button"
+                                      onClick={() => props.onSkip?.(currentView().plan_execution_id, step.step_id)}
+                                    >
+                                      跳过此步骤
+                                    </button>
+                                  </Show>
+                                </div>
+                              </Show>
                             </div>
                           </Show>
                         </div>
@@ -355,7 +419,7 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
                   </div>
                 </Show>
 
-                <Show when={!isResumingUserWait() && currentView().status === 'WAIT_USER_INPUT' && waitRequest()}>
+                <Show when={!isResumingUserWait() && (currentView().status === 'WAIT_USER_INPUT' || currentView().status === 'WAIT_USER_ACTION') && waitRequest()}>
                   {(request) => (
                     <div class="agent-ui-plan-wait-card" data-wait-type={request().type}>
                       <div class="agent-ui-plan-wait-title">
@@ -396,9 +460,33 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
                           <div class="agent-ui-plan-detail-empty">等待请求未声明可填写的数据结构，无法继续。</div>
                         </Show>
                       </Show>
-                      <button type="button" class="agent-ui-plan-resume-button" disabled={!canSubmit()} onClick={submitWaitResponse}>
-                        {submitting() ? '提交中…' : request().type === 'USER_ACTION' ? '我已完成，继续执行' : '提交并继续'}
-                      </button>
+                      <Show
+                        when={request().type === 'USER_ACTION'}
+                        fallback={(
+                          <button type="button" class="agent-ui-plan-resume-button" disabled={!canSubmit()} onClick={submitWaitResponse}>
+                            {submitting() ? '提交中…' : '提交并继续'}
+                          </button>
+                        )}
+                      >
+                        <div class="agent-ui-plan-wait-actions">
+                          <button
+                            type="button"
+                            class="agent-ui-plan-secondary-button"
+                            disabled={props.disabled || submitting()}
+                            onClick={rejectUserAction}
+                          >
+                            拒绝并取消
+                          </button>
+                          <button
+                            type="button"
+                            class="agent-ui-plan-resume-button"
+                            disabled={!canSubmit()}
+                            onClick={submitWaitResponse}
+                          >
+                            {submitting() ? '提交中…' : '确认执行'}
+                          </button>
+                        </div>
+                      </Show>
                     </div>
                   )}
                 </Show>
@@ -407,7 +495,19 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
                   <div class="agent-ui-plan-wait-card" data-wait-type="EXTERNAL_TASK">
                     <div class="agent-ui-plan-wait-title">外部任务执行中</div>
                     <div class="agent-ui-plan-wait-question">{waitRequest()?.question || currentView().summary || '任务正在执行，请等待任务完成。'}</div>
-                    <div class="agent-ui-plan-detail-empty">如需继续，请在任务完成后发送消息。</div>
+                    <Show when={waitRequest()?.request_id && props.onResume && !props.disabled}>
+                      <button
+                        type="button"
+                        class="agent-ui-plan-resume-button"
+                        onClick={() => props.onResume?.(
+                          currentView().plan_execution_id,
+                          waitRequest()!.request_id!,
+                          {},
+                        )}
+                      >
+                        任务已完成，继续执行
+                      </button>
+                    </Show>
                   </div>
                 </Show>
 
@@ -419,6 +519,17 @@ export function PlanRuntimeCard(props: PlanRuntimeCardProps) {
                 </Show>
                 <Show when={currentView().error}>
                   <div class="agent-ui-plan-error">{currentView().error?.summary}</div>
+                </Show>
+                <Show when={canCancelPlan()}>
+                  <div class="agent-ui-plan-runtime-actions">
+                    <button
+                      type="button"
+                      class="agent-ui-plan-secondary-button"
+                      onClick={() => props.onCancel?.(currentView().plan_execution_id)}
+                    >
+                      取消 Plan
+                    </button>
+                  </div>
                 </Show>
                 </>
               )}

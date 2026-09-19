@@ -5,6 +5,44 @@
  */
 $agent-ui-slash-menu-scroll-height: 314px !default;
 
+
+.agent-ui-execution-mode-switch {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  margin: 8px 12px 0;
+  padding: 2px;
+  border-radius: $agent-ui-radius-md;
+  background: $agent-ui-bg-secondary;
+
+  button {
+    @include agent-ui-button-reset;
+    min-width: 58px;
+    height: 26px;
+    padding: 0 $agent-ui-spacing-md;
+    border-radius: calc(#{$agent-ui-radius-md} - 2px);
+    color: $agent-ui-text-tertiary;
+    font-size: $agent-ui-font-size-xs;
+    font-weight: $agent-ui-font-weight-medium;
+    @include agent-ui-transition(background-color, color, box-shadow);
+
+    &:hover:not(:disabled) {
+      color: $agent-ui-text-secondary;
+    }
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: .55;
+    }
+  }
+
+  .agent-ui-execution-mode-active {
+    background: $agent-ui-bg-primary;
+    color: $agent-ui-text-primary;
+    box-shadow: $agent-ui-shadow-sm;
+  }
+}
+
 .agent-ui-input-area {
   @include agent-ui-flex-column;
   border: none;

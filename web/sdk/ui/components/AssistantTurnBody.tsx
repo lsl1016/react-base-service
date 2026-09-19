@@ -41,6 +41,9 @@ export interface AssistantTurnBodyProps {
   /** 每个 Plan 当前最新的启动/恢复工具调用；更早的卡片只展示各自的历史结果快照。 */
   latestPlanToolUseIdByExecution?: ReadonlyMap<string, string>;
   onPlanResume?: (planExecutionId: string, waitRequestId: string, response: Record<string, unknown>) => void;
+  onPlanRetry?: (planExecutionId: string, stepId: string) => void;
+  onPlanSkip?: (planExecutionId: string, stepId: string) => void;
+  onPlanCancel?: (planExecutionId: string) => void;
   onLoadPlan?: (planExecutionId: string) => void | Promise<void>;
   onLoadPlanAttempt?: (planExecutionId: string, stepAttemptId: string) => void | Promise<void>;
   onCodeCopy?: (step: Step, data: CodeBlockCopyData) => void;
@@ -171,6 +174,9 @@ function TurnSegmentView(props: TurnSegmentViewProps) {
                         disabled={props.isRunning}
                         resolveTool={props.resolveTool}
                         onResume={props.onPlanResume}
+                        onRetry={props.onPlanRetry}
+                        onSkip={props.onPlanSkip}
+                        onCancel={props.onPlanCancel}
                         onLoadPlan={props.onLoadPlan}
                         onLoadAttempt={props.onLoadPlanAttempt}
                       />
@@ -266,6 +272,9 @@ export function AssistantTurnBody(props: AssistantTurnBodyProps) {
           plans={props.plans}
           latestPlanToolUseIdByExecution={props.latestPlanToolUseIdByExecution}
           onPlanResume={props.onPlanResume}
+          onPlanRetry={props.onPlanRetry}
+          onPlanSkip={props.onPlanSkip}
+          onPlanCancel={props.onPlanCancel}
           onLoadPlan={props.onLoadPlan}
           onLoadPlanAttempt={props.onLoadPlanAttempt}
           onCodeCopy={props.onCodeCopy}

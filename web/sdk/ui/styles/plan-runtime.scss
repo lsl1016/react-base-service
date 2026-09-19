@@ -79,7 +79,11 @@
 .agent-ui-plan-step[data-status='SUCCEEDED'] { border-left-color: $agent-ui-success; }
 .agent-ui-plan-step[data-status='FAILED'] { border-left-color: $agent-ui-danger; }
 .agent-ui-plan-step[data-status='WAIT_USER_INPUT'],
-.agent-ui-plan-step[data-status='WAIT_EXTERNAL_TASK'] { border-left-color: $agent-ui-warning; }
+.agent-ui-plan-step[data-status='WAIT_USER_ACTION'],
+.agent-ui-plan-step[data-status='WAIT_EXTERNAL_TASK'],
+.agent-ui-plan-step[data-status='WAITING'] { border-left-color: $agent-ui-warning; }
+.agent-ui-plan-step[data-status='CANCELLED'],
+.agent-ui-plan-step[data-status='SKIPPED'] { border-left-color: $agent-ui-border-color-strong; }
 
 .agent-ui-plan-step-header {
   gap: $agent-ui-spacing-sm;
@@ -194,3 +198,41 @@
 .agent-ui-plan-result { margin-top: $agent-ui-spacing-lg; }
 .agent-ui-plan-error { margin-top: $agent-ui-spacing-md; color: $agent-ui-danger; }
 .agent-ui-plan-detail-empty { color: $agent-ui-text-tertiary; font-size: $agent-ui-font-size-sm; }
+
+
+.agent-ui-plan-step-actions,
+.agent-ui-plan-wait-actions,
+.agent-ui-plan-runtime-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: $agent-ui-spacing-sm;
+  margin-top: $agent-ui-spacing-sm;
+}
+
+.agent-ui-plan-step-actions button,
+.agent-ui-plan-secondary-button {
+  @include agent-ui-button-reset;
+  min-height: 30px;
+  padding: 0 $agent-ui-spacing-md;
+  border: 1px solid $agent-ui-border-color;
+  border-radius: $agent-ui-radius-md;
+  background: $agent-ui-bg-primary;
+  color: $agent-ui-text-secondary;
+  font-size: $agent-ui-font-size-sm;
+
+  &:hover:not(:disabled) {
+    background: $agent-ui-bg-secondary;
+    color: $agent-ui-text-primary;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: .45;
+  }
+}
+
+.agent-ui-plan-runtime-actions {
+  padding-top: $agent-ui-spacing-md;
+  border-top: 1px solid $agent-ui-border-color-light;
+}

@@ -140,3 +140,21 @@ func deleteReflectionCooldownForTest(sessionID string) {
 	defer memoryReflectionCooldown.Unlock()
 	delete(memoryReflectionCooldown.last, sessionID)
 }
+
+
+func TestPlanScopedRunDisablesCreatePlan(t *testing.T) {
+	original := conf.CustomConf.LLM.React.AllowPlan
+	defer func() { conf.CustomConf.LLM.React.AllowPlan = original }()
+
+	on := true
+	conf.CustomConf.LLM.React.AllowPlan = &on
+	profile := executionProfileForRun(&runtimeRequest{
+		runtimeRequestExecution: runtimeRequestExecution{agentPath: "plan/inspect_upstream"},
+	})
+	if profile.AllowPlan {
+		t.Fatalf("plan scoped run must not expose create_plan")
+	}
+	if profile.allowsInternalTool(metaToolCreatePlan) {
+		t.Fatalf("plan scoped run must deny create_plan at execution boundary")
+	}
+}

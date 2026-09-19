@@ -2,7 +2,7 @@ import { createMemo, createSignal, Show } from "solid-js";
 import IconIconoirAttachment from "~icons/iconoir/attachment";
 import IconOuiSortUp from "~icons/oui/sort-up";
 import IconOuiStopFilled from "~icons/oui/stop-filled";
-import type { ChatFileUpload, ReactAttachmentRef, ReactModelInfo, RunStats } from "../../protocol/types";
+import type { ChatFileUpload, ExecutionMode, ReactAttachmentRef, ReactModelInfo, RunStats } from "../../protocol/types";
 import { RichInputEditor } from "../editor/RichInputEditor";
 import type { AgentInputPart, AgentInputSerializer, AgentQuickInsertItem, AgentQuickInsertShortcutItem } from "../editor/types";
 import { serializeAgentInputParts } from "../editor/types";
@@ -22,6 +22,10 @@ function isSupportedAttachment(file: File): boolean {
 export interface InputAreaProps {
   /** 当前是否正在运行 */
   isRunning: boolean;
+  /** 当前执行范式；默认 react。 */
+  executionMode?: ExecutionMode;
+  /** 切换 ReAct / Plan 执行范式。 */
+  onExecutionModeChange?: (mode: ExecutionMode) => void;
   /** 用户发送消息时的回调 */
   onSend: (content: string, displayParts?: AgentInputPart[], attachments?: ReactAttachmentRef[], model?: ReactModelInfo) => void;
   /** 前端可选择的模型列表 */
@@ -165,6 +169,30 @@ export function InputArea(props: InputAreaProps) {
 
   return (
     <div class="agent-ui-input-area">
+      <div class="agent-ui-execution-mode-switch" role="tablist" aria-label="执行模式">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={(props.executionMode ?? 'react') === 'react'}
+          classList={{ "agent-ui-execution-mode-active": (props.executionMode ?? 'react') === 'react' }}
+          disabled={props.disabled || props.isRunning}
+          onClick={() => props.onExecutionModeChange?.('react')}
+          title="直接使用 ReAct 循环执行"
+        >
+          ReAct
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={props.executionMode === 'plan'}
+          classList={{ "agent-ui-execution-mode-active": props.executionMode === 'plan' }}
+          disabled={props.disabled || props.isRunning}
+          onClick={() => props.onExecutionModeChange?.('plan')}
+          title="先生成持久化计划，再按步骤执行"
+        >
+          Plan
+        </button>
+      </div>
       <Show when={props.attachmentUpload !== false}>
         <div class="agent-ui-input-attachments-container">
           <InputAttachments

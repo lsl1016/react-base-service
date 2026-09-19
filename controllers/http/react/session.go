@@ -3,6 +3,7 @@ package react
 import (
 	"react-base-service/components"
 	"react-base-service/components/params"
+	planService "react-base-service/service/plan"
 	reactService "react-base-service/service/react"
 
 	"react-base-service/golib/zlog"
@@ -59,6 +60,18 @@ func GetSessionEvents(ctx *gin.Context) {
 		zlog.Errorf(ctx, "[React.GetSessionEvents] 查询历史事件失败: sessionId=%s, err=%v", req.SessionID, err)
 		components.RenderJsonFail(ctx, err)
 		return
+	}
+	planEvents, err := planService.SessionHistoryEvents(ctx, req.SessionID)
+	if err != nil {
+		zlog.Errorf(ctx, "[React.GetSessionEvents] 查询 Plan 历史视图失败: sessionId=%s, err=%v", req.SessionID, err)
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	nextSeq := len(resp.Events)
+	for i := range planEvents {
+		nextSeq++
+		planEvents[i].Seq = nextSeq
+		resp.Events = append(resp.Events, planEvents[i])
 	}
 	components.RenderJsonSucc(ctx, resp)
 }

@@ -314,15 +314,17 @@ function parsePlanPublicView(content?: string): PlanPublicView | undefined {
   }
 }
 
-function upsertPlanView(state: AgentState, view: PlanPublicView): PlanRuntimeState {
+function upsertPlanView(state: AgentState, view: PlanPublicView, outerRunId?: string): PlanRuntimeState {
   const planExecutionId = view.plan_execution_id;
   const current = state.plans[planExecutionId];
   const plan: PlanRuntimeState = current ?? {
     planExecutionId,
+    outerRunId,
     view: clonePlanPublicView(view),
     attempts: {},
     attemptOrder: [],
   };
+  if (outerRunId) plan.outerRunId = outerRunId;
   plan.view = clonePlanPublicView(view);
   for (const step of view.steps) {
     for (const attempt of Object.values(plan.attempts)) {
@@ -660,6 +662,13 @@ export class EventReducer {
       return;
     }
     this.reduceEvent(event);
+    this.notify();
+  }
+
+  /** Plan Resume/Retry/Skip 通过 WS 启动新的执行片段时，先把输入区和 Plan 卡片置为运行态。 */
+  markPlanCommandRunning(): void {
+    this.state.status = 'running';
+    this.state.compactState = null;
     this.notify();
   }
 
@@ -1080,7 +1089,24 @@ export class EventReducer {
       case 'plan_view_update': {
         const p = event.payload as unknown as PlanViewUpdatePayload;
         if (p?.view?.plan_execution_id) {
-          upsertPlanView(this.state, p.view);
+          if (event.runId) {
+            for (let index = this.state.steps.length - 1; index >= 0; index -= 1) {
+              const candidate = this.state.steps[index];
+              if (candidate.role !== 'user') continue;
+              if (!candidate.runId) candidate.runId = event.runId;
+              break;
+            }
+          }
+          upsertPlanView(this.state, p.view, event.runId);
+          // Plan WAIT 是持久化暂停点：服务端当前 goroutine 已结束，不应继续把输入区锁在 running。
+          // Resume/Retry/Skip 会显式把 SDK 重新置为 running；Plan 完成仍由 done/error/cancelled 收敛。
+          if (p.view.status === 'WAIT_USER_INPUT'
+            || p.view.status === 'WAIT_USER_ACTION'
+            || p.view.status === 'WAIT_EXTERNAL_TASK') {
+            this.state.status = 'idle';
+          } else if (p.view.status === 'PLANNING' || p.view.status === 'RUNNING') {
+            this.state.status = 'running';
+          }
           for (let stepPos = this.state.steps.length - 1; stepPos >= 0; stepPos -= 1) {
             const calls = this.state.steps[stepPos].toolCalls;
             const call = [...calls].reverse().find((item) => (

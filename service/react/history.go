@@ -741,3 +741,22 @@ func formatHistoryTime(t time.Time) string {
 	}
 	return t.Format(historyTimeFormat)
 }
+
+
+// GetRunHistoryEvents 将单个 ReactRun 的持久化消息还原为事件。
+// Plan Runtime 用它懒加载 StepAttempt 详情；不会混入同 Session 的父/兄弟 Run。
+func GetRunHistoryEvents(ctx *gin.Context, runID string) ([]params.ReactHistoryEvent, error) {
+	run, err := model.GetReactRunByRunID(ctx, strings.TrimSpace(runID))
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return []params.ReactHistoryEvent{}, nil
+	}
+	messages, err := model.GetReactMessagesByRunID(ctx, run.RunID)
+	if err != nil {
+		return nil, err
+	}
+	builder := newHistoryEventBuilder(run.SessionID, []model.ReactRun{*run}, messages)
+	return builder.Build(), nil
+}

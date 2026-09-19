@@ -158,6 +158,8 @@ export interface PlanAttemptState {
 
 export interface PlanRuntimeState {
   planExecutionId: string;
+  /** 归属的外层 Run，用于把原生 Plan 卡片挂到对应用户轮次。 */
+  outerRunId?: string;
   view: PlanPublicView;
   attempts: Record<string, PlanAttemptState>;
   attemptOrder: string[];

@@ -5,7 +5,7 @@
  * 使用 For 组件进行高效列表渲染。
  */
 
-import { Index, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import IconGrommetIconsLinkDown from "~icons/grommet-icons/link-down";
 import IconMdiRobot from "~icons/mdi/robot";
 import type { AskQuestionAnswerContent } from "../../protocol/types";
@@ -18,6 +18,7 @@ import { AssistantTurnBody } from "./AssistantTurnBody";
 import { getPlanExecutionId, isPlanExecutionToolCall } from "./turn-segments";
 import type { CodeBlockCopyData, CodeBlockSelectionCopyData } from "./CodeBlock";
 import { PhaseGapIndicator } from "./PhaseGapIndicator";
+import { PlanRuntimeCard } from "./PlanRuntimeCard";
 import { SmartScroll, type SmartScrollHandle } from "./SmartScroll";
 import { TurnFeedbackBar } from "./TurnFeedbackBar";
 import { getActivityGapSignature, shouldShowDelayedActivityIndicator } from "./message-activity";
@@ -56,6 +57,9 @@ export interface MessageListProps {
   /** 当前会话 Plan 的实时公开状态和步骤详情。 */
   plans?: Record<string, PlanRuntimeState>;
   onPlanResume?: (planExecutionId: string, waitRequestId: string, response: Record<string, unknown>) => void;
+  onPlanRetry?: (planExecutionId: string, stepId: string) => void;
+  onPlanSkip?: (planExecutionId: string, stepId: string) => void;
+  onPlanCancel?: (planExecutionId: string) => void;
   onLoadPlan?: (planExecutionId: string) => void | Promise<void>;
   onLoadPlanAttempt?: (planExecutionId: string, stepAttemptId: string) => void | Promise<void>;
   /** 各轮次(runId)的反馈状态，用于回显点赞/点踩/问题反馈 */
@@ -159,6 +163,37 @@ function buildMessageSections(steps: Step[]): MessageSection[] {
   return sections;
 }
 
+function nativePlanToolCall(plan: PlanRuntimeState): ToolCallState {
+  let status: ToolCallState['status'] = 'running';
+  switch (plan.view.status) {
+    case 'WAIT_USER_INPUT':
+    case 'WAIT_USER_ACTION':
+    case 'WAIT_EXTERNAL_TASK':
+      status = 'waiting';
+      break;
+    case 'SUCCEEDED':
+      status = 'done';
+      break;
+    case 'FAILED':
+      status = 'error';
+      break;
+    case 'CANCELLED':
+      status = 'cancelled';
+      break;
+    default:
+      status = 'running';
+  }
+  return {
+    toolUseId: `plan_runtime:${plan.planExecutionId}`,
+    toolName: 'plan_runtime',
+    description: plan.view.summary || 'Plan Runtime',
+    input: {},
+    status,
+    executedBy: 'internal',
+    planExecutionId: plan.planExecutionId,
+  };
+}
+
 function UserMessage(props: {
   step: Step;
   quickInsertItems?: AgentQuickInsertItem[];
@@ -196,6 +231,16 @@ export function MessageList(props: MessageListProps) {
     }
     return latest;
   });
+
+  const nativePlansForRun = (runId: string): PlanRuntimeState[] => (
+    Object.values(props.plans ?? {})
+      .filter((plan) => (
+        !!runId
+        && plan.outerRunId === runId
+        && !latestPlanToolUseIdByExecution().has(plan.planExecutionId)
+      ))
+      .sort((left, right) => left.planExecutionId.localeCompare(right.planExecutionId))
+  );
 
   const userMessageKey = createMemo(() => props.steps
     .filter((step) => step.role === 'user')
@@ -315,11 +360,36 @@ export function MessageList(props: MessageListProps) {
                   plans={props.plans}
                   latestPlanToolUseIdByExecution={latestPlanToolUseIdByExecution()}
                   onPlanResume={props.onPlanResume}
+                  onPlanRetry={props.onPlanRetry}
+                  onPlanSkip={props.onPlanSkip}
+                  onPlanCancel={props.onPlanCancel}
                   onLoadPlan={props.onLoadPlan}
                   onLoadPlanAttempt={props.onLoadPlanAttempt}
                   onCodeCopy={props.onCodeCopy}
                   onCodeSelectionCopy={props.onCodeSelectionCopy}
                 />
+
+                <For each={nativePlansForRun(section().runId)}>
+                  {(plan) => (
+                    <div class="agent-ui-message-assistant agent-ui-message-plan">
+                      <div class="agent-ui-message-body">
+                        <PlanRuntimeCard
+                          toolCall={nativePlanToolCall(plan)}
+                          plan={plan}
+                          useLiveView
+                          disabled={props.isRunning}
+                          resolveTool={props.resolveTool}
+                          onResume={props.onPlanResume}
+                          onRetry={props.onPlanRetry}
+                          onSkip={props.onPlanSkip}
+                          onCancel={props.onPlanCancel}
+                          onLoadPlan={props.onLoadPlan}
+                          onLoadAttempt={props.onLoadPlanAttempt}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </For>
 
                 <Show when={props.onFeedback && section().runId && isCompletedTurn()}>
                   <TurnFeedbackBar

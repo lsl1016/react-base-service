@@ -64,6 +64,12 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/session/list", react.ListSessions)
 		reactGroup.POST("/session/events", react.GetSessionEvents)
 		reactGroup.POST("/async_task/list", react.ListAsyncTasks)
+		reactGroup.POST("/plan_execution/detail", react.GetPlanExecutionDetail)
+		reactGroup.POST("/plan_execution/events", react.GetPlanStepEvents)
+		reactGroup.POST("/plan_execution/resume", react.ResumePlanExecution)
+		reactGroup.POST("/plan_execution/retry", react.RetryPlanStep)
+		reactGroup.POST("/plan_execution/skip", react.SkipPlanStep)
+		reactGroup.POST("/plan_execution/cancel", react.CancelPlanExecution)
 		reactGroup.POST("/session/feedback", react.ListSessionFeedback)
 		reactGroup.POST("/run/feedback", react.UpdateRunFeedback)
 		// Plan 模板管理（TODO 占位实现：内存 CRUD，不落库，见 controllers/http/react/plan_template.go）

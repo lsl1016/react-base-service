@@ -54,6 +54,13 @@ func executionProfileForRun(req *runtimeRequest) ExecutionProfile {
 	if req == nil {
 		return outerExecutionProfile()
 	}
+	if strings.HasPrefix(strings.TrimSpace(req.agentPath), "plan/") {
+		// Plan Step 已由上层 Plan Runtime 负责计划编排，Scoped ReAct 只执行当前 Step。
+		// 禁止再次暴露 create_plan，避免 Step 内递归生成第二套计划。
+		profile := subAgentExecutionProfile()
+		profile.AllowPlan = false
+		return profile
+	}
 	if req.agentPath != "" {
 		return subAgentExecutionProfile()
 	}

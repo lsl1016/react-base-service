@@ -11,6 +11,7 @@ import (
 	"react-base-service/components"
 	"react-base-service/components/metrics"
 	"react-base-service/components/params"
+	planService "react-base-service/service/plan"
 	reactService "react-base-service/service/react"
 
 	"react-base-service/golib/zlog"
@@ -200,6 +201,23 @@ func handleWSMessage(ctx *gin.Context, connCtx context.Context, write reactServi
 			return runMsgCh, runDone
 		}
 		return startWSRun(ctx, connCtx, write, msg)
+	case planService.EventPlanResume, planService.EventPlanRetry, planService.EventPlanSkip, planService.EventPlanCancel:
+		// Plan WAIT 的最后一条 view 事件可能先于 run goroutine 的结束通知到达客户端。
+		// 用户立即点击确认时，先检查上一段执行是否其实已经结束，避免把合法 Resume 误判成并发 Run。
+		if runMsgCh != nil && runDone != nil {
+			select {
+			case <-runDone:
+				close(runMsgCh)
+				runMsgCh = nil
+				runDone = nil
+			default:
+			}
+		}
+		if runMsgCh != nil {
+			_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: "plan command rejected while a run is active"}})
+			return runMsgCh, runDone
+		}
+		return startWSPlanCommand(ctx, connCtx, write, msg)
 	case reactService.EventCancel:
 		if err := reactService.Cancel(ctx, msg.RunID, msg.SessionID); err != nil {
 			_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: err.Error()}})
@@ -216,6 +234,28 @@ func handleWSMessage(ctx *gin.Context, connCtx context.Context, write reactServi
 		_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorParamInvalid.ErrNo, ErrMsg: "unsupported message type"}})
 	}
 	return runMsgCh, runDone
+}
+
+// dispatchRunExecution 按 payload.ExecutionMode 把一次 run 分流到对应 Runtime（D1）。
+// 分流必须位于 controller 层而不是 react 包内：依赖方向是 plan → react（plan 复用 ReAct 引擎），
+// react 不能反向 import plan；这里是两个 Runtime 共同的上层调用方。
+// 当前唯一 run 入口是 WS；未来若增加 HTTP run 入口，必须复用本函数而不是各自 switch。
+func dispatchRunExecution(
+	ctx *gin.Context,
+	connCtx context.Context,
+	payload params.ReactRunPayload,
+	sessionID string,
+	write reactService.EventWriter,
+	readClient reactService.ClientMessageReader,
+) (*reactService.RunResult, error) {
+	switch payload.ExecutionMode {
+	case "", params.ReactExecutionModeReact:
+		return reactService.RunWithClientReaderContext(ctx, connCtx, payload, sessionID, write, readClient)
+	case params.ReactExecutionModePlan:
+		return planService.RunWithClientReaderContext(ctx, connCtx, payload, sessionID, write, readClient)
+	default:
+		return nil, components.ErrorParamInvalid.Sprintf("unsupported executionMode: %s", payload.ExecutionMode)
+	}
 }
 
 func startWSRun(ctx *gin.Context, connCtx context.Context, write reactService.EventWriter, msg params.ReactWSMessage) (chan params.ReactWSMessage, chan struct{}) {
@@ -236,7 +276,7 @@ func startWSRun(ctx *gin.Context, connCtx context.Context, write reactService.Ev
 			}
 			return clientMsg, nil
 		}
-		result, err := reactService.RunWithClientReaderContext(ctx, connCtx, payload, msg.SessionID, write, readClient)
+		result, err := dispatchRunExecution(ctx, connCtx, payload, msg.SessionID, write, readClient)
 		if err == nil || reactService.IsReactRunCancelled(err) || reactService.IsReactClientDisconnected(err) {
 			return
 		}
@@ -252,6 +292,58 @@ func startWSRun(ctx *gin.Context, connCtx context.Context, write reactService.Ev
 			Payload:   params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: err.Error()},
 		}
 		_ = write(errorEvent)
+	}()
+	return runMsgCh, runDone
+}
+
+func startWSPlanCommand(ctx *gin.Context, connCtx context.Context, write reactService.EventWriter, msg params.ReactWSMessage) (chan params.ReactWSMessage, chan struct{}) {
+	runMsgCh := make(chan params.ReactWSMessage, 16)
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		readClient := func() (params.ReactWSMessage, error) {
+			clientMsg, ok := <-runMsgCh
+			if !ok {
+				return params.ReactWSMessage{}, reactService.ErrReactClientDisconnected
+			}
+			return clientMsg, nil
+		}
+
+		var err error
+		switch strings.TrimSpace(msg.Type) {
+		case planService.EventPlanResume:
+			var req params.PlanResumeReq
+			if err = json.Unmarshal(msg.Payload, &req); err == nil {
+				_, err = planService.Resume(ctx, connCtx, req, write, readClient)
+			}
+		case planService.EventPlanRetry:
+			var req params.PlanRetryReq
+			if err = json.Unmarshal(msg.Payload, &req); err == nil {
+				_, err = planService.Retry(ctx, connCtx, req, write, readClient)
+			}
+		case planService.EventPlanSkip:
+			var req params.PlanSkipReq
+			if err = json.Unmarshal(msg.Payload, &req); err == nil {
+				_, err = planService.Skip(ctx, connCtx, req, write, readClient)
+			}
+		case planService.EventPlanCancel:
+			var req params.PlanCancelReq
+			if err = json.Unmarshal(msg.Payload, &req); err == nil {
+				_, err = planService.Cancel(ctx, req, write)
+			}
+		default:
+			err = components.ErrorParamInvalid.Sprintf("unsupported plan command: %s", msg.Type)
+		}
+		if err == nil || reactService.IsReactRunCancelled(err) || reactService.IsReactClientDisconnected(err) {
+			return
+		}
+		zlog.Errorf(ctx, "[Plan.WS] 命令执行失败: type=%s err=%v", msg.Type, err)
+		_ = write(params.ReactEvent{
+			Type:      reactService.EventError,
+			RunID:     msg.RunID,
+			SessionID: msg.SessionID,
+			Payload:   params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: err.Error()},
+		})
 	}()
 	return runMsgCh, runDone
 }

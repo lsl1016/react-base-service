@@ -152,6 +152,7 @@ describe('AgentPanel UI events', () => {
     expect(run).toHaveBeenCalledWith('生成 SQL', {
       displayParts: [{ type: 'text', text: '生成 SQL' }],
       attachments: undefined,
+      executionMode: 'react',
       inputOrigin,
     });
     expect(onAfterSend).toHaveBeenCalledWith('生成 SQL', { inputOrigin });
@@ -518,6 +519,7 @@ describe('AgentPanel UI events', () => {
     expect(run).toHaveBeenCalledWith('直接发送', {
       displayParts: [{ type: 'text', text: '直接发送' }],
       attachments: undefined,
+      executionMode: 'react',
       inputOrigin: { type: 'manual' },
     });
     expect(onAfterSend).toHaveBeenCalledWith('直接发送', {
