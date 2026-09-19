@@ -368,7 +368,29 @@ type ModelCatalog struct {
 type TCustom struct {
 	LLM       LLMConfig       `yaml:"llm"`
 	MCP       MCPConfig       `yaml:"mcp"`
+	MCPServer MCPServerConfig `yaml:"mcp_server"`
 	AsyncTask AsyncTaskConfig `yaml:"async_task"`
+}
+
+// MCPServerConfig 声明 MCP 服务端网关（对外把 tblLlmTool 的 http 工具暴露成 MCP 协议）。
+// 与 MCP（客户端配置）相互独立：enabled=false 时主服务不挂 /mcp 端点。
+type MCPServerConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Name/Version 是 initialize 握手返回的 server 实现标识（客户端展示用）。
+	Name    string `yaml:"name"`
+	Version string `yaml:"version"`
+	// Instructions 覆盖随 initialize 下发的模型使用规范；空则用内置默认文案。
+	Instructions string `yaml:"instructions"`
+	// ForwardCookies 把调用方请求里的指定 Cookie 透传给工具上游（上游依赖登录态的场景）。
+	ForwardCookies []string `yaml:"forward_cookies"`
+	// Audit 控制调用审计异步落库（tblLlmMcpCallLog）。
+	Audit MCPServerAuditConfig `yaml:"audit"`
+}
+
+// MCPServerAuditConfig 审计落库配置。
+type MCPServerAuditConfig struct {
+	// WorkerNum 落库并发数（默认 10）；队列容量固定 4096，写满丢弃不阻塞业务。
+	WorkerNum int `yaml:"worker_num"`
 }
 
 // MCPConfig 声明 MCP 客户端：servers 的 kind 必须命中代码内适配器白名单。

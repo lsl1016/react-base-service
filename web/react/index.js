@@ -864,6 +864,32 @@ const resources = {
       ? [['rawConfig', '原始配置（mcpServers JSON）', 'codeTextarea']]
       : [['name', '名称', 'readonly'], ['kind', '传输', 'readonly'], ['boundCallersText', '绑定 caller（逗号分隔）'], ['endpoint', '端点 URL'], ['timeoutMs', '超时(ms)'], ['status', '状态', 'select'], ['description', '描述', 'textarea'], ['headersText', '请求头 JSON', 'codeTextarea']]),
   },
+  // MCP 应用（服务端网关接入凭证）：卡片列表 + 创建/重置密钥（secret 一次性展示）+ 调用审计。
+  mcpapp: {
+    title: 'MCP 应用管理',
+    tabText: 'MCP 应用',
+    itemName: 'MCP 应用',
+    addText: '新增应用',
+    idKey: 'appId',
+    cardList: true,
+    cardKind: 'mcpapp',
+    listPath: '/react/mcpapp/list',
+    createPath: '/react/mcpapp/create',
+    updatePath: '/react/mcpapp/update',
+    deletePath: '/react/mcpapp/delete',
+    deleteBody: (item) => ({ appId: item.appId }),
+    toDraft: (item) => ({ ...item }),
+    empty: () => ({ appName: '', callerKey: 'default', status: 1 }),
+    toPayload: (draft, config, mode) => (mode === 'create'
+      ? { appName: draft.appName, callerKey: draft.callerKey, status: Number(draft.status) }
+      : { appId: draft.appId, appName: draft.appName, callerKey: draft.callerKey, status: Number(draft.status) }),
+    modalNote: () => '应用凭证供外部 MCP 客户端接入服务端网关（Authorization: Bearer <app_key>:<app_secret>）。绑定 caller 决定可见工具：该 caller 与 default 作用域下启用的 http 工具。appSecret 仅创建/重置时完整展示一次，请妥善保存。',
+    fields: () => [
+      ['appName', '应用名称'],
+      ['callerKey', '绑定 caller（default=全部通用）'],
+      ['status', '状态', 'select'],
+    ],
+  },
   // P3 Agent Bundle 插件包：安装表单 + 已装卡片（来源白名单内 git URL 或本地路径）。
   bundle: {
     title: 'Bundle 插件包',
@@ -931,7 +957,31 @@ const management = {
     });
     $('management-add').addEventListener('click', () => this.openCreate());
     $('management-import').addEventListener('click', () => this.openImport());
+    $('management-batch').addEventListener('click', () => this.openBatchTools());
     $('management-refresh').addEventListener('click', () => this.refresh());
+    $('management-modal-body').addEventListener('click', (event) => {
+      const batchAction = event.target.closest('[data-batch-action]')?.dataset.batchAction;
+      if (batchAction) {
+        this.syncBatchDraftFromModal();
+        if (batchAction === 'tab') this.activeBatchIndex = Number(event.target.closest('[data-batch-action]').dataset.batchIndex) || 0;
+        if (batchAction === 'add') {
+          this.batchDrafts.push(this.emptyBatchToolDraft());
+          this.activeBatchIndex = this.batchDrafts.length - 1;
+        }
+        if (batchAction === 'remove') {
+          this.batchDrafts.splice(this.activeBatchIndex, 1);
+          this.activeBatchIndex = Math.max(0, this.activeBatchIndex - 1);
+        }
+        this.renderModal();
+        return;
+      }
+      const logsAction = event.target.closest('[data-logs-action]')?.dataset.logsAction;
+      if (logsAction) {
+        if (logsAction === 'prev') this.logsState.page = Math.max(1, this.logsState.page - 1);
+        if (logsAction === 'next') this.logsState.page += 1;
+        this.loadMcpAppLogs();
+      }
+    });
     $('management-modal-close').addEventListener('click', () => this.closeModal());
     $('management-modal-cancel').addEventListener('click', () => this.closeModal());
     $('management-modal-save').addEventListener('click', () => this.save());
@@ -966,6 +1016,8 @@ const management = {
     document.querySelector('.rp-caller-filter-field')?.classList.toggle('rp-hidden', !resource.callerFilter);
     document.querySelector('.rp-mcp-filter-field')?.classList.toggle('rp-hidden', !resource.mcpFilter);
     $('management-head').innerHTML = useCards ? '' : `<tr class="rp-table-row">${resource.columns.map(([, label]) => `<th class="rp-table-cell rp-table-header-cell">${label}</th>`).join('')}</tr>`;
+    // 工具管理页提供「批量注册」（多草稿 Tab 批量登记 http 工具），其余页隐藏。
+    $('management-batch').hidden = this.type !== 'tool';
   },
   // 拉取 caller 清单填充筛选下拉：固定「全部 / 默认」+ 扁平的 caller 列表（平台并入文案）。
   async loadCallerFilterOptions() {
@@ -1093,6 +1145,10 @@ const management = {
       this.renderWorkspaceCards();
       return;
     }
+    if (resource.cardKind === 'mcpapp') {
+      this.renderMcpAppCards();
+      return;
+    }
     if (resource.cardList) {
       this.renderMcpCards();
       return;
@@ -1187,6 +1243,198 @@ const management = {
       return;
     }
     this.renderTable();
+  },
+  // MCP 应用（网关接入凭证）卡片：名称/key/打码 secret/绑定 caller/接入端点/操作。
+  renderMcpAppCards() {
+    const rows = this.filteredItems();
+    const container = $('management-cards');
+    if (!rows.length) {
+      container.innerHTML = '<div class="rp-mcp-empty">暂无 MCP 应用。新增应用获得 appKey/appSecret 后，外部 MCP 客户端即可经 /mcp 端点接入（Bearer appKey:appSecret）</div>';
+      this.visibleItems = rows;
+      return;
+    }
+    container.innerHTML = rows.map((item, index) => `
+      <div class="rp-mcp-card${isEnabled(item) ? '' : ' rp-mcp-disabled'}" data-index="${index}">
+        <div class="rp-mcp-card-head">
+          <span class="rp-mcp-name">${escapeHtml(item.appName)}</span>
+          <span class="rp-mcp-kind">caller:${escapeHtml(item.callerKey)}</span>
+          <span class="rp-mcp-badge ${isEnabled(item) ? 'rp-mcp-badge-ok' : 'rp-mcp-badge-off'}">${isEnabled(item) ? '启用' : '停用'}</span>
+          <span class="rp-mcp-endpoint" title="外部 MCP 客户端接入端点">${escapeHtml(item.endpoint)}</span>
+          <div class="rp-row-actions rp-mcp-actions">
+            <button class="rp-button rp-link-btn" data-action="copy-key" type="button" title="复制 appKey">key:${escapeHtml(shortText(item.appKey, 14))}</button>
+            <button class="rp-button rp-link-btn" data-action="reset-secret" type="button">重置密钥</button>
+            <button class="rp-button rp-link-btn" data-action="logs" type="button">调用记录</button>
+            <button class="rp-button rp-link-btn" data-action="edit" type="button">修改</button>
+            <button class="rp-button rp-link-btn rp-danger-link" data-action="delete" type="button">删除</button>
+            <button class="rp-button rp-switch ${isEnabled(item) ? 'rp-on' : ''}" data-action="toggle" type="button" title="${isEnabled(item) ? '停用' : '启用'}"></button>
+          </div>
+        </div>
+        <div class="rp-mcp-card-body">
+          <div class="rp-mcp-bound">appKey：<code>${escapeHtml(item.appKey)}</code> · secret：<code>${escapeHtml(item.maskedSecret)}</code> · 接入头：<code>Authorization: Bearer &lt;appKey&gt;:&lt;appSecret&gt;</code></div>
+        </div>
+      </div>`).join('');
+    this.visibleItems = rows;
+  },
+  async resetMcpAppSecret(item) {
+    if (!confirm(`确认重置「${item.appName}」的密钥吗？旧凭证立即失效，持有它的客户端会失联。`)) return;
+    this.setState('正在重置密钥...');
+    try {
+      const data = await post('/react/mcpapp/reset_secret', { appId: item.appId });
+      await this.reload();
+      this.showSecretOnce(item, data?.appSecret ?? '');
+      this.setState('密钥已重置，请立即保存新的 appSecret（仅本次展示）');
+    } catch (error) {
+      this.setState(error.message || '重置失败', true);
+    }
+  },
+  // showSecretOnce 用管理弹窗一次性展示完整 secret（关闭后不可再查）。
+  showSecretOnce(app, secret) {
+    this.mode = 'secretOnce';
+    this.draft = { appName: app.appName ?? '', appKey: app.appKey ?? '', appSecret: secret };
+    this.renderModal();
+  },
+  async openMcpAppLogs(item) {
+    this.mode = 'mcpLogs';
+    this.draft = null;
+    this.logsState = { appKey: item.appKey, appName: item.appName, page: 1, pageSize: 10, data: null };
+    this.renderModal();
+    await this.loadMcpAppLogs();
+  },
+  async loadMcpAppLogs() {
+    const state = this.logsState;
+    if (!state) return;
+    try {
+      state.data = await post('/react/mcpapp/logs', { appKey: state.appKey, page: state.page, pageSize: state.pageSize });
+      if (this.mode === 'mcpLogs') this.renderModal();
+    } catch (error) {
+      this.setState(error.message || '加载调用记录失败', true);
+    }
+  },
+  renderMcpAppLogsBody() {
+    const state = this.logsState;
+    if (!state) return '';
+    const logs = Array.isArray(state.data?.logs) ? state.data.logs : [];
+    const total = Number(state.data?.total ?? 0);
+    const pages = Math.max(1, Math.ceil(total / state.pageSize));
+    if (!logs.length) {
+      return `<div class="rp-mcp-empty">该应用暂无调用记录（tools/call 审计异步落库，稍等 1 秒后刷新）</div>`;
+    }
+    const rowsHtml = logs.map((entry) => `
+      <tr class="rp-table-row">
+        <td class="rp-table-cell" title="${escapeHtml(entry.createdAt)}">${escapeHtml(String(entry.createdAt ?? '').slice(5))}</td>
+        <td class="rp-table-cell">${escapeHtml(entry.toolName)}${entry.userName ? `（${escapeHtml(entry.userName)}）` : ''}</td>
+        <td class="rp-table-cell">${entry.resultCode === 0 ? '<span class="rp-mcp-badge rp-mcp-badge-ok">成功</span>' : `<span class="rp-mcp-badge rp-mcp-badge-bad" title="${escapeHtml(entry.errorMsg)}">失败 ${entry.resultCode}</span>`}</td>
+        <td class="rp-table-cell">${entry.costMs}ms</td>
+        <td class="rp-table-cell" title="${escapeHtml(entry.arguments ?? '')}">${escapeHtml(shortText(entry.arguments, 26))}</td>
+        <td class="rp-table-cell" title="${escapeHtml(entry.responseText ?? '')}">${escapeHtml(shortText(entry.responseText, 26))}</td>
+      </tr>`).join('');
+    return `
+      <div class="rp-mcp-bound">应用「${escapeHtml(state.appName)}」调用审计（appKey: ${escapeHtml(state.appKey)}）</div>
+      <table class="rp-management-table"><thead class="rp-table-head"><tr class="rp-table-row">
+        <th class="rp-table-cell rp-table-header-cell">时间</th><th class="rp-table-cell rp-table-header-cell">工具</th>
+        <th class="rp-table-cell rp-table-header-cell">结果</th><th class="rp-table-cell rp-table-header-cell">耗时</th>
+        <th class="rp-table-cell rp-table-header-cell">入参</th><th class="rp-table-cell rp-table-header-cell">响应</th>
+      </tr></thead><tbody>${rowsHtml}</tbody></table>
+      <div class="rp-row-actions" style="margin-top:8px;justify-content:flex-end">
+        <button class="rp-button" data-logs-action="prev" type="button" ${state.page <= 1 ? 'disabled' : ''}>上一页</button>
+        <span class="rp-mcp-endpoint">第 ${state.page}/${pages} 页 · 共 ${total} 条</span>
+        <button class="rp-button" data-logs-action="next" type="button" ${state.page >= pages ? 'disabled' : ''}>下一页</button>
+      </div>`;
+  },
+  // 批量注册：多草稿 Tab 批量登记 http 工具（对齐 mcp-server 管理台的批量注册交互）。
+  openBatchTools() {
+    this.mode = 'batchTools';
+    this.batchDrafts = [this.emptyBatchToolDraft()];
+    this.activeBatchIndex = 0;
+    this.renderModal();
+  },
+  emptyBatchToolDraft() {
+    return {
+      name: '',
+      description: '',
+      url: '',
+      method: 'POST',
+      timeoutMs: 10000,
+      headersText: '{}',
+      inputSchemaText: '{\n  "type": "object",\n  "properties": {}\n}',
+      outputSchemaText: '',
+    };
+  },
+  renderBatchToolsBody() {
+    const drafts = this.batchDrafts;
+    const index = this.activeBatchIndex;
+    const draft = drafts[index] ?? drafts[0];
+    const methodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+    return `
+      <div class="rp-row-actions" style="flex-wrap:wrap;margin-bottom:8px">
+        ${drafts.map((item, i) => `<button class="rp-button ${i === index ? 'rp-primary-btn' : ''}" data-batch-action="tab" data-batch-index="${i}" type="button">${escapeHtml(item.name || `草稿${i + 1}`)}</button>`).join('')}
+        <button class="rp-button" data-batch-action="add" type="button">＋新增草稿</button>
+        ${drafts.length > 1 ? `<button class="rp-button rp-danger-link" data-batch-action="remove" type="button">删除当前草稿</button>` : ''}
+      </div>
+      <div class="rp-form-grid">
+        <label class="rp-field"><span class="rp-field-label">工具名称（英文标识）</span><input class="rp-control rp-control-size-default" data-batch-field="name" value="${escapeHtml(draft.name)}" /></label>
+        <label class="rp-field"><span class="rp-field-label">请求方法</span><select class="rp-control rp-control-size-default" data-batch-field="method">${methodOptions.map((m) => `<option value="${m}" ${draft.method === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+        <label class="rp-field rp-span-all"><span class="rp-field-label">上游 URL</span><input class="rp-control rp-control-size-default" data-batch-field="url" value="${escapeHtml(draft.url)}" placeholder="https://api.example.com/endpoint" /></label>
+        <label class="rp-field"><span class="rp-field-label">超时(ms, 100-120000)</span><input class="rp-control rp-control-size-default" data-batch-field="timeoutMs" value="${escapeHtml(String(draft.timeoutMs))}" /></label>
+        <label class="rp-field"><span class="rp-field-label">归属 caller</span><input class="rp-control rp-control-size-default" value="${escapeHtml(createTargetCallerKey())}" readonly disabled /></label>
+        <label class="rp-field rp-span-all"><span class="rp-field-label">工具描述（给模型看）</span><textarea class="rp-control rp-textarea" data-batch-field="description">${escapeHtml(draft.description)}</textarea></label>
+        <label class="rp-field rp-span-all"><span class="rp-field-label">请求头 JSON</span><textarea class="rp-control rp-textarea rp-code-textarea" data-batch-field="headersText" spellcheck="false">${escapeHtml(draft.headersText)}</textarea></label>
+        <label class="rp-field rp-span-all"><span class="rp-field-label">入参 Schema（JSON Schema）</span><textarea class="rp-control rp-textarea rp-code-textarea" data-batch-field="inputSchemaText" spellcheck="false">${escapeHtml(draft.inputSchemaText)}</textarea></label>
+        <label class="rp-field rp-span-all"><span class="rp-field-label">出参 Schema（可选；加 "x-output-projection": true 启用网关投影+字段说明）</span><textarea class="rp-control rp-textarea rp-code-textarea" data-batch-field="outputSchemaText" spellcheck="false">${escapeHtml(draft.outputSchemaText)}</textarea></label>
+      </div>`;
+  },
+  syncBatchDraftFromModal() {
+    const draft = this.batchDrafts?.[this.activeBatchIndex];
+    if (!draft) return;
+    $('management-modal-body').querySelectorAll('[data-batch-field]').forEach((field) => {
+      draft[field.dataset.batchField] = field.value;
+    });
+  },
+  async submitBatchTools() {
+    this.syncBatchDraftFromModal();
+    const callerKey = createTargetCallerKey();
+    const tools = [];
+    for (const [i, draft] of (this.batchDrafts ?? []).entries()) {
+      if (!draft.name?.trim() || !draft.url?.trim()) throw new Error(`草稿 ${i + 1} 缺少工具名称或上游 URL`);
+      let headers = {};
+      let inputSchema = {};
+      let outputSchema = null;
+      try {
+        headers = draft.headersText?.trim() ? JSON.parse(draft.headersText) : {};
+      } catch (error) { throw new Error(`草稿 ${i + 1} 请求头不是合法 JSON：${error.message}`); }
+      try {
+        inputSchema = draft.inputSchemaText?.trim() ? JSON.parse(draft.inputSchemaText) : {};
+      } catch (error) { throw new Error(`草稿 ${i + 1} 入参 Schema 不是合法 JSON：${error.message}`); }
+      try {
+        if (draft.outputSchemaText?.trim()) outputSchema = JSON.parse(draft.outputSchemaText);
+      } catch (error) { throw new Error(`草稿 ${i + 1} 出参 Schema 不是合法 JSON：${error.message}`); }
+      const config = {
+        url: draft.url.trim(),
+        method: draft.method,
+        timeout_ms: Number(draft.timeoutMs) || 10000,
+        headers,
+        inputSchema,
+      };
+      if (outputSchema) config.outputSchema = outputSchema;
+      tools.push({
+        name: draft.name.trim(),
+        description: draft.description?.trim() || draft.name.trim(),
+        toolType: 'http',
+        callerKey,
+        routeValues: [],
+        config,
+      });
+    }
+    this.setState('正在批量注册...');
+    const result = await post('/tool/batch_register', { tools });
+    this.closeModal();
+    await this.reload();
+    const failed = Array.isArray(result?.results) ? result.results.filter((item) => item.error) : [];
+    if (failed.length) {
+      this.setState(`批量注册完成：成功 ${result?.created ?? 0} 条，失败 ${failed.length} 条（${failed.map((item) => `${item.name}: ${shortText(item.error, 60)}`).join('；')}）`, true);
+    } else {
+      this.setState(`批量注册完成：成功 ${result?.created ?? 0} 条`);
+    }
   },
   // P3 Bundle 已装卡片：名称/版本/来源与钉住的 commit/资源计数/卸载。
   renderBundleCards() {
@@ -1405,6 +1653,12 @@ const management = {
     if (action === 'expand') this.toggleMcpExpand(event);
     if (action === 'connect') this.connectMcp(item);
     if (action === 'uninstall') this.uninstallBundle(item);
+    if (action === 'reset-secret') this.resetMcpAppSecret(item);
+    if (action === 'logs') this.openMcpAppLogs(item);
+    if (action === 'copy-key') {
+      navigator.clipboard?.writeText(item.appKey ?? '');
+      this.setState(`appKey 已复制：${item.appKey}`);
+    }
   },
   openCreate() {
     // Bundle 的「新增」即安装表单。
@@ -1464,6 +1718,45 @@ const management = {
   },
   renderModal() {
     const resource = this.resource();
+    const saveButton = $('management-modal-save');
+    const cancelButton = $('management-modal-cancel');
+    // 自定义模式：MCP 应用密钥一次性展示 / 调用审计分页 / 工具批量注册（多草稿）。
+    if (this.mode === 'secretOnce') {
+      $('management-modal-title').textContent = '应用密钥（仅本次展示）';
+      $('management-modal-body').innerHTML = `
+        <div class="rp-operation-note">请立即保存 appKey/appSecret（关闭后 secret 不可再查询，遗失只能重置）。外部 MCP 客户端接入：URL 填服务地址 <code>/react-base-service/mcp</code>，请求头 <code>Authorization: Bearer &lt;appKey&gt;:&lt;appSecret&gt;</code>。</div>
+        <div class="rp-form-grid">
+          <label class="rp-field"><span class="rp-field-label">应用名称</span><input class="rp-control rp-control-size-default" value="${escapeHtml(this.draft.appName)}" readonly disabled /></label>
+          <label class="rp-field"><span class="rp-field-label">appKey</span><input class="rp-control rp-control-size-default" value="${escapeHtml(this.draft.appKey)}" readonly disabled /></label>
+          <label class="rp-field rp-span-all"><span class="rp-field-label">appSecret</span><input class="rp-control rp-control-size-default" value="${escapeHtml(this.draft.appSecret)}" readonly /></label>
+        </div>`;
+      saveButton.hidden = true;
+      cancelButton.textContent = '关闭';
+      $('management-modal-mask').classList.add('rp-visible');
+      return;
+    }
+    if (this.mode === 'mcpLogs') {
+      $('management-modal-title').textContent = 'MCP 调用记录';
+      $('management-modal-body').innerHTML = this.renderMcpAppLogsBody();
+      saveButton.hidden = true;
+      cancelButton.textContent = '关闭';
+      $('management-modal-mask').classList.add('rp-visible');
+      return;
+    }
+    if (this.mode === 'batchTools') {
+      $('management-modal-title').textContent = '批量注册工具';
+      $('management-modal-body').innerHTML = `
+        <div class="rp-operation-note">多草稿批量登记 http 工具（归属 caller 跟随 Caller 筛选）。工具经 MCP 网关对外暴露；出参 Schema 加 "x-output-projection": true 可启用服务端投影裁剪与字段说明渲染。</div>
+        ${this.renderBatchToolsBody()}`;
+      saveButton.hidden = false;
+      saveButton.textContent = '统一提交';
+      cancelButton.textContent = '取消';
+      $('management-modal-mask').classList.add('rp-visible');
+      return;
+    }
+    saveButton.hidden = false;
+    saveButton.textContent = '保存';
+    cancelButton.textContent = '取消';
     let fields = typeof resource.fields === 'function' ? resource.fields(this.mode, this.draft) : resource.fields;
     let note = typeof resource.modalNote === 'function' ? resource.modalNote(this.mode, this.draft) : resource.modalNote;
     let title;
@@ -1526,6 +1819,14 @@ const management = {
   },
   async save() {
     const resource = this.resource();
+    if (this.mode === 'batchTools') {
+      try {
+        await this.submitBatchTools();
+      } catch (error) {
+        this.setState(error.message || '批量注册失败', true);
+      }
+      return;
+    }
     this.syncDraftFromModal();
     try {
       const config = this.config();
@@ -1557,7 +1858,15 @@ const management = {
       }
       const payload = resource.toPayload(this.draft, config, this.mode);
       const isEdit = this.mode === 'edit' && this.draft[resource.idKey];
-      await post(isEdit ? resource.updatePath : resource.createPath, payload);
+      const data = await post(isEdit ? resource.updatePath : resource.createPath, payload);
+      // MCP 应用创建成功：完整 secret 仅本次响应返回，弹窗一次性展示。
+      if (!isEdit && this.type === 'mcpapp' && data?.appSecret) {
+        this.closeModal();
+        await this.reload();
+        this.showSecretOnce(data.app ?? {}, data.appSecret);
+        this.setState('应用已创建，请立即保存 appSecret（仅本次展示）');
+        return;
+      }
       this.closeModal();
       resource.afterSave?.();
       await this.reload();

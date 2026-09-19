@@ -2,6 +2,8 @@
 
 本文说明 react-base-service 内置 MCP 客户端的实现边界、安全模型，以及 `repo` 适配器（代码仓库检索）的能力边界。未列出的能力均视为**未实现**。
 
+> 项目同时是 MCP **服务端**（对外网关）：`tblLlmTool` 的 http 工具按 caller 作用域经 `/react-base-service/mcp` 暴露，含 Bearer 应用凭证鉴权、输出投影+字段描述渲染与调用审计——详见 `docs/system/mcp-gateway.md`。
+
 ## 1. MCP 实现边界
 
 ### 1.1 传输：stdio + Streamable HTTP（手写 / 官方 SDK 双实现）

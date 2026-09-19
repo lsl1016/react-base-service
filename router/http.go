@@ -17,6 +17,7 @@ import (
 	"react-base-service/controllers/http/tool"
 	"react-base-service/helpers"
 	"react-base-service/middleware"
+	"react-base-service/service/mcpgateway"
 	"react-base-service/web"
 
 	m "react-base-service/golib/middleware"
@@ -50,6 +51,15 @@ func Http(engine *gin.Engine) {
 	}
 
 	router.Use(middleware.AnonymousAuth())
+
+	// MCP 服务端网关（/mcp）：把 tblLlmTool 的 http 工具按 caller 作用域对外暴露，
+	// 自带 Bearer appKey:appSecret 鉴权，不依赖 AnonymousAuth；mcp_server.enabled 控制。
+	if conf.CustomConf.MCPServer.Enabled {
+		gateway := router.Group("/mcp")
+		gateway.GET("", mcpgateway.Auth, mcpgateway.Handler())
+		gateway.POST("", mcpgateway.Auth, mcpgateway.Handler())
+		gateway.DELETE("", mcpgateway.Auth, mcpgateway.Handler())
+	}
 
 	InitLLMRouter(router)
 }
@@ -86,6 +96,13 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/mcp/delete", react.DeleteMcpServer)
 		reactGroup.POST("/mcp/connect", react.ConnectMcpServer)
 		reactGroup.POST("/mcp/refresh", react.RefreshMcpServers)
+		// MCP 应用（网关接入凭证）管理（见 controllers/http/react/mcp_app.go）
+		reactGroup.POST("/mcpapp/list", react.ListMcpApps)
+		reactGroup.POST("/mcpapp/create", react.CreateMcpApp)
+		reactGroup.POST("/mcpapp/update", react.UpdateMcpApp)
+		reactGroup.POST("/mcpapp/delete", react.DeleteMcpApp)
+		reactGroup.POST("/mcpapp/reset_secret", react.ResetMcpAppSecret)
+		reactGroup.POST("/mcpapp/logs", react.ListMcpAppLogs)
 		// Agent Bundle 插件包管理（P3：安装展开写入注册表、卸载回滚，见 controllers/http/react/bundle.go）
 		reactGroup.POST("/bundle/install", react.InstallBundle)
 		reactGroup.POST("/bundle/uninstall", react.UninstallBundle)
@@ -164,6 +181,7 @@ func InitLLMRouter(router *gin.RouterGroup) {
 	toolGroup := router.Group("/tool")
 	{
 		toolGroup.POST("/register", tool.RegisterTool)
+		toolGroup.POST("/batch_register", tool.BatchRegisterTool)
 		toolGroup.POST("/update", tool.UpdateTool)
 		toolGroup.POST("/delete", tool.DeleteTool)
 		toolGroup.POST("/list", tool.ListTools)

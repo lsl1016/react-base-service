@@ -127,3 +127,19 @@ mcp:
 async_task:
   # 异步任务状态同步框架总开关；无内置 Provider 时开启后也为空转
   enabled: false
+
+# MCP 服务端网关：把 tblLlmTool 中启用的 http 工具按 caller 作用域对外暴露成 MCP 协议
+#（端点 /react-base-service/mcp，独立进程可 go run ./cmd/mcp-gateway）。
+# 应用凭证在 playground「MCP 应用」页创建（Bearer <app_key>:<app_secret>）；
+# outputSchema 加 "x-output-projection": true 可启用服务端投影裁剪+字段说明渲染。
+mcp_server:
+  enabled: true
+  # name: react-base-service      # initialize 返回的 server 标识（默认 react-base-service）
+  # version: 1.0.0
+  # instructions: |               # 覆盖随 initialize 下发的模型使用规范（默认用内置文案）
+  #   自定义使用规范...
+  # forward_cookies:              # 透传调用方 Cookie 给工具上游（上游依赖登录态时）
+  #   - SESSION
+  audit:
+    worker_num: 10                # 审计异步落库并发（队列 4096，写满丢弃不阻塞业务）
+

@@ -16,7 +16,7 @@
 - [系统架构](architecture.md)
 - [接入指南](integration-guide.md)
 - [部署说明](deployment.md)
-- [MCP](mcp.md)
+- [MCP](mcp.md)（客户端；服务端网关见 [system/mcp-gateway.md](system/mcp-gateway.md)）
 - [Runtime 模块化](runtime-modularization.md)
 - [多端服务形态接入方案](多端服务形态接入方案.md)
 - [本地工作台与服务端基座的执行边界](本地工作台与服务端基座的执行边界.md)
