@@ -156,12 +156,20 @@ func buildSessionTitle(content string) string {
 	return string(runes[:maxReactSessionTitleLength]) + "..."
 }
 
-// Run 启动一次无前端工具回填能力的 ReAct run，适用于普通 HTTP/SSE 等只写通道场景。
+// Run 启动一次“只写事件、不读取前端回包”的 ReAct Run。
+//
+// 适用场景：HTTP/SSE、后台调用等不存在 Client Tool / ask_question 等双向交互的入口。
+// 该函数最终仍进入统一的 run() 和 executeReactLoop()，因此 Session、持久化、Tool Runtime、
+// Memory、SubAgent 等行为与 WebSocket 模式保持一致；差别只在 readClient=nil。
 func Run(ctx *gin.Context, payload params.ReactRunPayload, sessionID string, write EventWriter) (*RunResult, error) {
 	return run(ctx, ctx.Request.Context(), payload, sessionID, write, nil)
 }
 
-// RunWithClientReader 启动一次支持 client tool 回填的 ReAct run，WebSocket 场景会传入读消息函数。
+// RunWithClientReader 启动一次支持前端回包的 ReAct Run。
+//
+// WebSocket 入口通过 readClient 把 client_tool_use_end、ask_question 作答、危险操作确认等消息
+// 送回 Runtime。run() 会为整棵父/子 Agent Run 创建共享 clientMessageHub，避免多个并行等待者
+// 同时直接读取同一个 WebSocket。
 func RunWithClientReader(ctx *gin.Context, payload params.ReactRunPayload, sessionID string, write EventWriter, readClient ClientMessageReader) (*RunResult, error) {
 	return run(ctx, ctx.Request.Context(), payload, sessionID, write, readClient)
 }
@@ -174,7 +182,17 @@ func RunWithClientReaderContext(ctx *gin.Context, parent context.Context, payloa
 	return run(ctx, parent, payload, sessionID, write, readClient)
 }
 
-// run 负责创建 session/run、持久化用户输入，并把后续推理循环交给 executeReactLoop。
+// run 是一次外层 ReAct Run 的生命周期编排入口。
+//
+// 主流程：
+//   1. prepareRuntimeRequest：解析调用方、用户、模型和各类能力快照；
+//   2. 入口 token 校验：在创建 Run 前拒绝明显超出上下文窗口的请求；
+//   3. createReactRunContext：事务内创建/锁定 Session、创建 Run、持久化用户输入；
+//   4. 创建 clientMessageHub 与可取消 context，并注册运行中取消句柄；
+//   5. executeReactLoop：进入“模型 -> Tool -> 结果回填 -> 下一轮”的核心循环；
+//   6. 统一收敛 finished / error / cancelled，并释放本 Run 的 Workspace。
+//
+// 这里负责 Run 生命周期，不实现 Tool、Memory、Agent 等领域能力本身。
 func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayload, sessionID string, write EventWriter, readClient ClientMessageReader) (*RunResult, error) {
 	req, err := prepareRuntimeRequest(ctx, payload, sessionID)
 	if err != nil {
@@ -258,7 +276,11 @@ func reactContextWindowFields(run *model.ReactRun) (usedTokens, maxTokens int) {
 	return usedTokens, maxTokens
 }
 
-// createReactRunContext 在一个写事务内完成会话确认、并发 run 检查、run 创建和用户输入持久化。
+// createReactRunContext 在一个数据库写事务内建立本次 Run 的持久化起点。
+//
+// 事务内同时完成 Session 获取/创建、Session 行锁、同会话并发 Run 检查、历史快照读取、
+// ReactRun 创建和用户输入落库。放在同一事务中，是为了保证“一个 Session 同时只有一个外层
+// 活跃 Run”的约束和历史恢复视图一致，避免两个请求交错创建 Run。
 func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, string, error) {
 	var runID string
 	var sessionID string
@@ -333,12 +355,21 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 	return runID, sessionID, nil
 }
 
-// prepareRuntimeRequest 统一完成入参归一化、调用方校验、模型/API Key 解析和系统提示词装配。
+// prepareRuntimeRequest 构造一次 Run 的运行快照。
+//
+// 它不会启动模型调用，也不会创建 ReactRun；只负责把外部 payload 解析为 Runtime 真正需要的
+// identity / model / capabilities / execution / conversation 信息。这样 executeReactLoop 不再关心
+// Caller 路由、API Key 查找、Tool/Skill 可见性、Memory 查询等装配细节。
 func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, sessionID string) (*runtimeRequest, error) {
 	return prepareRuntimeRequestWithServices(ctx, payload, sessionID, defaultRuntimeServices())
 }
 
-// prepareRuntimeRequestWithServices 与 prepareRuntimeRequest 行为一致，但允许子 run/测试复用同一组 Runtime 能力依赖。
+// prepareRuntimeRequestWithServices 与 prepareRuntimeRequest 行为一致，但显式接收 runtimeServices。
+//
+// 主要用于：
+//   - 子 Agent Run 继承父 Run 的同一组 Tool/Agent/Memory Runtime，避免递归执行时切换实现；
+//   - 单元测试注入 fake runtime，只验证 ReAct 编排逻辑。
+// 这里采用依赖注入，是后续扩展 Plan Runtime / Durable Runtime 时保持核心循环稳定的重要边界。
 func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRunPayload, sessionID string, services runtimeServices) (*runtimeRequest, error) {
 	payload.CallerKey = strings.TrimSpace(payload.CallerKey)
 	payload.Type = normalizeSessionType(payload.Type)

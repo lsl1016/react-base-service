@@ -36,7 +36,8 @@ import (
 	"react-base-service/golib/zlog"
 )
 
-// rootAgentPath 是事件协议中外层 run 的缺省 Agent 路径（事件侧省略字段，前端按 main 渲染）。
+// rootAgentPath 是多 Agent 事件树的逻辑根路径。
+// 外层 Run 的事件默认省略 agentPath，前端按 main 渲染；真正委派后才出现 main/<agent>/...。
 const rootAgentPath = "main"
 
 // delegateAgentPath 计算子 run 的 agentPath：父路径为空（外层 run）时以 main 为根，
@@ -95,6 +96,12 @@ func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 // executeDelegateAgent 执行 delegate_agent：解析目标 agent → 组装隔离子 run → 复用引擎执行 →
 // 取子 run 最终回复作为工具结果回填父循环。返回值遵循 executeInternalToolContent 约定：
 // err 仅在中断（取消/断连）时非 nil 并向上传播，其余失败以 isError 结果回给模型自行调整。
+// executeDelegateAgent 执行一次子 Agent 委派。
+//
+// 子 Agent 不是另一套执行引擎，而是“Agent 配置 + 独立 ReactRun + 同一个 executeReactLoop()”。
+// 子 Run 拥有自己的模型上下文、Tool/Skill 白名单、token budget、agentPath 和持久化记录，
+// 但继承父 Run 的 runtimeServices 与 clientHub。因此父子上下文隔离，同时仍能共享 Tool Runtime、
+// Memory Runtime、Client Tool/HITL 通道和取消传播机制。
 func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (string, bool, error) {
 	var input delegateAgentInput
 	if err := json.Unmarshal(call.Input, &input); err != nil {
@@ -171,6 +178,11 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 
 // buildSubAgentRuntimeRequest 组装子 run 的运行请求：复用 prepareRuntimeRequest 完成 caller/apikey/
 // 模型解析与全量索引装配，再覆盖为 agent 定义（系统提示词、工具/Skill 白名单、独立历史、继承或指定模型）。
+// buildSubAgentRuntimeRequest 从父 Run 派生子 Agent 的运行快照。
+//
+// 这里刻意不复制父会话历史：主 Agent 必须把完成子任务所需的背景压缩到 task/expect 中，
+// 防止父上下文递归膨胀，也避免子 Agent 获得无关信息。Tool/Skill 白名单、permissionMode、
+// maxSteps、tokenBudget 等策略统一由 service/agent.RuntimePolicy 解释。
 func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, expect string) (*runtimeRequest, string, error) {
 	cfg := conf.GetReactRuntimeConfig().SubAgent
 
@@ -254,6 +266,9 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 // createSubAgentRunRecord 创建子 run 行并持久化委派任务为首条 user 消息。
 // 与 createReactRunContext 的差异：不锁定 session 行（session 已存在且被父 run 持有）、
 // 不做并发 run 检查（父 run 必然 active）、不更新会话摘要（外层 run 收敛时统一更新）。
+// createSubAgentRunRecord 为子 Agent 创建独立 ReactRun 记录。
+// parent_run_id 与 agent_path 是父子执行关系的权威持久化信息；前端多 Agent Lane、取消传播和
+// token 归集都依赖这两个字段，不应仅依赖内存调用栈。
 func (s *reactEngineState) createSubAgentRunRecord(req *runtimeRequest, subRunID string) error {
 	run := &model.ReactRun{
 		RunID:                   subRunID,

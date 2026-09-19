@@ -12,8 +12,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// runtimeRequest 只保留入口 payload 与 Runtime 依赖在顶层，其余按职责分组。
-// 子结构采用匿名嵌入，既明确状态归属，又保持 req.userName / req.agentPath 等现有读取方式不变。
+// runtimeRequest 是“进入执行循环前已经解析完成”的 Run 快照。
+//
+// 它与 reactEngineState 的区别：
+//   - runtimeRequest 描述本次 Run 要以什么身份、模型、能力和历史开始执行；
+//   - reactEngineState 描述 executeReactLoop 正在变化的运行态。
+//
+// 子结构采用匿名嵌入，既明确状态归属，又保持 req.userName / req.agentPath 等已有访问方式不变。
 type runtimeRequest struct {
 	payload  params.ReactRunPayload
 	services runtimeServices
@@ -71,8 +76,11 @@ type runtimeRequestConversation struct {
 	prevActiveToolDefsJSON string
 }
 
-// reactEngineState 顶层只保留执行上下文、run identity、事件通道和跨能力依赖。
-// 模型、消息、异步任务、token 计量分别收口到独立子状态；匿名嵌入保持现有字段访问语义。
+// reactEngineState 是单个 executeReactLoop 的可变运行态，生命周期与当前 ReactRun 一致。
+//
+// 顶层只保留执行上下文、Run 标识、事件通道和跨能力依赖；模型、消息、异步任务和 token 计量
+// 分别收口到独立子状态。它不负责 DB 模型定义，也不持有跨 Session 的全局状态。
+// 子 Agent 会创建自己的 reactEngineState，因此父子 Run 的模型上下文和 activeTools 天然隔离。
 type reactEngineState struct {
 	ctx       *gin.Context
 	runCtx    context.Context
@@ -139,7 +147,9 @@ type reactEngineUsageState struct {
 	delegatedOutputTokens atomic.Int64
 }
 
-// newReactEngineState 集中构造 ReAct 引擎状态，避免主循环感知各子状态的初始化细节。
+// newReactEngineState 集中构造 ReAct 引擎状态。
+// 新增运行字段时优先在这里统一初始化，避免 executeReactLoop 逐渐膨胀成大型 struct literal；
+// 对需要从上一 Run 恢复的状态，只保存“可恢复引用/快照”，真正恢复动作仍由对应模块执行。
 func newReactEngineState(
 	ctx *gin.Context,
 	runCtx context.Context,

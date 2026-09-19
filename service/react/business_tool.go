@@ -11,6 +11,12 @@ import (
 	toolService "react-base-service/service/tool"
 )
 
+// executeToolInput 是稳定 Meta Tool execute_tool 的输入信封。
+//
+// ReAct 不把所有业务 Tool 的完整 Schema 一次性暴露给模型，而采用两阶段协议：
+//   1. get_tool(name/toolId)：按需加载目标 Tool 的 parameters/outputSchema；
+//   2. execute_tool(...)：仅执行已经加载过且定义仍有效的 Tool。
+// 这样在 MCP/HTTP Tool 数量较多时，可以显著降低 System Prompt 和 Provider Tool Schema 的上下文占用。
 type executeToolInput struct {
 	Description string          `json:"description"`
 	ToolID      string          `json:"toolId"`
@@ -60,7 +66,11 @@ func renderToolIndexSummary(snapshotJSON string) string {
 	return strings.TrimSpace(sb.String())
 }
 
-// getTool 加载一个 Business Tool，并把 parameters/outputSchema 作为消息上下文返回给模型。
+// getTool 加载一个当前 Caller/Route/User 可见的 Business Tool。
+//
+// 成功后会把 Tool 放入 activeTools，并把 parameters/outputSchema 作为普通 Tool Result 返回给模型。
+// activeTools 是“本 Run 中模型已经显式了解过 Schema”的集合；execute_tool 只允许执行这个集合中的 Tool，
+// 从而避免模型绕过 Schema 获取阶段直接猜参数调用。
 func (s *reactEngineState) getTool(input json.RawMessage) (string, bool, error) {
 	var req struct {
 		ToolID string `json:"toolId"`
@@ -79,6 +89,8 @@ func (s *reactEngineState) getTool(input json.RawMessage) (string, bool, error) 
 	return "", true, fmt.Errorf("tool not found")
 }
 
+// activateBusinessTool 将业务 Tool 标记为当前 Run 已加载，并立即持久化 active_tool_ids / definitions。
+// 持久化的目的不是鉴权，而是支持下一 Run 根据历史上下文安全恢复已经加载过的 Tool。
 func (s *reactEngineState) activateBusinessTool(tool model.Tool, definition llm.ToolDefinition) (string, bool, error) {
 	callName := businessToolCallName(tool)
 	s.activeTools[callName] = tool
@@ -107,6 +119,13 @@ func (s *reactEngineState) activateBusinessTool(tool model.Tool, definition llm.
 	return string(data), false, nil
 }
 
+// executeLoadedBusinessTool 执行已经通过 get_tool 激活的 Business Tool。
+//
+// 执行前会做三层保护：
+//   - 解析并校验 execute_tool 信封；
+//   - 用 InputSchema 校验真实业务参数；
+//   - 再次查询最新可见 Tool，并比较 definition fingerprint。
+// 如果管理员在 Run 期间修改了 Tool Schema，旧上下文里的定义立即失效，模型必须重新 get_tool。
 func (s *reactEngineState) executeLoadedBusinessTool(call llm.ToolCall, step int) (llm.ToolResultContent, error) {
 	var req executeToolInput
 	if err := json.Unmarshal(call.Input, &req); err != nil {
@@ -338,7 +357,9 @@ func sanitizeToolFunctionName(name string) string {
 	return builder.String()
 }
 
-// toolDefinitionFingerprint 计算工具 definition 的规范化指纹：marshal→unmarshal→marshal 消除数值类型与 map 序列化差异，
+// toolDefinitionFingerprint 计算模型实际可见 Tool Definition 的规范化指纹。
+// 该指纹只用于判断“历史加载的 Schema 是否仍等价”，不是安全签名，也不承担鉴权职责。
+// marshal→unmarshal→marshal 用于消除数值类型与 map 序列化差异，
 // 保证"持久化快照反序列化后"与"从最新配置现算"的同一 definition 指纹一致。
 func toolDefinitionFingerprint(def llm.ToolDefinition) string {
 	data, err := json.Marshal(def)
@@ -356,7 +377,10 @@ func toolDefinitionFingerprint(def llm.ToolDefinition) string {
 	return string(out)
 }
 
-// restoreActiveToolsFromPreviousRun 恢复上一个 run 已加载的 Business Tool：按 ID 重新查库取最新配置，
+// restoreActiveToolsFromPreviousRun 恢复上一个外层 Run 已加载的 Business Tool。
+//
+// 为什么需要恢复：Session 历史里可能已经存在 get_tool 的返回；如果新 Run 完全丢掉 activeTools，
+// 模型可能根据历史直接 execute_tool，却被 Runtime 判定“未加载”。因此这里按 ID 重新查最新配置，并
 // 仅当当前 definition 与上次持久化快照一致时才恢复；定义已变化的工具不恢复，强制模型重新 get_tool 拿新 schema。
 func (s *reactEngineState) restoreActiveToolsFromPreviousRun() error {
 	var prevIDs []string

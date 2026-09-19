@@ -36,8 +36,11 @@ type memoryRuntime interface {
 	ApplyMutation(ctx *gin.Context, input memoryService.MutationInput) (map[string]interface{}, error)
 }
 
-// runtimeServices 集中保存 ReAct Engine 的外部能力依赖。
-// Engine 只依赖这些能力边界，不直接绑定 HTTP/MCP、Agent 表路由或 Memory 持久化实现。
+// runtimeServices 是 ReAct 核心对外部领域能力的依赖集合。
+//
+// 依赖方向保持为：react -> interface -> service/tool|agent|memory。
+// ReAct Engine 只负责“何时调用能力”，不负责 HTTP/MCP 传输、Agent 查询策略和 Memory 持久化。
+// 该边界可以避免 service/react 再次演化成大包，也为测试替身、Plan Step 复用 ReAct 引擎留出接口。
 type runtimeServices struct {
 	serverTools serverToolRuntime
 	agents      agentRuntime
@@ -52,7 +55,8 @@ func defaultRuntimeServices() runtimeServices {
 	}
 }
 
-// 以下 fallback 兼容测试里手工构造的最小 reactEngineState/runtimeRequest。
+// 以下 fallback 兼容测试和少量内部代码手工构造的最小 reactEngineState/runtimeRequest。
+// 正常生产路径会在 prepareRuntimeRequest 阶段完整注入；fallback 不应成为业务代码绕过依赖装配的常规方式。
 func (s runtimeServices) serverToolExecutor() serverToolRuntime {
 	if s.serverTools != nil {
 		return s.serverTools

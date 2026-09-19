@@ -2,8 +2,11 @@ package react
 
 import "react-base-service/conf"
 
-// ExecutionProfile 描述当前 Run 的能力开关集合。基座服务只保留 outer 执行域，
-// 字段保留用于约束 Runtime 内置工具的暴露范围（如后续需要裁剪某个 meta tool）。
+// ExecutionProfile 描述“某类 Run 允许看到哪些 Runtime 能力”。
+//
+// 它不是用户权限系统，也不替代 Tool/Agent 自身鉴权；它只控制 ReAct Runtime 是否把某类 Meta Tool
+// 装配给模型。例如 reflection Run 可以关闭 delegate_agent、Workspace 和分析 Tool，避免受限执行域
+// 越权扩大能力。新增特殊 Run 类型时，应优先通过 ExecutionProfile 收敛能力，而不是在各工具里散落判断。
 type ExecutionProfile struct {
 	AllowTodo           bool
 	AllowPlan           bool
@@ -29,6 +32,8 @@ type ExecutionProfile struct {
 	RestoreOuterHistory     bool
 }
 
+// outerExecutionProfile 是普通用户对话/外层 Run 的默认能力集合。
+// 配置开关只在这里转换为执行档案，后续 runtimeToolDefinitions 统一按档案决定 Tool 暴露。
 func outerExecutionProfile() ExecutionProfile {
 	return ExecutionProfile{
 		AllowTodo:               true,
@@ -48,7 +53,11 @@ func outerExecutionProfile() ExecutionProfile {
 	}
 }
 
-// subAgentExecutionProfile 是 delegate_agent 子 run 的执行档案：与外层对话同等能力，
+// subAgentExecutionProfile 是 delegate_agent 子 Run 的执行档案。
+// 子 Agent 与外层 Run 共用大部分能力，但不会注入 Session 级异步任务提醒，因为它的上下文应围绕
+// 当前委派任务，而不是继承父会话的后台任务噪音。
+//
+//
 // 但不注入会话级异步任务提醒（子 run 上下文由委派任务主导，与 session 任务无关）。
 func subAgentExecutionProfile() ExecutionProfile {
 	profile := outerExecutionProfile()

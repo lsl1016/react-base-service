@@ -17,7 +17,13 @@ import (
 	toolService "react-base-service/service/tool"
 )
 
-// executeToolCalls 按模型返回顺序执行同一步工具，保证外部副作用和结果回填顺序稳定。
+// executeToolCalls 是“模型 ToolCall -> Runtime 执行”的统一调度入口。
+//
+// 默认按模型返回顺序串行执行，保证外部副作用顺序和 tool_result 回填顺序稳定；只有 delegate_agent
+// 被允许并行，因为它创建隔离的子 ReactRun。即使并行执行，最终 results 仍按原 ToolCall 索引回填，
+// 因此下一轮模型看到的 tool_result 顺序不会被 goroutine 完成先后打乱。
+//
+// 
 // delegate_agent 调用之间可并行（agent 委派无副作用），受 subagent.max_parallel 限制；
 // 其余工具保持串行；并行度 1（默认）时与历史完全串行等价。
 // 并行委派的多个子 run 同时等待用户输入（ask_question/client tool）时，上行消息经
@@ -126,6 +132,11 @@ func (s *reactEngineState) metricToolName(call llm.ToolCall) string {
 }
 
 // executeToolCall 执行单个工具调用；保留给非批量路径和后续扩展复用。
+// executeToolCall 根据 ToolCall 名称分发到三类执行路径：
+//   1. 内置 Meta Tool：Memory、Todo、SubAgent、Workspace 等 Runtime 能力；
+//   2. execute_tool：执行已通过 get_tool 激活的 Business Tool；
+//   3. Client Tool：需要前端实际执行并通过 WebSocket 回填。
+// 所有路径最终都归一为 llm.ToolResultContent，供下一轮模型统一消费。
 func (s *reactEngineState) executeToolCall(call llm.ToolCall, step int) (llm.ToolResultContent, error) {
 	s.logToolCallInput(call, step)
 	if isInternalMetaTool(call.Name) {
@@ -152,7 +163,11 @@ func (s *reactEngineState) executeToolCall(call llm.ToolCall, step int) (llm.Too
 	}
 }
 
-// executeServerTool 执行后端托管的 Business Tool，并把大结果压缩成可回读的 resultRef。
+// executeServerTool 执行后端托管的 Business Tool。
+//
+// HTTP/MCP 传输细节已经下沉到 service/tool Runtime；本层只保留 Agent Runtime 语义：
+// 危险操作确认、事件发射、取消/超时分类、ResultRef、大结果回填和 Async Task 快照。
+// 这样新增新的服务端 Tool Transport 时，不需要修改 ReAct 主循环。
 // HTTP/MCP 传输细节由 service/tool Runtime 统一负责；本层只保留确认、事件、取消、resultRef 与异步任务等 Agent Runtime 语义。
 func (s *reactEngineState) executeServerTool(call llm.ToolCall, tool model.Tool, step int, description string) (llm.ToolResultContent, error) {
 	_ = s.emitter.EmitStep(step, EventToolUseStart, params.ReactToolUseStartPayload{ToolUseID: call.ID, ToolName: tool.Name, ToolInput: json.RawMessage(call.Input), Description: strings.TrimSpace(description), ExecutedBy: executedByServer, Status: toolExecutionStatusRunning})

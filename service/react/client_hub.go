@@ -29,6 +29,11 @@ var errClientReaderRequired = fmt.Errorf("client tool requires websocket reader"
 //
 // 生命周期：pump 在首个等待者注册时启动；readClient 返回错误（断连/WS 关闭）时向全部
 // 等待者广播错误后退出。run 结束后 WS 层关闭消息通道，pump 随之收敛，无需显式停止。
+// clientMessageHub 是一棵 Run 树共享的“单读者、多等待者”上行消息分发器。
+//
+// WebSocket 连接应只有一个稳定读取者，但父 Run、并行子 Agent、ask_question、Client Tool、
+// tool_confirm 可能同时等待不同 toolUseId 的回包。Hub 统一调用 readClient，再按 waiter 的 match
+// 条件分发消息，避免多个 goroutine 竞争读取同一连接导致消息被错误消费。
 type clientMessageHub struct {
 	readClient ClientMessageReader
 	mu         sync.Mutex
@@ -63,6 +68,8 @@ func newClientMessageHub(readClient ClientMessageReader) *clientMessageHub {
 }
 
 // wait 阻塞等待一条匹配的前端上行消息。match 需要同时约束消息类型与 toolUseId 归属。
+// wait 注册一个一次性 waiter，并等待第一条满足 match 的上行消息。
+// 注册前先扫描 pending 缓冲，解决“前端回包先到、等待者稍后才注册”的竞态；返回后 waiter 自动注销。
 func (h *clientMessageHub) wait(match func(params.ReactWSMessage) bool) (params.ReactWSMessage, error) {
 	if h == nil || h.readClient == nil {
 		return params.ReactWSMessage{}, errClientReaderRequired
@@ -94,6 +101,8 @@ func (h *clientMessageHub) wait(match func(params.ReactWSMessage) bool) (params.
 }
 
 // pump 是唯一的 readClient 消费循环；断连/关闭时向全部等待者广播错误后退出。
+// pump 是 Hub 中唯一允许调用 readClient 的 goroutine。
+// 它只负责读取和路由，不解释业务 payload；消息语义由真正等待该消息的 Tool/HITL 代码处理。
 func (h *clientMessageHub) pump() {
 	for {
 		msg, err := h.readClient()
@@ -163,6 +172,8 @@ func (h *clientMessageHub) dispatch(msg params.ReactWSMessage) {
 }
 
 // bufferPending 把未认领的可寻址消息放入待领缓冲（有界，丢最旧）。
+// bufferPending 暂存暂时没有 waiter 认领、但未来可能被工具等待逻辑消费的消息。
+// 容量有上限，避免错误客户端持续发送无法匹配的消息导致内存无界增长。
 func (h *clientMessageHub) bufferPending(msg params.ReactWSMessage) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

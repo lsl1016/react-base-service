@@ -22,6 +22,8 @@ type reactModelTarget struct {
 	ModelVersion string
 }
 
+// modelRoundResult 把本轮流式结果与实际使用的模型绑定。
+// 当发生互备切换时，持久化消息和指标必须记录真正成功的模型，而不是用户最初选择的模型。
 type modelRoundResult struct {
 	Stream collectLLMStreamResult
 	Model  reactModelTarget
@@ -74,6 +76,9 @@ func sameReactModel(left, right reactModelTarget) bool {
 	return left.ModelKey == right.ModelKey && left.ModelVersion == right.ModelVersion
 }
 
+// configuredReactModelRouting 计算当前 Run 的模型尝试集合。
+// 只有用户选择的模型本身位于 models.available 中时才参加 mutual failover；未知/临时模型不自动
+// 混入互备组，避免配置外模型意外切换到其它供应商。
 func configuredReactModelRouting(req *runtimeRequest) (reactModelTarget, []reactModelTarget) {
 	selected := reactModelTarget{ModelKey: req.resolvedModelKey, ModelVersion: req.resolvedModelVersion}
 	modelsCfg := conf.GetReactRuntimeConfig().Models
@@ -171,13 +176,19 @@ func (s *reactEngineState) terminalModelContextError(err error) error {
 	return ErrReactClientDisconnected
 }
 
-// callModelRound 在同一个逻辑轮次内按“当前模型优先、互备模型随后”的顺序调用。
+// callModelRound 在同一个逻辑 ReAct Step 内完成模型互备。
+//
+// 模型切换不会增加 stepIndex，也不会执行任何 Tool；只有某个模型完整返回本轮结果后，ReAct 才继续。
+// 成功的备选模型会提升为后续轮次的 currentModel，避免每一轮都重复撞击已故障的首选模型。
+//
 // 任一模型成功后会成为当前 Run 后续轮次的首选模型；同一轮每个模型最多尝试一次。
 func (s *reactEngineState) callModelRound(step int, prefixDebugKey string, tools []llm.ToolDefinition) (modelRoundResult, error) {
 	return s.callModelRoundWithEmitter(step, prefixDebugKey, tools, true)
 }
 
-// callModelRoundWithEmitter 允许 Plan 收尾先静默校验模型输出，再决定是否向前端发射正文事件。
+// callModelRoundWithEmitter 是 callModelRound 的底层版本。
+// emitEvents=false 时仍完整收集模型输出和 usage，只是不立即向前端发 thought/content 事件；
+// 该能力给 Plan Finalizer 等“先校验结果、再决定是否公开”的上层 Runtime 复用。
 func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey string, tools []llm.ToolDefinition, emitEvents bool) (modelRoundResult, error) {
 	attempts := s.modelAttemptOrder()
 	var lastResult modelRoundResult

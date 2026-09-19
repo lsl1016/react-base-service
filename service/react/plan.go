@@ -12,6 +12,15 @@ import (
 	llm "react-base-service/api/llm"
 )
 
+// create_plan Meta Tool —— 当前实现仍属于“ReAct 内的计划确认卡片”，不是独立 Plan Runtime。
+//
+// 这段代码的职责仅是：让普通 ReAct 模式中的模型生成一份计划，并让前端展示/确认。
+// 它不负责 Step 持久化、Attempt、Resume、Retry、Wait 等真正的计划执行状态机。
+// 后续正式 Plan Runtime 应位于 ReAct Runtime 上层，每个 Plan Step 再复用 executeReactLoop()。
+//
+// 当前 create_plan 主要承担兼容和产品过渡价值，后续引入 executionMode=plan 时不要把这里继续扩成
+// 大型执行器，避免 Plan Runtime 与 ReAct Meta Tool 混成一套不可维护状态机。
+//
 // create_plan Meta Tool —— 第一期（计划确认交互闭环）。
 //
 // 流程：模型对复杂任务先调用 create_plan 提交执行计划（title/overview/steps），
@@ -42,7 +51,8 @@ type createPlanInput struct {
 	Steps       []planStepInput `json:"steps"`
 }
 
-// planRecord 计划记录；第一期为进程内存态，第二期升级为落库。
+// planRecord 是第一期 create_plan 的临时内存记录。
+// 服务重启后会丢失，不能作为真正 Plan 执行状态的权威来源；正式 Plan Runtime 应使用独立持久化模型。
 type planRecord struct {
 	PlanID    string          `json:"planId"`
 	SessionID string          `json:"sessionId"`
@@ -91,7 +101,9 @@ func createPlanToolDefinition() llm.ToolDefinition {
 	}
 }
 
-// executeCreatePlan 校验并登记计划，返回给模型与前端卡片的确认载荷。
+// executeCreatePlan 只做计划草稿校验、生成 planId 并登记内存记录。
+// 它不会执行任何 Step，也不会创建子 ReactRun；返回 pending 后当前 ReAct 轮次应停止实际业务操作，
+// 等用户在前端确认后由新的 Run 继续。这一点与未来“Plan Runtime 自动推进 Step”语义不同。
 func executeCreatePlan(sessionID, runID string, input json.RawMessage) (string, bool, error) {
 	var req createPlanInput
 	if err := json.Unmarshal(input, &req); err != nil {

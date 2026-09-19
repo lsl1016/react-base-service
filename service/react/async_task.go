@@ -43,7 +43,13 @@ func truncateAsyncSnapshot(content string, limit int) string {
 	return truncated
 }
 
-// recordAsyncSubmit 在异步提交工具执行成功后落一条 pending 记录。
+// recordAsyncSubmit 把“提交后不会立即得到最终结果”的业务 Tool 转换为 React Async Task。
+//
+// 当前 Async Task 仍属于“跨 Run 提醒 + 显式查询/resolve”模型：它能跨会话轮次保存任务快照，
+// 但不会因为外部任务完成而自动唤醒原 Run。真正的自动暂停/恢复应由后续 Durable Runtime 负责。
+// 因此这里的职责是记录、提醒和查询，不承担后台长期执行编排。
+//
+//
 // submit_input 存提交入参快照：历史被压缩后，模型仍能凭它把查询结果关联回任务的业务语义。
 // rawContent 是工具原始响应，落库存全文（列为 MEDIUMTEXT），供 get_async_task 回读完整内容。
 // normalized.IsError 只覆盖 HTTP 传输层失败；HTTP 2xx 但响应体是业务错误时后端无法识别，会照常记录，
@@ -85,7 +91,11 @@ func (s *reactEngineState) recordAsyncSubmit(tool model.Tool, submitInput json.R
 	}
 }
 
-// applyManagedAsyncTaskFields 在异步 Tool 成功后由 AsyncTaskManager 调用 Provider 识别任务。
+// applyManagedAsyncTaskFields 尝试把通用异步提交结果映射为受管理任务。
+// Provider 成功识别后可补充 schedulerType/taskKey/nextSyncAt 等结构化信息；识别失败时仍保留旧的
+// 模型提醒模式，因此“异步任务 Provider”是增强能力，不是 Tool 调用成功的必要条件。
+//
+//
 // 识别失败只降级为旧的模型提醒模式，不影响 Tool 结果和当前 ReAct run。
 func (s *reactEngineState) applyManagedAsyncTaskFields(task *model.ReactAsyncTask, cfg *toolService.ToolConfig, tool model.Tool, submitInput json.RawMessage, rawContent string) {
 	if task == nil || cfg == nil || cfg.AsyncTask == nil {
@@ -108,7 +118,9 @@ func (s *reactEngineState) applyManagedAsyncTaskFields(task *model.ReactAsyncTas
 	task.NextSyncAt = managed.NextSyncAt
 }
 
-// loadPendingReactAsyncTasks 加载 session 内未完结异步任务供提醒注入；顺带惰性过期超时任务。
+// loadPendingReactAsyncTasks 加载 Session 级未完结任务，供新的外层 Run 注入提醒。
+// 子 Agent Run 不注入这批 Session 级提醒，避免专家子任务被无关历史异步任务干扰。
+// 加载时顺带执行惰性过期，保证长期无人访问的任务不会永久占据上下文。
 func loadPendingReactAsyncTasks(ctx *gin.Context, sessionID string) ([]model.ReactAsyncTask, bool, error) {
 	if err := model.ExpireReactAsyncTasks(ctx, sessionID); err != nil {
 		return nil, false, err
@@ -123,7 +135,10 @@ func loadPendingReactAsyncTasks(ctx *gin.Context, sessionID string) ([]model.Rea
 	return tasks, false, nil
 }
 
-// renderReactAsyncTaskReminder 渲染未完结异步任务提醒；与 todo 提醒一样作为临时 user 消息追加在上下文末尾。
+// renderReactAsyncTaskReminder 把未完结任务渲染为临时模型上下文，而不是永久写入聊天历史。
+// 这样提醒只在需要时动态生成，不会随着每次 Run 重复落库造成历史膨胀。
+//
+//
 // 每个字段按 maxReactAsyncTaskRenderRunes 截断，截断内容可通过 get_async_task 回读完整记录。
 func renderReactAsyncTaskReminder(tasks []model.ReactAsyncTask, hasMore bool) string {
 	if len(tasks) == 0 {

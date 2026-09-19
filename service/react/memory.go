@@ -18,7 +18,9 @@ const (
 	memoryListMaxSize     = 50
 )
 
-// memoryScopeResolved 保留 ReAct 包内兼容视图；实际作用域解析由 service/memory 负责。
+// memoryScopeResolved 是 service/react 保留的兼容视图。
+// 真正的 owner scope、合并、读写校验和持久化均已下沉到 service/memory；ReAct 层只负责把 Memory
+// 暴露成模型 Tool，并把当前 Caller/User/Run 信息转换为 Memory Runtime 的调用参数。
 type memoryScopeResolved struct {
 	owners      []model.MemoryOwner
 	writeOwner  model.MemoryOwner
@@ -51,7 +53,9 @@ func buildMemoryContextForRun(ctx *gin.Context, callerKey, userName string) (str
 	return memoryService.BuildRuntimeContext(ctx, callerKey, userName, conf.GetReactRuntimeConfig().Memory)
 }
 
-// memoryToolDefinitions 声明三个记忆工具；仅在 memory.enabled 时注册。
+// memoryToolDefinitions 声明模型可见的长期记忆工具。
+// Memory 与普通 Business Tool 不同：它属于 Runtime 内置能力，因此不走 get_tool/execute_tool 两阶段协议；
+// 是否暴露由 ExecutionProfile.AllowMemory 控制，读写安全边界由 service/memory 再次校验。
 func memoryToolDefinitions() []llm.ToolDefinition {
 	return []llm.ToolDefinition{
 		objectTool(metaToolMemoryList,
@@ -202,7 +206,11 @@ type memoryWriteInput struct {
 	Reason      string `json:"reason"`
 }
 
-// executeMemoryWrite 是引擎侧记忆写入口：解析入参、解析作用域后交给统一写核心
+// executeMemoryWrite 是 ReAct 层的长期记忆写适配器。
+// 它不直接操作 Memory 表，而是解析模型入参和当前运行身份后交给统一 Memory Runtime；这样聊天写入、
+// Reflection 整理和管理面可以共享同一套敏感信息拦截、乐观锁、审计 revision 和 owner scope 校验。
+//
+//
 // （service/memory.ApplyMutation，与管理面共用校验/幂等/修订流水/敏感拦截/指标）。
 // reflection run 附加单次写入限额与 locked 条目只读约束。
 func (s *reactEngineState) executeMemoryWrite(input json.RawMessage) (string, bool, error) {

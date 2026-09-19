@@ -54,7 +54,18 @@ type collectLLMStreamResult struct {
 	TerminationReason  string
 }
 
-// executeReactLoop 是 ReAct 主循环：模型生成 → 解析 tool call → 执行工具 → 回填工具结果，直到 done 或超过步数。
+// executeReactLoop 是 ReAct Runtime 的核心状态机。
+//
+// 每一轮严格按以下顺序推进：
+//   1. 持久化 stepIndex，并在需要时压缩上下文；
+//   2. 只向模型暴露稳定 Meta Tool，业务 Tool Schema 通过 get_tool 按需加载；
+//   3. 流式调用模型，收集正文/思考/tool_calls/usage；
+//   4. 持久化 assistant 消息；
+//   5. 无 tool_use 时收敛为最终回答；
+//   6. 有 tool_use 时执行工具、持久化 tool_result，并把结果追加到下一轮模型上下文。
+//
+// 关键不变量：落库消息顺序必须与送入下一轮模型的顺序一致；取消/断连时尽量保存已经收到的
+// assistant_partial，避免“前端看过内容但历史里完全不存在”。
 func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequest, runID, sessionID string, emitter *runEventEmitter, readClient ClientMessageReader) error {
 	currentModel, failoverModels := configuredReactModelRouting(req)
 	client, err := llm.GetClientWithUserModel(req.apiKey, currentModel.ModelKey)
@@ -155,7 +166,10 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 	return components.ErrorReactRunFailed.Sprintf("exceed maxSteps")
 }
 
-// addTokenUsage 累加模型调用真实 usage，并实时写回 run，避免异常中断时丢失已产生的 token 统计。
+// addTokenUsage 累加当前进程实际产生的模型 usage，并立即写回 ReactRun。
+//
+// token 统计不等到 Run 结束统一落库，因为流式中断、Client 断连或 Tool 报错都可能提前终止。
+// 实时写回可以让成本、预算和排障口径在异常路径上仍尽量接近真实值。
 func (s *reactEngineState) addTokenUsage(inputTokens, outputTokens int) error {
 	if inputTokens == 0 && outputTokens == 0 && s.cacheReadTokens == 0 && s.cacheCreateTokens == 0 {
 		return nil
@@ -170,6 +184,8 @@ func (s *reactEngineState) addTokenUsage(inputTokens, outputTokens int) error {
 	})
 }
 
+// updateLastTokenUsage 记录最近一次成功拿到 usage 的模型轮次。
+// last_* 主要服务上下文窗口占用与压缩判断；total_* 则表示整个 Run 的累计消耗。
 func (s *reactEngineState) updateLastTokenUsage(inputTokens, outputTokens int) error {
 	if inputTokens == 0 && outputTokens == 0 {
 		return nil
@@ -202,6 +218,8 @@ func (s *reactEngineState) checkTokenBudget(budget int) error {
 		s.inputTokens+s.outputTokens+delegatedInput+delegatedOutput, budget, s.agentPath)
 }
 
+// persistPartialAssistant 在取消或断连发生于模型流式输出过程中时，保存已经收到的部分内容。
+// 这类消息使用 assistant_partial 类型：可用于历史回放和排障，但不会被当成完整 assistant 回答恢复进上下文。
 func (s *reactEngineState) persistPartialAssistant(result collectLLMStreamResult, actualModel reactModelTarget, step int) error {
 	if err := s.addTokenUsage(result.InputTokens, result.OutputTokens); err != nil {
 		return err

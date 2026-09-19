@@ -1,5 +1,11 @@
 package react
 
+// load_runtime_code 是 ReAct Runtime 进入代码 Workspace 的薄适配入口。
+//
+// Workspace 生命周期与 ReactRun 绑定：load_runtime_code 只负责请求 workspace.Manager 分配工作区并
+// 返回动态挂载的代码检索 Tool；实际 Git/worktree/MCP 管理由 service/workspace 负责。
+// 这样 ReAct Engine 不直接理解文件系统、Git 或仓库协议，只把 Workspace 暴露为一组普通 Business Tool。
+//
 // load_runtime_code（P2-1 服务端代码 Workspace 的业务入口，方案 §4.2.1）：
 //
 // 模型（主 Agent 或 code-agent）调用后，workspace.Manager 按静态解析表把目标服务代码
@@ -25,6 +31,9 @@ func loadRuntimeCodeDefinition() llm.ToolDefinition {
 		})
 }
 
+// executeLoadRuntimeCode 为当前 Run 分配/复用代码工作区。
+// 返回的 ws_<service>_* 工具仍必须走 get_tool -> execute_tool 两阶段协议，因此 Workspace 不需要
+// 在 ReAct 主循环中增加新的特殊执行分支；Run 终态由 run()/delegate 收尾统一 ReleaseRun。
 func (s *reactEngineState) executeLoadRuntimeCode(input json.RawMessage) (string, bool, error) {
 	var req struct {
 		Service string `json:"service"`
