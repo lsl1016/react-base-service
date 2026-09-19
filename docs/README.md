@@ -32,9 +32,11 @@
 - [服务端 AI 工作台改造方案](服务端AI工作台改造方案.md)
 - [定时触发工作流实现方案](定时触发工作流实现方案.md)
 - [连载侦探社评测项目方案](连载侦探社评测项目方案.md)
+- [Plan 模式 E2E 测试报告](plan模式E2E测试报告.md)
 
 ## 调研与学习记录
 
+- [长期记忆学习](长期记忆学习.md)
 - [ast-grep 学习](ast-grep学习.md)
 - [Coze Studio 学习](coze-studio学习.md)
 - [Graphiti 学习](graphiti学习.md)
