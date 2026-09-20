@@ -67,4 +67,5 @@ react-base-service
 /.mimosa/
 /.mimosa-tmp/
 **/.mimosa/
+.zcode/
 .agents/

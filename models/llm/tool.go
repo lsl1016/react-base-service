@@ -214,38 +214,15 @@ func OfflineMCPServerTools(ctx *gin.Context, serverName, callerKey string, activ
 	return offlined, nil
 }
 
-// ListGatewayHTTPToolsByCaller 返回 MCP 网关可暴露的 http 工具行：
-// 指定 caller 名下 + default 通用作用域的启用行（route_values 不参与 MCP 可见性）。
-// 应用绑定 caller 的行排在前面——与 default 作用域同名时以 caller 自有定义为准。
-func ListGatewayHTTPToolsByCaller(ctx *gin.Context, callerKey string) ([]Tool, error) {
-	own, err := listGatewayToolsInCaller(ctx, callerKey)
-	if err != nil {
-		return nil, err
-	}
-	if callerKey == "default" {
-		return own, nil
-	}
-	shared, err := listGatewayToolsInCaller(ctx, "default")
-	if err != nil {
-		return nil, err
-	}
-	ownNames := make(map[string]bool, len(own))
-	for _, tool := range own {
-		ownNames[tool.Name] = true
-	}
-	for _, tool := range shared {
-		if !ownNames[tool.Name] {
-			own = append(own, tool)
-		}
-	}
-	return own, nil
-}
-
-func listGatewayToolsInCaller(ctx *gin.Context, callerKey string) ([]Tool, error) {
+// ListGatewayHTTPTools 返回 MCP 网关的工具基础集合：全部启用的 http 工具行
+//（跨 caller，caller_key 仅作归属标记，不参与 MCP 可见性；route_values 同样不参与）。
+// 工具对哪个应用可见由 tblLlmMcpAppTool 白名单决定。同名工具可能存在于多个 caller
+// 名下，排序按 name/id 固定，由调用方（网关注册表）按名去重。
+func ListGatewayHTTPTools(ctx *gin.Context) ([]Tool, error) {
 	var tools []Tool
 	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
-		Where("caller_key = ? AND status = 1 AND tool_type = 'http'", callerKey).
-		Order("name ASC").Find(&tools).Error
+		Where("status = 1 AND tool_type = 'http'").
+		Order("name ASC, id ASC").Find(&tools).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}

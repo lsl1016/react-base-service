@@ -1,6 +1,7 @@
 package react
 
 import (
+	"sort"
 	"strings"
 
 	"react-base-service/components"
@@ -12,24 +13,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// MCP 应用（网关接入凭证）管理接口 —— 创建/启停/重置密钥/删除与调用审计查询。
+// MCP 应用（网关接入凭证）管理接口 —— 创建/启停/重置密钥/删除、工具绑定与调用审计查询。
 //
-// 应用绑定一个 caller 作用域：该 caller 名下（含 default 通用作用域）启用的 http 类型
-// 工具（tblLlmTool）即外部 MCP 客户端经 /mcp 端点可见的工具集合。
-// appSecret 仅创建与重置时完整返回一次，列表/详情一律打码。
+// 工具是全局基础集合（全部启用的 http 工具，不按 caller 划分）；应用通过
+// tblLlmMcpAppTool 白名单绑定工具子集——把不同 app 发给不同业务方，即控制
+// 各业务方 MCP 连接可见的工具范围。appSecret 仅创建与重置时完整返回一次，
+// 列表/详情一律打码。
 
 type mcpAppListRequest struct{}
 
 type mcpAppCreateRequest struct {
-	AppName   string `json:"appName"`
+	AppName string `json:"appName"`
+	// CallerKey 兼容字段：应用不再绑定 caller，传入即忽略。
 	CallerKey string `json:"callerKey"`
 	// Status 默认启用；显式传 0 创建即停用。
 	Status *int `json:"status"`
 }
 
 type mcpAppUpdateRequest struct {
-	AppID     string `json:"appId"`
-	AppName   string `json:"appName"`
+	AppID   string `json:"appId"`
+	AppName string `json:"appName"`
+	// CallerKey 兼容字段：应用不再绑定 caller，传入即忽略。
 	CallerKey string `json:"callerKey"`
 	Status    *int   `json:"status"`
 }
@@ -46,7 +50,7 @@ type mcpAppLogsRequest struct {
 }
 
 type mcpAppGrantRequest struct {
-	AppID  string   `json:"appId"`
+	AppID   string   `json:"appId"`
 	ToolIDs []string `json:"toolIds"`
 }
 
@@ -56,49 +60,36 @@ type mcpAppView struct {
 	AppName      string `json:"appName"`
 	AppKey       string `json:"appKey"`
 	MaskedSecret string `json:"maskedSecret"`
-	CallerKey    string `json:"callerKey"`
 	Status       int    `json:"status"`
+	// GrantedToolCount 是当前绑定白名单内的工具数（含已下线工具；0=连接看不到任何工具）。
+	GrantedToolCount int64 `json:"grantedToolCount"`
 	// Endpoint 是外部 MCP 客户端的接入地址（主服务端点；独立网关二进制为 <host>/mcp）。
-	Endpoint   string `json:"endpoint"`
-	CreatedBy  string `json:"createdBy"`
-	UpdatedBy  string `json:"updatedBy"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt"`
+	Endpoint  string `json:"endpoint"`
+	CreatedBy string `json:"createdBy"`
+	UpdatedBy string `json:"updatedBy"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 func mcpAppToView(ctx *gin.Context, app model.McpApp) mcpAppView {
+	granted, err := model.CountMcpAppTools(ctx, app.AppID)
+	if err != nil {
+		zlog.Errorf(ctx, "[MCPGW] 统计应用绑定工具数失败: appId=%s err=%v", app.AppID, err)
+		granted = 0
+	}
 	return mcpAppView{
-		AppID:        app.AppID,
-		AppName:      app.AppName,
-		AppKey:       app.AppKey,
-		MaskedSecret: mcpgateway.MaskSecret(app.AppSecret),
-		CallerKey:    app.CallerKey,
-		Status:       app.Status,
+		AppID:            app.AppID,
+		AppName:          app.AppName,
+		AppKey:           app.AppKey,
+		MaskedSecret:     mcpgateway.MaskSecret(app.AppSecret),
+		Status:           app.Status,
+		GrantedToolCount: granted,
 		Endpoint:         "/react-base-service/mcp",
 		CreatedBy:        app.CreatedBy,
 		UpdatedBy:        app.UpdatedBy,
 		CreatedAt:        app.CreatedAt.Format("2006-01-02 15:04:05"),
 		UpdatedAt:        app.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}
-}
-
-// normalizeMcpAppCaller 校验应用绑定的 caller 作用域：存活 caller 或保留作用域。
-func normalizeMcpAppCaller(ctx *gin.Context, callerKey string) error {
-	callerKey = strings.TrimSpace(callerKey)
-	if callerKey == "" {
-		return components.ParamInvalidf("callerKey 不能为空（绑定 default 表示全部 caller 的通用工具）")
-	}
-	if model.IsReservedCallerKey(callerKey) {
-		return nil
-	}
-	caller, err := model.GetActiveCallerByKey(ctx, callerKey)
-	if err != nil {
-		return err
-	}
-	if caller == nil {
-		return components.ParamInvalidf("caller 不存在或已停用: %s", callerKey)
-	}
-	return nil
 }
 
 // ListMcpApps 列出全部 MCP 应用凭证（secret 打码）。
@@ -123,6 +114,7 @@ func ListMcpApps(ctx *gin.Context) {
 }
 
 // CreateMcpApp 新增 MCP 应用凭证，生成 appKey/appSecret（secret 完整返回仅此一次）。
+// 新应用默认未绑定任何工具（tools/list 为空），创建后用 grant_tools 绑定工具子集。
 // @Summary      新增 MCP 应用
 // @Description  创建接入凭证（appKey/appSecret），secret 仅本次响应完整返回
 // @Tags         React
@@ -142,10 +134,6 @@ func CreateMcpApp(ctx *gin.Context) {
 	}
 	if len(appName) > 128 {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("appName 不能超过 128 字符"))
-		return
-	}
-	if err := normalizeMcpAppCaller(ctx, req.CallerKey); err != nil {
-		components.RenderJsonFail(ctx, err)
 		return
 	}
 	status := 1
@@ -170,7 +158,6 @@ func CreateMcpApp(ctx *gin.Context) {
 		AppName:   appName,
 		AppKey:    mcpgateway.GenerateAppKey(),
 		AppSecret: secret,
-		CallerKey: strings.TrimSpace(req.CallerKey),
 		Status:    status,
 		CreatedBy: helpers.GetUserName(ctx),
 		UpdatedBy: helpers.GetUserName(ctx),
@@ -179,14 +166,14 @@ func CreateMcpApp(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, err)
 		return
 	}
-	zlog.Infof(ctx, "[MCPGW] 新增应用: name=%s callerKey=%s", appName, app.CallerKey)
+	zlog.Infof(ctx, "[MCPGW] 新增应用: name=%s", appName)
 	view := mcpAppToView(ctx, *app)
 	components.RenderJsonSucc(ctx, gin.H{"app": view, "appSecret": secret})
 }
 
-// UpdateMcpApp 更新 MCP 应用（名称/绑定 caller/启停）。
+// UpdateMcpApp 更新 MCP 应用（名称/启停）。工具可见范围走 grant_tools，不再绑定 caller。
 // @Summary      更新 MCP 应用
-// @Description  按 appId 更新应用名称、caller 作用域或启停状态
+// @Description  按 appId 更新应用名称或启停状态
 // @Tags         React
 // @Accept       json
 // @Produce      json
@@ -226,13 +213,6 @@ func UpdateMcpApp(ctx *gin.Context) {
 			}
 		}
 		updates["app_name"] = appName
-	}
-	if strings.TrimSpace(req.CallerKey) != "" {
-		if err := normalizeMcpAppCaller(ctx, req.CallerKey); err != nil {
-			components.RenderJsonFail(ctx, err)
-			return
-		}
-		updates["caller_key"] = strings.TrimSpace(req.CallerKey)
 	}
 	if req.Status != nil {
 		if *req.Status != 0 && *req.Status != 1 {
@@ -388,4 +368,148 @@ func ListMcpAppLogs(ctx *gin.Context) {
 		})
 	}
 	components.RenderJsonSucc(ctx, gin.H{"total": total, "page": page, "pageSize": pageSize, "logs": views})
+}
+
+// GrantMcpAppTools 全量替换应用的工具绑定（显式白名单：空清单=清空绑定，应用立即看不到任何工具）。
+// @Summary      绑定 MCP 应用工具
+// @Description  按 appId 全量替换绑定工具清单（toolIds 为空即清空绑定）
+// @Tags         React
+// @Accept       json
+// @Produce      json
+// @Router       /react/mcpapp/grant_tools [post]
+func GrantMcpAppTools(ctx *gin.Context) {
+	var req mcpAppGrantRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
+		return
+	}
+	appID := strings.TrimSpace(req.AppID)
+	if appID == "" {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("appId 不能为空"))
+		return
+	}
+	app, err := model.GetMcpAppByAppID(ctx, appID)
+	if err != nil {
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	if app == nil {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("应用不存在: %s", appID))
+		return
+	}
+	if len(req.ToolIDs) > 200 {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("单次绑定不能超过 200 个工具"))
+		return
+	}
+	normalized := make([]string, 0, len(req.ToolIDs))
+	seen := make(map[string]bool, len(req.ToolIDs))
+	for _, toolID := range req.ToolIDs {
+		toolID = strings.TrimSpace(toolID)
+		if toolID == "" || seen[toolID] {
+			continue
+		}
+		seen[toolID] = true
+		normalized = append(normalized, toolID)
+	}
+	// 绑定的必须是真实存在的 http 工具行，防止拼错 ID 静默失效
+	if len(normalized) > 0 {
+		all, err := model.ListToolsByType(ctx, "http")
+		if err != nil {
+			components.RenderJsonFail(ctx, err)
+			return
+		}
+		existing := make(map[string]bool, len(all))
+		for _, tool := range all {
+			existing[tool.ToolID] = true
+		}
+		for _, toolID := range normalized {
+			if !existing[toolID] {
+				components.RenderJsonFail(ctx, components.ParamInvalidf("工具不存在或非 http 类型: %s", toolID))
+				return
+			}
+		}
+	}
+	if err := model.ReplaceMcpAppTools(ctx, appID, normalized, helpers.GetUserName(ctx)); err != nil {
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	granted, _ := model.CountMcpAppTools(ctx, appID)
+	zlog.Infof(ctx, "[MCPGW] 更新应用工具绑定: appId=%s name=%s granted=%d", appID, app.AppName, granted)
+	components.RenderJsonSucc(ctx, gin.H{"appId": appID, "grantedToolCount": granted})
+}
+
+// ListMcpAppGrantableTools 返回可绑定给应用的工具清单（工具基础集合全部 http 工具，
+// 含已下线行与当前绑定标记；下线行绑定后要等重新上线才对外可见）。
+// @Summary      可绑定工具清单
+// @Description  按 appId 返回工具基础集合与当前绑定状态
+// @Tags         React
+// @Accept       json
+// @Produce      json
+// @Router       /react/mcpapp/list_tools [post]
+func ListMcpAppGrantableTools(ctx *gin.Context) {
+	var req mcpAppScopeRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
+		return
+	}
+	appID := strings.TrimSpace(req.AppID)
+	if appID == "" {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("appId 不能为空"))
+		return
+	}
+	app, err := model.GetMcpAppByAppID(ctx, appID)
+	if err != nil {
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	if app == nil {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("应用不存在: %s", appID))
+		return
+	}
+	grants, err := model.ListMcpAppToolIDs(ctx, appID)
+	if err != nil {
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	granted := make(map[string]bool, len(grants))
+	for _, toolID := range grants {
+		granted[toolID] = true
+	}
+	tools, err := model.ListToolsByType(ctx, "http")
+	if err != nil {
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	// 与网关同名去重规则一致：按 name/id 排序后同名多行只保留第一条，避免勾选歧义
+	sort.Slice(tools, func(i, j int) bool {
+		if tools[i].Name != tools[j].Name {
+			return tools[i].Name < tools[j].Name
+		}
+		return tools[i].ID < tools[j].ID
+	})
+	type grantableView struct {
+		ToolID      string `json:"toolId"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		CallerKey   string `json:"callerKey"`
+		Status      int    `json:"status"`
+		Granted     bool   `json:"granted"`
+	}
+	views := make([]grantableView, 0, len(tools))
+	seen := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		if seen[tool.Name] {
+			continue
+		}
+		seen[tool.Name] = true
+		views = append(views, grantableView{
+			ToolID:      tool.ToolID,
+			Name:        tool.Name,
+			Description: tool.Description,
+			CallerKey:   tool.CallerKey,
+			Status:      tool.Status,
+			Granted:     granted[tool.ToolID],
+		})
+	}
+	components.RenderJsonSucc(ctx, gin.H{"appId": appID, "tools": views})
 }

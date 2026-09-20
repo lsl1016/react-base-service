@@ -38,10 +38,10 @@ func Handler() gin.HandlerFunc {
 	}
 }
 
-// buildServer 为每个请求构造 MCP Server，并按调用方 caller 作用域注册工具。
+// buildServer 为每个请求构造 MCP Server，并按应用绑定白名单注册工具。
 //
-// 工具目录是动态的（tblLlmTool）：只注册当前应用作用域内启用的 http 工具，
-// 作用域外的工具不会出现在 tools/list 里。
+// 工具目录是动态的（tblLlmTool + tblLlmMcpAppTool）：只注册当前应用绑定的
+// 启用 http 工具，白名单外的工具不会出现在 tools/list 里。
 func buildServer(req *http.Request) *sdk.Server {
 	server := sdk.NewServer(
 		&sdk.Implementation{
@@ -64,7 +64,7 @@ func buildServer(req *http.Request) *sdk.Server {
 		return server
 	}
 
-	bindings, err := LoadTools(ginCtx, identity.CallerKey)
+	bindings, err := LoadTools(ginCtx, identity.AppID)
 	if err != nil {
 		zlog.Errorf(ginCtx, "[MCPGW] load tools fail, app: %s, err: %s", identity.AppKey, err.Error())
 		return server

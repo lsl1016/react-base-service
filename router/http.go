@@ -113,6 +113,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/mcpapp/delete", react.DeleteMcpApp)
 		reactGroup.POST("/mcpapp/reset_secret", react.ResetMcpAppSecret)
 		reactGroup.POST("/mcpapp/logs", react.ListMcpAppLogs)
+		reactGroup.POST("/mcpapp/grant_tools", react.GrantMcpAppTools)
+		reactGroup.POST("/mcpapp/list_tools", react.ListMcpAppGrantableTools)
 		// Agent Bundle 插件包管理（P3：安装展开写入注册表、卸载回滚，见 controllers/http/react/bundle.go）
 		reactGroup.POST("/bundle/install", react.InstallBundle)
 		reactGroup.POST("/bundle/uninstall", react.UninstallBundle)

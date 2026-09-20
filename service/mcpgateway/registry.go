@@ -31,32 +31,51 @@ type ToolBinding struct {
 	ReadOnly bool
 }
 
-// LoadTools 返回应用绑定的 caller 作用域内全部启用的 http 工具——
-// 作用域即权限：应用绑哪个 caller（含 default 通用作用域），就看得到、调得了哪些工具。
-func LoadTools(ctx *gin.Context, callerKey string) ([]ToolBinding, error) {
-	return loadScopeTools(ctx, callerKey)
+// LoadTools 返回应用绑定的工具集合——工具基础集合（全部启用的 http 工具）∩
+// 应用白名单（tblLlmMcpAppTool）。绑定即权限：给 app 绑定哪个子集，这条 MCP
+// 连接就看得到、调得了哪些工具；未绑定任何工具时返回空清单。
+func LoadTools(ctx *gin.Context, appID string) ([]ToolBinding, error) {
+	grants, err := model.ListMcpAppToolIDs(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	bindings, err := loadBaseTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return applyToolGrants(bindings, grants), nil
 }
 
-// LookupTool 在 tools/call 阶段按工具名复核：仍在 caller 作用域内且启用。
+// LookupTool 在 tools/call 阶段按工具名复核：仍在应用绑定清单内且启用。
 //
-// tools/list 的结果可能被客户端缓存，工具下线或换绑 caller 后仍可能被调用，
+// tools/list 的结果可能被客户端缓存，绑定回收或工具下线后仍可能被调用，
 // 因此每次调用都要重新确认。
-func LookupTool(ctx *gin.Context, callerKey, name string) (*ToolBinding, error) {
-	bindings, err := loadScopeTools(ctx, callerKey)
+func LookupTool(ctx *gin.Context, appID, name string) (*ToolBinding, error) {
+	grants, err := model.ListMcpAppToolIDs(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	granted := make(map[string]bool, len(grants))
+	for _, toolID := range grants {
+		granted[toolID] = true
+	}
+	bindings, err := loadBaseTools(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, binding := range bindings {
-		if binding.Name == name {
+		if binding.Name == name && granted[binding.ToolID] {
 			return &binding, nil
 		}
 	}
 	return nil, nil
 }
 
-// loadScopeTools 加载 caller 作用域（caller 自身 + default 通用）内启用的 http 工具行。
-func loadScopeTools(ctx *gin.Context, callerKey string) ([]ToolBinding, error) {
-	records, err := model.ListGatewayHTTPToolsByCaller(ctx, callerKey)
+// loadBaseTools 加载工具基础集合：全部启用的 http 工具（跨 caller）。
+// 同名工具可能挂在多个 caller 名下，MCP 工具名必须全局唯一，按 name/id 排序
+// 保留第一条并跳过其余（记日志提示归属冲突）。
+func loadBaseTools(ctx *gin.Context) ([]ToolBinding, error) {
+	records, err := model.ListGatewayHTTPTools(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +88,43 @@ func loadScopeTools(ctx *gin.Context, callerKey string) ([]ToolBinding, error) {
 		}
 		bindings = append(bindings, *binding)
 	}
-	return bindings, nil
+	deduped := dedupeToolBindings(ctx, bindings)
+	return deduped, nil
+}
+
+// dedupeToolBindings 按 name 去重（纯函数，供单测；ctx 为 nil 时跳过日志）：输入须已按
+// name 全序排列（ListGatewayHTTPTools 按 name,id 排序），同名保留第一条。
+func dedupeToolBindings(ctx *gin.Context, bindings []ToolBinding) []ToolBinding {
+	seen := make(map[string]bool, len(bindings))
+	deduped := make([]ToolBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if seen[binding.Name] {
+			if ctx != nil {
+				zlog.Warnf(ctx, "[MCPGW] 跳过重名工具 %s（toolID=%s）：MCP 工具名须全局唯一，保留排序靠前的定义",
+					binding.Name, binding.ToolID)
+			}
+			continue
+		}
+		seen[binding.Name] = true
+		deduped = append(deduped, binding)
+	}
+	return deduped
+}
+
+// applyToolGrants 把工具基础集合按应用白名单过滤（纯函数，供单测）：
+// 白名单为空 = 未绑定任何工具，结果为空。
+func applyToolGrants(bindings []ToolBinding, grantedToolIDs []string) []ToolBinding {
+	granted := make(map[string]bool, len(grantedToolIDs))
+	for _, toolID := range grantedToolIDs {
+		granted[toolID] = true
+	}
+	visible := make([]ToolBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if granted[binding.ToolID] {
+			visible = append(visible, binding)
+		}
+	}
+	return visible
 }
 
 // buildToolBinding 把一行 tblLlmTool（tool_type=http）展开成网关工具绑定：

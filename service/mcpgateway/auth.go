@@ -23,7 +23,7 @@ const (
 // Auth 校验 MCP 网关调用方身份（挂载在 /mcp 端点前）。
 //
 // MCP 面向 AI 客户端开放，必须校验 app_secret 才能确认「你是谁」；
-// 认证通过后由 registry 层继续做「你能调什么」（caller 作用域工具可见性）。
+// 认证通过后由 registry 层继续做「你能调什么」（应用绑定的工具白名单）。
 //
 // 失败一律返回 HTTP 403 而非 401：多数 MCP 客户端把 401 解释为「本服务需要 OAuth」，
 // 会丢弃响应体转去做 OAuth 发现，最终把网关返回的错误页当 JSON 解析而报错。
@@ -54,10 +54,9 @@ func Auth(c *gin.Context) {
 	}
 
 	SetIdentity(c, AppIdentity{
-		AppID:     app.AppID,
-		AppKey:    app.AppKey,
-		CallerKey: app.CallerKey,
-		UserName:  strings.TrimSpace(c.GetHeader(mcpUserHeader)),
+		AppID:    app.AppID,
+		AppKey:   app.AppKey,
+		UserName: strings.TrimSpace(c.GetHeader(mcpUserHeader)),
 	})
 	c.Next()
 }

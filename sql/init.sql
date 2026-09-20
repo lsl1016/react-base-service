@@ -685,17 +685,17 @@ CREATE TABLE IF NOT EXISTS `tblLlmRuntimeSetting` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM运行时设置表(管理面板在线覆盖yaml策略)';
 
 -- ---------------------------------------------------------------------------
--- MCP 服务端网关（工具暴露走既有 tblLlmTool 的 http 工具行，此处仅凭证与审计）
+-- MCP 服务端网关（工具暴露走既有 tblLlmTool 的 http 工具行；工具是全局基础集合，
+-- 不按 caller 划分。此处为凭证、应用工具绑定白名单与审计）
 -- ---------------------------------------------------------------------------
 
--- MCP 网关应用凭证表
+-- MCP 网关应用凭证表（应用不再绑定 caller；可见工具=tblLlmMcpAppTool 白名单子集）
 CREATE TABLE IF NOT EXISTS `tblLlmMcpApp` (
     `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
     `app_id`     VARCHAR(64)  NOT NULL COMMENT '应用唯一标识(mcpapp_前缀)',
     `app_name`   VARCHAR(128) NOT NULL COMMENT '应用名称(展示用,唯一)',
     `app_key`    VARCHAR(64)  NOT NULL COMMENT '接入凭证key(Bearer用户名,全局唯一)',
     `app_secret` VARCHAR(128) NOT NULL COMMENT '接入凭证secret(仅创建/重置时完整展示)',
-    `caller_key` VARCHAR(32)  NOT NULL COMMENT '可见的caller作用域(default=全部caller通用工具)',
     `status`     TINYINT      NOT NULL DEFAULT 1 COMMENT '状态: 0=停用 1=启用',
     `created_by` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
     `updated_by` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '更新人',
@@ -704,9 +704,22 @@ CREATE TABLE IF NOT EXISTS `tblLlmMcpApp` (
     `deleted_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
     UNIQUE KEY `uk_app_id` (`app_id`),
     UNIQUE KEY `uk_app_name` (`app_name`),
-    UNIQUE KEY `uk_app_key` (`app_key`),
-    INDEX `idx_caller` (`caller_key`)
+    UNIQUE KEY `uk_app_key` (`app_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP网关应用凭证表';
+
+-- MCP 网关应用工具绑定表（显式白名单：应用未绑定任何工具时 tools/list 为空）
+CREATE TABLE IF NOT EXISTS `tblLlmMcpAppTool` (
+    `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `app_id`     VARCHAR(64) NOT NULL COMMENT 'tblLlmMcpApp.app_id',
+    `tool_id`    VARCHAR(64) NOT NULL COMMENT 'tblLlmTool.tool_id',
+    `status`     TINYINT     NOT NULL DEFAULT 1 COMMENT '状态: 0=停用 1=绑定生效',
+    `created_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '操作人',
+    `created_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
+    UNIQUE KEY `uk_app_tool` (`app_id`, `tool_id`),
+    INDEX `idx_tool` (`tool_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP网关应用工具绑定表';
 
 -- MCP 网关调用审计表（异步批量写入；response_text/arguments 有截断上限）
 CREATE TABLE IF NOT EXISTS `tblLlmMcpCallLog` (

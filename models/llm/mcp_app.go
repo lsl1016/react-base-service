@@ -13,20 +13,19 @@ import (
 )
 
 // McpApp 是 MCP 服务端网关的应用凭证（tblLlmMcpApp）：
-// 外部 MCP 客户端（Claude/Cursor 等）以 Bearer <app_key>:<app_secret> 接入，
-// 应用绑定一个 caller 作用域——该 caller 名下（含 default 通用作用域）启用的
-// http 类型工具（tblLlmTool）即该应用在 tools/list 里可见的工具集合。
+// 外部 MCP 客户端（Claude/Cursor 等）以 Bearer <app_key>:<app_secret> 接入。
+// 工具是全局基础集合（全部启用的 http 工具，不按 caller 划分），应用可见的工具
+// 由 tblLlmMcpAppTool 白名单决定——把不同 app 发给不同业务方，即实现按业务方
+// 收窄工具可见范围。
 type McpApp struct {
-	ID        uint   `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
-	AppID     string `json:"appId" gorm:"column:app_id;not null"`
-	AppName   string `json:"appName" gorm:"column:app_name;not null"`
-	AppKey    string `json:"appKey" gorm:"column:app_key;not null"`
-	AppSecret string `json:"appSecret" gorm:"column:app_secret;not null"`
-	// CallerKey 是应用可见的 caller 作用域（default=全部 caller 的通用工具）。
-	CallerKey string `json:"callerKey" gorm:"column:caller_key;not null"`
-	Status    int    `json:"status" gorm:"column:status;not null;default:1"`
-	CreatedBy string `json:"createdBy" gorm:"column:created_by;not null;default:''"`
-	UpdatedBy string `json:"updatedBy" gorm:"column:updated_by;not null;default:''"`
+	ID        uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	AppID     string                `json:"appId" gorm:"column:app_id;not null"`
+	AppName   string                `json:"appName" gorm:"column:app_name;not null"`
+	AppKey    string                `json:"appKey" gorm:"column:app_key;not null"`
+	AppSecret string                `json:"appSecret" gorm:"column:app_secret;not null"`
+	Status    int                   `json:"status" gorm:"column:status;not null;default:1"`
+	CreatedBy string                `json:"createdBy" gorm:"column:created_by;not null;default:''"`
+	UpdatedBy string                `json:"updatedBy" gorm:"column:updated_by;not null;default:''"`
 	CreatedAt time.Time             `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt time.Time             `json:"updatedAt" gorm:"column:updated_at"`
 	DeletedAt soft_delete.DeletedAt `json:"deletedAt" gorm:"column:deleted_at;not null;default:0"`
@@ -99,22 +98,108 @@ func SoftDeleteMcpAppByAppID(ctx *gin.Context, appID string) error {
 	return nil
 }
 
+// McpAppTool 是应用与工具的绑定关系（tblLlmMcpAppTool）：应用可见工具是显式白名单——
+// 只给应用绑定工具基础集合的一个子集，该 app 的 MCP 连接就只看得到、调得了这个子集；
+// 未绑定任何工具时 tools/list 为空。绑定对象是全局基础集合（全部启用 http 工具），
+// 不再经过 caller 作用域。
+type McpAppTool struct {
+	ID        uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	AppID     string                `json:"appId" gorm:"column:app_id;not null"`
+	ToolID    string                `json:"toolId" gorm:"column:tool_id;not null"`
+	Status    int                   `json:"status" gorm:"column:status;not null;default:1"`
+	CreatedBy string                `json:"createdBy" gorm:"column:created_by;not null;default:''"`
+	CreatedAt time.Time             `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt time.Time             `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt soft_delete.DeletedAt `json:"deletedAt" gorm:"column:deleted_at;not null;default:0"`
+}
+
+func (g *McpAppTool) TableName() string {
+	return "tblLlmMcpAppTool"
+}
+
+// ListMcpAppToolIDs 返回应用当前生效的绑定工具 ID 清单（tool_id 指向 tblLlmTool.tool_id）。
+func ListMcpAppToolIDs(ctx *gin.Context, appID string) ([]string, error) {
+	var rows []McpAppTool
+	err := helpers.MysqlClientLLM.Model(&McpAppTool{}).WithContext(ctx).
+		Where("app_id = ? AND status = 1", appID).Find(&rows).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	toolIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		toolIDs = append(toolIDs, row.ToolID)
+	}
+	return toolIDs, nil
+}
+
+// ReplaceMcpAppTools 全量替换应用的绑定工具（软删除缺席行、复活/新增传入行；空清单=清空绑定）。
+func ReplaceMcpAppTools(ctx *gin.Context, appID string, toolIDs []string, operator string) error {
+	return helpers.MysqlClientLLM.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing []McpAppTool
+		if err := tx.Model(&McpAppTool{}).Where("app_id = ?", appID).Find(&existing).Error; err != nil {
+			return components.ErrorDbSelect.Wrap(err)
+		}
+		active := make(map[string]bool, len(toolIDs))
+		for _, toolID := range toolIDs {
+			active[toolID] = true
+		}
+		for _, toolID := range toolIDs {
+			if !active[toolID] {
+				continue
+			}
+			// 先复活（uk_app_tool 可能仍被软删行占用），未命中再新增。
+			result := tx.Unscoped().Model(&McpAppTool{}).
+				Where("app_id = ? AND tool_id = ?", appID, toolID).
+				Updates(map[string]interface{}{"status": 1, "created_by": operator, "deleted_at": 0})
+			if result.Error != nil {
+				return components.ErrorDbUpdate.Wrap(result.Error)
+			}
+			if result.RowsAffected == 0 {
+				if err := tx.Create(&McpAppTool{AppID: appID, ToolID: toolID, Status: 1, CreatedBy: operator}).Error; err != nil {
+					return components.ErrorDbInsert.Wrap(err)
+				}
+			}
+			active[toolID] = false
+		}
+		for _, row := range existing {
+			if row.DeletedAt == 0 && !containsString(toolIDs, row.ToolID) {
+				if err := tx.Where("app_id = ? AND tool_id = ?", appID, row.ToolID).
+					Delete(&McpAppTool{}).Error; err != nil {
+					return components.ErrorDbUpdate.Wrap(err)
+				}
+			}
+		}
+		return nil
+	})
+}
+
+// CountMcpAppTools 返回应用当前生效的绑定工具数。
+func CountMcpAppTools(ctx *gin.Context, appID string) (int64, error) {
+	var count int64
+	err := helpers.MysqlClientLLM.Model(&McpAppTool{}).WithContext(ctx).
+		Where("app_id = ? AND status = 1", appID).Count(&count).Error
+	if err != nil {
+		return 0, components.ErrorDbSelect.Wrap(err)
+	}
+	return count, nil
+}
+
 // McpCallLog 是 MCP 网关调用审计（tblLlmMcpCallLog）：异步批量落库，只插不改。
 type McpCallLog struct {
-	ID            uint      `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
-	RequestID     string    `json:"requestId" gorm:"column:request_id;not null;default:''"`
-	AppKey        string    `json:"appKey" gorm:"column:app_key;not null;default:''"`
-	UserName      string    `json:"userName" gorm:"column:user_name;not null;default:''"`
-	McpMethod     string    `json:"mcpMethod" gorm:"column:mcp_method;not null;default:''"`
-	ToolName      string    `json:"toolName" gorm:"column:tool_name;not null;default:''"`
-	Arguments     string    `json:"arguments" gorm:"column:arguments"`
-	ResponseText  string    `json:"responseText" gorm:"column:response_text"`
-	ResultCode    int       `json:"resultCode" gorm:"column:result_code;not null;default:0"`
-	ErrorMsg      string    `json:"errorMsg" gorm:"column:error_msg;not null;default:''"`
-	CostMs        int       `json:"costMs" gorm:"column:cost_ms;not null;default:0"`
-	ClientIP      string    `json:"clientIP" gorm:"column:client_ip;not null;default:''"`
-	ClientInfo    string    `json:"clientInfo" gorm:"column:client_info;not null;default:''"`
-	CreatedAt     time.Time `json:"createdAt" gorm:"column:created_at"`
+	ID           uint      `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	RequestID    string    `json:"requestId" gorm:"column:request_id;not null;default:''"`
+	AppKey       string    `json:"appKey" gorm:"column:app_key;not null;default:''"`
+	UserName     string    `json:"userName" gorm:"column:user_name;not null;default:''"`
+	McpMethod    string    `json:"mcpMethod" gorm:"column:mcp_method;not null;default:''"`
+	ToolName     string    `json:"toolName" gorm:"column:tool_name;not null;default:''"`
+	Arguments    string    `json:"arguments" gorm:"column:arguments"`
+	ResponseText string    `json:"responseText" gorm:"column:response_text"`
+	ResultCode   int       `json:"resultCode" gorm:"column:result_code;not null;default:0"`
+	ErrorMsg     string    `json:"errorMsg" gorm:"column:error_msg;not null;default:''"`
+	CostMs       int       `json:"costMs" gorm:"column:cost_ms;not null;default:0"`
+	ClientIP     string    `json:"clientIP" gorm:"column:client_ip;not null;default:''"`
+	ClientInfo   string    `json:"clientInfo" gorm:"column:client_info;not null;default:''"`
+	CreatedAt    time.Time `json:"createdAt" gorm:"column:created_at"`
 }
 
 func (l *McpCallLog) TableName() string {
