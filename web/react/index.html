@@ -90,7 +90,35 @@
           </div>
         </div>
       </div>
-      <div id="agent-root" class="rp-agent-root"></div>
+      <div class="rp-agent-wrap">
+        <div id="agent-root" class="rp-agent-root"></div>
+        <div class="rp-ctx-widget" id="ctx-widget">
+          <button
+            type="button"
+            class="rp-ctx-trigger"
+            id="ctx-trigger"
+            aria-expanded="false"
+            aria-controls="context-usage-card"
+            title="上下文容量：悬浮预览，点击固定"
+          >
+            <span class="rp-ctx-trigger-bar" id="ctx-trigger-bar" aria-hidden="true"></span>
+            <span class="rp-ctx-trigger-text" id="ctx-trigger-text">--</span>
+          </button>
+          <div class="rp-ctx-card" id="context-usage-card">
+            <div class="rp-ctx-head">
+              <span class="rp-ctx-title">上下文容量</span>
+              <span class="rp-ctx-summary" id="ctx-summary">--</span>
+            </div>
+            <div class="rp-ctx-bar" id="ctx-bar" role="progressbar" aria-label="上下文占用"></div>
+            <ul class="rp-ctx-breakdown" id="ctx-breakdown"></ul>
+            <div class="rp-ctx-footer">
+              <span class="rp-ctx-footer-label">缓存命中率</span>
+              <div class="rp-ctx-cache-track"><div class="rp-ctx-cache-fill" id="ctx-cache-fill"></div></div>
+              <span class="rp-ctx-cache-value" id="ctx-cache-value">--</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
     <div
       id="layout-splitter"

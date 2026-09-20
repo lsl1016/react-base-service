@@ -135,6 +135,9 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 		if err := state.updateLastTokenUsage(streamResult.InputTokens, streamResult.OutputTokens); err != nil {
 			return err
 		}
+		if err := state.persistContextBreakdown(); err != nil {
+			return err
+		}
 
 		assistantMsg, assistantRef, err := persistAssistantMessage(ctx, req, runID, sessionID, roundResult.Model, streamResult.Content, streamResult.ReasoningContent, streamResult.ReasoningSignature, streamResult.ToolCalls, step)
 		if err != nil {

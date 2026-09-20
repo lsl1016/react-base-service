@@ -1156,3 +1156,234 @@
   gap: 8px;
   margin-top: 12px;
 }
+
+/* ============================================================
+   上下文容量挂件：挂在对话栏右上角，默认收起成胶囊，
+   悬浮预览 / 点击固定展开（容量进度条 + 分类占比 + 缓存命中率）。
+   纯 UI 演示：数据由 index.js 的 renderContextUsageCard 注入，后续可换真实接口。
+   ============================================================ */
+.rp-agent-wrap {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.rp-ctx-widget {
+  --ctx-line: rgba(15, 23, 42, 0.08);
+  --ctx-text: #0f172a;
+  --ctx-muted: #64748b;
+  --ctx-track: #e2e8f0;
+  --ctx-fill-ok: #16a34a;
+  --ctx-surface: #ffffff;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+[data-agent-ui-theme='dark'] .rp-ctx-widget {
+  --ctx-line: rgba(255, 255, 255, 0.14);
+  --ctx-text: #e2e8f0;
+  --ctx-muted: #94a3b8;
+  --ctx-track: #334155;
+  --ctx-fill-ok: #22c55e;
+  --ctx-surface: #1e293b;
+}
+
+/* 收起态：胶囊触发器（迷你分段条 + 百分比） */
+.rp-ctx-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--ctx-line);
+  border-radius: 999px;
+  background: var(--ctx-surface);
+  color: var(--ctx-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.1);
+}
+
+.rp-ctx-trigger:hover {
+  border-color: rgba(37, 99, 235, 0.32);
+}
+
+.rp-ctx-widget.rp-pinned .rp-ctx-trigger {
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.32);
+}
+
+[data-agent-ui-theme='dark'] .rp-ctx-widget.rp-pinned .rp-ctx-trigger,
+[data-agent-ui-theme='dark'] .rp-ctx-trigger:hover {
+  color: #93b4f8;
+  border-color: rgba(147, 180, 248, 0.4);
+}
+
+.rp-ctx-trigger-bar {
+  display: inline-flex;
+  gap: 1px;
+  width: 44px;
+  height: 5px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--ctx-track);
+  overflow: hidden;
+}
+
+.rp-ctx-trigger-bar .rp-ctx-seg {
+  min-width: 1px;
+  border-radius: 0;
+}
+
+.rp-ctx-trigger-text {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 展开态：详情卡片（默认隐藏，悬浮/固定时淡入下移展开） */
+.rp-ctx-card {
+  width: min(300px, calc(100vw - 48px));
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--ctx-line);
+  border-radius: 12px;
+  background: var(--ctx-surface);
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.16);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
+}
+
+.rp-ctx-widget:hover .rp-ctx-card,
+.rp-ctx-widget.rp-open .rp-ctx-card {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+.rp-ctx-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rp-ctx-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ctx-text);
+}
+
+.rp-ctx-summary {
+  color: var(--ctx-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rp-ctx-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  margin-top: 10px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--ctx-track);
+  overflow: hidden;
+}
+
+.rp-ctx-seg {
+  height: 100%;
+  min-width: 2px;
+  border-radius: 2px;
+}
+
+.rp-ctx-breakdown {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+.rp-ctx-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.rp-ctx-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.rp-ctx-cat {
+  color: var(--ctx-text);
+}
+
+.rp-ctx-nums {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  color: var(--ctx-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rp-ctx-nums em {
+  font-style: normal;
+  width: 46px;
+  text-align: right;
+}
+
+.rp-ctx-row-empty {
+  justify-content: center;
+  color: var(--ctx-muted);
+}
+
+.rp-ctx-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--ctx-line);
+  font-size: 12px;
+}
+
+.rp-ctx-footer-label {
+  color: var(--ctx-muted);
+  white-space: nowrap;
+}
+
+.rp-ctx-cache-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ctx-track);
+  overflow: hidden;
+}
+
+.rp-ctx-cache-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ctx-fill-ok);
+}
+
+.rp-ctx-cache-value {
+  min-width: 34px;
+  text-align: right;
+  font-weight: 700;
+  color: var(--ctx-fill-ok);
+  font-variant-numeric: tabular-nums;
+}

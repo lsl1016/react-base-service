@@ -191,6 +191,8 @@ func (s *reactEngineState) callModelRound(step int, prefixDebugKey string, tools
 // 该能力给 Plan Finalizer 等“先校验结果、再决定是否公开”的上层 Runtime 复用。
 func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey string, tools []llm.ToolDefinition, emitEvents bool) (modelRoundResult, error) {
 	attempts := s.modelAttemptOrder()
+	// 各备选模型共享同一份上下文，构成估算只需算一次；随本轮 usage 落库。
+	s.lastContextBreakdownJSON = s.computeRoundContextBreakdown(tools)
 	var lastResult modelRoundResult
 	var lastErr error
 

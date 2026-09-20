@@ -204,6 +204,8 @@ const mountAgent = () => {
   if (currentHandle && typeof currentHandle.destroy === 'function') {
     disposeSQLClientTools?.();
     disposeSQLClientTools = null;
+    disposeContextUsageSubscription?.();
+    disposeContextUsageSubscription = null;
     currentHandle.destroy();
   }
 
@@ -225,6 +227,7 @@ const mountAgent = () => {
   });
 
   disposeSQLClientTools = registerSQLClientTools(currentHandle.client);
+  subscribeContextUsage();
 
   currentHandle?.ui?.setFeedback?.(feedbackByRunId);
   configBar.classList.toggle('rp-hidden', !hostConfig.editable);
@@ -270,6 +273,9 @@ const runInputAPIDemo = async (submit) => {
 const applySDKTheme = (theme) => {
   sdkTheme = theme === 'dark' ? 'dark' : 'light';
   currentHandle?.setTheme?.(sdkTheme);
+  // SDK 只在自己容器上挂 data-agent-ui-theme；同步到 <html> 让聊天区之外的
+  // 页面元素（如上下文容量卡片）也能用同一份暗色变量。
+  document.documentElement.setAttribute('data-agent-ui-theme', sdkTheme);
   const dark = sdkTheme === 'dark';
   const label = dark ? '切换到亮色主题' : '切换到暗色主题';
   toggleSDKThemeButton.setAttribute('aria-pressed', dark ? 'true' : 'false');
@@ -1816,6 +1822,155 @@ toggleSDKThemeButton.addEventListener('click', () => {
 });
 
 applySDKTheme(sdkTheme);
+
+// ============================================================
+// 上下文容量挂件（挂在对话栏右上角）：
+// 收起态胶囊 + 悬浮/点击展开的详情卡片（容量进度条 / 分类占比 / 缓存命中率）。
+// 数据来自 POST /react/usage/context（会话最近一轮模型调用的聚合），
+// SDK 状态变化、悬浮与固定展开时刷新；分类 key 与后端 ContextBreakdown 对齐。
+// ============================================================
+const ctxCategoryMeta = {
+  messages: { label: '消息', color: '#2563eb' },
+  mcpTools: { label: 'MCP 工具', color: '#7c3aed' },
+  systemTools: { label: '系统工具', color: '#0891b2' },
+  skills: { label: '技能', color: '#d97706' },
+  systemPrompt: { label: '系统提示词', color: '#059669' },
+  others: { label: '其他', color: '#94a3b8' },
+};
+
+const ctxEmptyUsage = () => ({
+  usedTokens: 0,
+  maxTokens: 0,
+  cacheHitRate: 0,
+  categories: [],
+  updatedAt: 0,
+  hasData: false,
+});
+
+let ctxUsage = ctxEmptyUsage();
+let ctxSessionId = null;
+let ctxUsageTimer = null;
+let disposeContextUsageSubscription = null;
+
+const formatWanTokens = (tokens) => (
+  tokens >= 10000 ? `${+(tokens / 10000).toFixed(1)}万` : String(tokens)
+);
+
+const renderContextUsageCard = (data = ctxUsage) => {
+  if (!$('context-usage-card')) return;
+  const used = Math.max(0, data.usedTokens || 0);
+  const total = Math.max(1, data.maxTokens || 1);
+  const capacityShare = Math.min(100, (used / total) * 100);
+  const categories = (data.categories || []).filter((item) => ctxCategoryMeta[item.key]);
+  if (!data.hasData || categories.length === 0) {
+    $('ctx-summary').textContent = data.hasData
+      ? `${formatWanTokens(used)}/${formatWanTokens(total)}（${capacityShare.toFixed(1)}%）`
+      : '暂无会话数据';
+    $('ctx-bar').innerHTML = '';
+    $('ctx-breakdown').innerHTML = '<li class="rp-ctx-row rp-ctx-row-empty">发送新消息后统计上下文构成</li>';
+    $('ctx-cache-fill').style.width = data.hasData ? `${(Math.max(0, Math.min(1, data.cacheHitRate || 0)) * 100).toFixed(1)}%` : '0%';
+    $('ctx-cache-value').textContent = data.hasData ? `${Math.round(Math.max(0, Math.min(1, data.cacheHitRate || 0)) * 100)}%` : '--';
+    if ($('ctx-trigger-bar')) $('ctx-trigger-bar').innerHTML = '';
+    if ($('ctx-trigger-text')) $('ctx-trigger-text').textContent = `上下文 ${data.hasData ? capacityShare.toFixed(1) + '%' : '--'}`;
+    return;
+  }
+  const segmentsHtml = categories.map(({ key, tokens }) => {
+    const width = Math.min(100, (Math.max(0, tokens || 0) / total) * 100);
+    if (width <= 0) return '';
+    return `<span class="rp-ctx-seg" style="width:${width.toFixed(3)}%;background:${ctxCategoryMeta[key].color}"></span>`;
+  }).join('');
+  // 构成占比的分母是各分类合计（usedTokens 在 last/估算两种口径间取大，可能与合计不同）。
+  const breakdownTotal = categories.reduce((sum, { tokens }) => sum + Math.max(0, tokens || 0), 0);
+  $('ctx-summary').textContent = `${formatWanTokens(used)}/${formatWanTokens(total)}（${capacityShare.toFixed(1)}%）`;
+  $('ctx-bar').innerHTML = segmentsHtml;
+  $('ctx-breakdown').innerHTML = categories.map(({ key, tokens }) => {
+    const safeTokens = Math.max(0, tokens || 0);
+    const usedShare = breakdownTotal > 0 ? (safeTokens / breakdownTotal) * 100 : 0;
+    return `<li class="rp-ctx-row">
+      <span class="rp-ctx-dot" style="background:${ctxCategoryMeta[key].color}"></span>
+      <span class="rp-ctx-cat">${escapeHtml(ctxCategoryMeta[key].label)}</span>
+      <span class="rp-ctx-nums">${formatWanTokens(safeTokens)}<em>${usedShare.toFixed(1)}%</em></span>
+    </li>`;
+  }).join('');
+  const cacheHit = Math.max(0, Math.min(1, data.cacheHitRate || 0));
+  $('ctx-cache-fill').style.width = `${(cacheHit * 100).toFixed(1)}%`;
+  $('ctx-cache-value').textContent = `${Math.round(cacheHit * 100)}%`;
+  const triggerBar = $('ctx-trigger-bar');
+  if (triggerBar) triggerBar.innerHTML = segmentsHtml;
+  const triggerText = $('ctx-trigger-text');
+  if (triggerText) triggerText.textContent = `上下文 ${capacityShare.toFixed(1)}%`;
+};
+
+const refreshContextUsage = async () => {
+  if (!ctxSessionId) {
+    ctxUsage = ctxEmptyUsage();
+    renderContextUsageCard();
+    return;
+  }
+  try {
+    const data = await post('/react/usage/context', { sessionId: ctxSessionId });
+    const merged = { ...ctxEmptyUsage(), ...data };
+    merged.hasData = Boolean((data?.usedTokens || 0) > 0 || (data?.categories || []).length > 0);
+    ctxUsage = merged;
+    renderContextUsageCard();
+  } catch {
+    // 拉取失败保留上一次渲染，不打断页面
+  }
+};
+
+// SDK 状态驱动：sessionId 变化或 run 状态翻转时刷新容量数据。
+// reducer.subscribe 不回放当前态，冷启动依赖挂件展开/定时器兜底触发。
+const subscribeContextUsage = () => {
+  const client = currentHandle?.client;
+  if (!client || typeof client.subscribe !== 'function') return;
+  let lastStatus = null;
+  let lastSessionId = null;
+  disposeContextUsageSubscription = client.subscribe((state) => {
+    const sessionId = state?.sessionId ?? null;
+    if (sessionId !== lastSessionId) {
+      lastSessionId = sessionId;
+      ctxSessionId = sessionId;
+      refreshContextUsage();
+      return;
+    }
+    if (sessionId && state?.status !== lastStatus) {
+      refreshContextUsage();
+    }
+    lastStatus = state?.status ?? null;
+  });
+};
+
+renderContextUsageCard();
+
+// 交互：悬浮展开交给 CSS :hover（渲染器原生跟随指针，无 mouseleave 依赖，
+// 不会出现卡在展开态的问题）；点击固定（再点一次或 Esc 收起）由这里接管。
+// 悬浮/固定时拉取最新数据，固定展开期间每 15s 自刷新。
+(() => {
+  const widget = $('ctx-widget');
+  const trigger = $('ctx-trigger');
+  if (!widget || !trigger) return;
+  const setPinned = (pinned) => {
+    widget.classList.toggle('rp-pinned', pinned);
+    widget.classList.toggle('rp-open', pinned);
+    trigger.setAttribute('aria-expanded', pinned ? 'true' : 'false');
+    if (pinned) {
+      refreshContextUsage();
+      if (!ctxUsageTimer) ctxUsageTimer = setInterval(refreshContextUsage, 15000);
+    } else if (ctxUsageTimer) {
+      clearInterval(ctxUsageTimer);
+      ctxUsageTimer = null;
+    }
+  };
+  widget.addEventListener('mouseenter', () => refreshContextUsage());
+  trigger.addEventListener('click', () => {
+    setPinned(!widget.classList.contains('rp-pinned'));
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && widget.classList.contains('rp-pinned')) {
+      setPinned(false);
+    }
+  });
+})();
 
 const remountAgent = async () => {
   try {

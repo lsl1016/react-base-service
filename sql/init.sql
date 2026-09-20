@@ -336,6 +336,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmReactRun` (
     `last_output_tokens`        INT          NOT NULL DEFAULT 0 COMMENT '最近一轮输出token',
     `cache_read_tokens`         INT          NOT NULL DEFAULT 0 COMMENT '累计缓存读token',
     `cache_create_tokens`       INT          NOT NULL DEFAULT 0 COMMENT '累计缓存写token',
+    `context_breakdown_json`    TEXT         COMMENT '最近一轮模型调用前上下文分类token估算(JSON:systemPrompt/messages/mcpTools/systemTools/skills/others)',
     `error_message`             TEXT         COMMENT '失败原因',
     `parent_run_id`             VARCHAR(64)  DEFAULT NULL COMMENT '父run ID(delegate_agent子run指向父,外层run为NULL)',
     `agent_path`                VARCHAR(256) DEFAULT NULL COMMENT 'Agent路径(如main/ops-agent,外层run为NULL)',
@@ -353,6 +354,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmReactRun` (
 --     ADD COLUMN `agent_path`    VARCHAR(256) DEFAULT NULL COMMENT 'Agent路径(如main/ops-agent,外层run为NULL)' AFTER `parent_run_id`,
 --     ADD COLUMN `delegated_input_tokens` INT NOT NULL DEFAULT 0 COMMENT '委派子Agent输入token(递归口径)' AFTER `total_output_tokens`,
 --     ADD COLUMN `delegated_output_tokens` INT NOT NULL DEFAULT 0 COMMENT '委派子Agent输出token(递归口径)' AFTER `delegated_input_tokens`,
+--     ADD COLUMN `context_breakdown_json` TEXT COMMENT '最近一轮模型调用前上下文分类token估算(JSON)' AFTER `cache_create_tokens`,
 --     ADD INDEX `idx_parent_run` (`parent_run_id`);
 
 -- ReAct 消息表（run 内 seq 递增；content_json 存 modelMessage 与 toolMeta）

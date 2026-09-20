@@ -91,6 +91,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/plan_execution/cancel", react.CancelPlanExecution)
 		reactGroup.POST("/session/feedback", react.ListSessionFeedback)
 		reactGroup.POST("/run/feedback", react.UpdateRunFeedback)
+		// 上下文容量看板（playground 悬浮卡片）：容量占用/缓存命中率/分类构成
+		reactGroup.POST("/usage/context", react.GetUsageContext)
 		// Plan 模板管理（TODO 占位实现：内存 CRUD，不落库，见 controllers/http/react/plan_template.go）
 		reactGroup.POST("/plan_template/list", react.ListPlanTemplates)
 		reactGroup.POST("/plan_template/detail", react.GetPlanTemplateDetail)

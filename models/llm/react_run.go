@@ -55,6 +55,10 @@ type ReactRun struct {
 	LastOutputTokens      int    `json:"lastOutputTokens" gorm:"column:last_output_tokens;not null;default:0"`
 	CacheReadTokens       int    `json:"cacheReadTokens" gorm:"column:cache_read_tokens;not null;default:0"`
 	CacheCreateTokens     int    `json:"cacheCreateTokens" gorm:"column:cache_create_tokens;not null;default:0"`
+	// ContextBreakdownJSON 是最近一轮模型调用前上下文的分类 token 估算
+	// （systemPrompt/messages/mcpTools/systemTools/skills/others），供上下文容量
+	// 看板按构成展示；估算口径见 service/react/context_breakdown.go。
+	ContextBreakdownJSON string `json:"contextBreakdownJson" gorm:"column:context_breakdown_json;type:text"`
 	ErrorMessage          string `json:"errorMessage" gorm:"column:error_message;type:text"`
 	// ParentRunID 非空表示这是 delegate_agent 委派出的子 run，指向父 run；外层 run 为空。
 	ParentRunID string `json:"parentRunId" gorm:"column:parent_run_id;default:null"`
