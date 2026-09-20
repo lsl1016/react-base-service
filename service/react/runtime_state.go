@@ -141,6 +141,9 @@ type reactEngineUsageState struct {
 	// lastInputTokens 最近一次模型调用真实 input_tokens，用作压缩触发的主锚点。
 	lastInputTokens  int
 	lastOutputTokens int
+	// lastContextBreakdownJSON 最近一次模型调用前的上下文分类估算（JSON），
+	// 随 last_* 一并写回 ReactRun，供上下文容量看板按构成展示。
+	lastContextBreakdownJSON string
 
 	// delegatedInput/OutputTokens 是委派子 run 消耗的内存镜像，并行委派并发累加用原子操作。
 	delegatedInputTokens  atomic.Int64

@@ -214,6 +214,36 @@ func OfflineMCPServerTools(ctx *gin.Context, serverName, callerKey string, activ
 	return offlined, nil
 }
 
+// ListGatewayHTTPTools 返回 MCP 网关的工具基础集合：全部启用的 http 工具行
+//（跨 caller，caller_key 仅作归属标记，不参与 MCP 可见性；route_values 同样不参与）。
+// 工具对哪个应用可见由 tblLlmMcpAppTool 白名单决定。同名工具可能存在于多个 caller
+// 名下，排序按 name/id 固定，由调用方（网关注册表）按名去重。
+func ListGatewayHTTPTools(ctx *gin.Context) ([]Tool, error) {
+	var tools []Tool
+	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
+		Where("status = 1 AND tool_type = 'http'").
+		Order("name ASC, id ASC").Find(&tools).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return tools, nil
+}
+
+// GetHTTPToolsByIDs 按自增主键批量查询 http 工具行（mcp-server 管理台兼容层用；
+// 数字 ID 是该管理台编辑/授权的操作键）。
+func GetHTTPToolsByIDs(ctx *gin.Context, ids []uint) ([]Tool, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var tools []Tool
+	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
+		Where("id IN ? AND tool_type = 'http'", ids).Find(&tools).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return tools, nil
+}
+
 // FindToolsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 tool；
 // 同时并入「默认作用域」（caller_key=default）下命中的工具，对全部 caller 生效。
 func FindToolsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Tool, error) {

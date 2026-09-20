@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+:root {
+  --el-color-primary: #1890ff;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Helvetica Neue",
+    Helvetica,
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Microsoft YaHei",
+    "微软雅黑",
+    Arial,
+    sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+}

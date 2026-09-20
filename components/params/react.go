@@ -445,3 +445,27 @@ type PlanSkipReq struct {
 type PlanCancelReq struct {
 	PlanExecutionID string `json:"planExecutionId" binding:"required"`
 }
+
+// ReactUsageContextReq 查询会话最近一个外层 run 的上下文容量构成（上下文容量看板）。
+type ReactUsageContextReq struct {
+	SessionID string `json:"sessionId" binding:"required"`
+}
+
+// ReactUsageCategory 是上下文构成的单个分类（key 与前端卡片分类一一对应）。
+type ReactUsageCategory struct {
+	Key    string `json:"key"`
+	Tokens int    `json:"tokens"`
+}
+
+// ReactUsageContextResp 是上下文容量看板的聚合结果：容量占用、缓存命中率与分类构成。
+type ReactUsageContextResp struct {
+	// UsedTokens 是最近一轮模型调用后的上下文占用（last_input + last_output）。
+	UsedTokens int `json:"usedTokens"`
+	// MaxTokens 是上下文窗口口径上限（与事件侧一致，取压缩触发阈值）。
+	MaxTokens int `json:"maxTokens"`
+	// CacheHitRate 是本 run 累计缓存命中率（cache_read / total_input），无输入时为 0。
+	CacheHitRate float64              `json:"cacheHitRate"`
+	Categories   []ReactUsageCategory `json:"categories"`
+	// UpdatedAt 是最近一轮模型调用时间（毫秒），前端用于展示数据新鲜度。
+	UpdatedAt int64 `json:"updatedAt"`
+}

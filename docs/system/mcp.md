@@ -20,6 +20,8 @@ summary: MCP 服务器登记与连接管理、三种传输客户端、工具清�
 
 # MCP 模块功能文档
 
+> 本文覆盖 MCP **客户端**（连接管理/传输/工具同步）。项目同时提供 MCP **服务端网关**（把 tblLlmTool 的 http 工具对外暴露成 MCP 协议，含应用凭证与输出投影），见 `docs/system/mcp-gateway.md`。
+
 ## 1. 模块概述
 
 MCP 模块登记并管理外部 MCP 服务器连接，把服务器工具清单同步进 `tblLlmTool`（`tool_type=mcp`），ReAct 运行时经既有 `get_tool`/`execute_tool` 两段式加载使用，引擎无感知。传输支持三种 `kind`：`repo`（stdio 适配器白名单）、`http`（手写 Streamable HTTP）、`http_sdk`（官方 MCP Go SDK），三者实现同一 `Server` 接口。
