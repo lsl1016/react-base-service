@@ -22,6 +22,7 @@ function cloneEvent(event: ReactEvent): ReactEvent {
     runId: event.runId,
     sessionId: event.sessionId,
     stepIndex: event.stepIndex,
+    agentPath: event.agentPath,
     payload: event.payload ? { ...event.payload } : undefined,
   };
 }
@@ -125,6 +126,14 @@ export class SessionEventAssembler {
       case 'plan_view_update':
       case 'plan_step_event':
       case 'compact_end':
+      // Steering 准入/注入/结算与通知吸收事件（S1-S3/Q1-A1）：原样透传，不参与流式聚合。
+      case 'steer_guided':
+      case 'steer_queued':
+      case 'steer_rejected':
+      case 'steer_drained':
+      case 'steer_delivery_changed':
+      case 'steer_discarded':
+      case 'notice_drained':
       case 'done':
       case 'error':
       case 'cancelled':

@@ -493,12 +493,14 @@ func persistGuideUserMessageTx(ctx *gin.Context, tx *gorm.DB, req *runtimeReques
 // settleRunPendingInputs 收敛 run 终态时的未消费输入（guide 与后台通知的统一结算入口）：
 //   - 后台通知（kind=notification）绝不降级排队：run 终态后命令箱随 run 死亡、没有消费方，
 //     一律结算 discarded（Q1，SettleNotificationsByRunIDWithDB，仅记日志不发 steer 事件）；
-//   - guide（kind=user_input）：queue 排队开启（S2）时降级 queue（对齐 ZCode
-//     fallbackPendingGuidesToQueue，不丢输入；自动续跑仅在 run 正常结束后触发，
-//     error/cancel 天然暂停），广播 steer_delivery_changed；
+//   - guide（kind=user_input）：仅外层 run 在 queue 排队开启（S2）时降级 queue（对齐 ZCode
+//     fallbackPendingGuidesToQueue，不丢输入；自动续跑仅在 run 正常结束后触发，error/cancel
+//     天然暂停），广播 steer_delivery_changed——子 run（A2 SendMessage 的投递目标）的未消费
+//     guide 是发给该子代理的定向消息，降级进会话队列会改投给下一轮主对话，语义错误，
+//     一律结算 discarded；
 //   - queue 排队关闭（S1 行为）：结算 discarded（取消/断连→turn_cancelled，error/timeout→turn_failed，
 //     正常结束→run_finished），广播 steer_discarded。
-func settleRunPendingInputs(ctx *gin.Context, emitter *runEventEmitter, runID, settleReason string) {
+func settleRunPendingInputs(ctx *gin.Context, emitter *runEventEmitter, runID string, isOuterRun bool, settleReason string) {
 	if ctx == nil {
 		return
 	}
@@ -507,7 +509,7 @@ func settleRunPendingInputs(ctx *gin.Context, emitter *runEventEmitter, runID, s
 	} else if count > 0 {
 		zlog.Infof(ctx, "[React.Notify] 未消费后台通知已结算: runId=%s, count=%d, reason=%s", runID, count, settleReason)
 	}
-	if conf.GetReactRuntimeConfig().Steering.QueueEnabled() {
+	if isOuterRun && conf.GetReactRuntimeConfig().Steering.QueueEnabled() {
 		count, err := model.FallbackPendingInputsToQueueWithDB(ctx, model.GetLLMDB(), runID)
 		if err != nil {
 			zlog.Warnf(ctx, "[React.Steer] guide 降级排队失败(留待 session_resumed 兜底): runId=%s, err=%v", runID, err)

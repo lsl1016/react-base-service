@@ -1,7 +1,7 @@
 ---
 title: ReAct Runtime 模块功能文档
 date: 2026-09-25
-version: v1.4
+version: v1.5
 type: system
 module: react_runtime
 maintainer: react-base-service 项目组
@@ -91,6 +91,13 @@ tool_call id 双层去重（Phase 2）：流收集阶段按非空 id 去重（�
 4. **后台委派（A1）**：`delegate_agent` 新增 `background` 参数——true 时组装与同步路径一致的隔离子 run 后立即返回启动回执（async_launched 文案纪律：简要转达、结束本轮回复、不等待不编造结论），子 run 在监视 goroutine 中执行到终态并经命令箱回灌。生命周期锚在父 runCtx（父取消/断连级联取消后台子 run——与 ZCode detach 存活的有意分歧，成本可控优先）；gin ctx 使用 headless 快照（后台子 run 可能比 WS 连接活得久）并保留父请求 Cookie。
 5. **WS 事件**：`notice_drained`（通知被吸收，payload 含 messageId/count）；前端按 `react_notice` 消息类型渲染系统卡片。
 
+### 3.9 队列管理与 SendMessage/看门狗（S3/A2）
+
+1. **队列管理 API（S3）**：`/react/queue/{list,update,reorder,delete}` 四个端点（会话五元组归属校验）。编辑/重排/删除均为条件写或事务内行锁读+无条件写，与自动续跑晋升 claim-once 互斥；**重排按请求顺序同步改写账本 seq**（从当前最小 seq 起连续分配），防冷热事实分叉，实测确认自动续跑按重排后顺序消费；删除置 cancelled。显式发送走 WS `queue_send` 消息（同一连接 claim-once 晋升开新 run，先回 steer_drained），不提供 HTTP 入口（HTTP 无法回传 run 事件流）。
+2. **SendMessage（A2）**：新 Meta Tool `send_message`（与 delegate_agent 同 AllowSubagent 门控）——父模型按 agent_path/run_id 向**本 run 直接委派**的子 run 发送补充消息，作为 guide 落账本并在子引擎模型步边界消费（完全复用 S1 机制，对齐 ZCode messageSink）。目标选择活跃优先；子 run 已结束/软着陆收尾/消息落账后被终态结算时，均得到明确错误结果——子 run 的定向消息**绝不降级会话队列**（settleRunPendingInputs 按 isOuterRun 区分）。
+3. **子代理看门狗（A2）**：`subagent.max_run_seconds`（默认 0=不限）到点以 ErrReactRunTimeout 取消子 run，终态置 timeout（对齐外层 run 超时语义），后台完成通知按 timeout（失败）回灌。
+4. **前端事件投影**：SDK（web/sdk）接入全部 steer_* 与 notice_drained 事件——steerState 投影 + main lane 系统标记条（NoticeChip，引导/排队/作废/通知文案），notice_drained 历史回放携带信封正文可展开；react_notice 消息经 session/events 映射为同词汇历史事件。
+
 ## 4. 数据模型
 
 | 表/模型 | 作用 |
@@ -109,7 +116,7 @@ tool_call id 双层去重（Phase 2）：流收集阶段按非空 id 去重（�
 
 ## 5. 配置项与限制
 
-`conf/mount/custom.yaml` 的 `llm.react` 提供 `max_steps`、`stream_idle_timeout_sec`、`models.*`、`context_compact.*`、`tool_result.*`、`allow_plan`、`steering.enabled`（guide 引导注入总开关，默认 false）、`steering.queue`（排队开关，默认 false）和 `steering.queue_auto_drain`（run 正常结束后自动续跑队首，默认 true，仅 queue 开启时生效）等配置。
+`conf/mount/custom.yaml` 的 `llm.react` 提供 `max_steps`、`stream_idle_timeout_sec`、`models.*`、`context_compact.*`、`tool_result.*`、`allow_plan`、`steering.enabled`（guide 引导注入总开关，默认 false）、`steering.queue`（排队开关，默认 false）、`steering.queue_auto_drain`（run 正常结束后自动续跑队首，默认 true，仅 queue 开启时生效）和 `subagent.max_run_seconds`（子代理墙钟看门狗，默认 0=不限）等配置。
 
 当前异步任务机制用于跨 Run 状态提醒，不会在外部任务完成后自动唤醒已结束的 Run；后台委派（§3.8）的完成通知只回灌仍处于运行中的父 run。
 
@@ -122,3 +129,4 @@ tool_call id 双层去重（Phase 2）：流收集阶段按非空 id 去重（�
 | v1.2 | 2026-09-25 | react-base-service 项目组 | 新增 3.7 节：Steering 引导注入（准入决策、tblLlmReactPendingInput 账本、唯一注入点、三路结算与 WS steer_* 事件）；补全 run 状态枚举与数据模型 |
 | v1.3 | 2026-09-25 | react-base-service 项目组 | 3.7 节扩展 S2：排队（payload 快照 + queueLength 回执）、run 结束自动续跑（claim-once 晋升原子化）、guide 降级排队与失败暂停语义；新增 queue_auto_drain 配置 |
 | v1.4 | 2026-09-25 | react-base-service 项目组 | 新增 3.8 节：运行时通知邮箱（runtimeCommandBox、模型步边界吸收、react_notice 消息、通知结算与 queue 降级隔离）与后台委派（delegate_agent background 参数、async_launched 回执、完成通知经命令箱回灌、父取消级联语义） |
+| v1.5 | 2026-09-25 | react-base-service 项目组 | 新增 3.9 节：队列管理 API（list/update/reorder/delete + WS queue_send 显式发送，重排同步改写账本 seq）、SendMessage 父→子消息通道（软着陆拒收、定向消息不降级排队）与子代理看门狗（max_run_seconds）；SDK 接入 Steering/通知事件与 NoticeChip 系统标记条 |

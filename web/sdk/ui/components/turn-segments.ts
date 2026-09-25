@@ -3,12 +3,14 @@ import { readPlanToolInput, shouldRenderPlanTool } from './plan-tool';
 
 export type SectionItem =
   | { kind: 'step'; step: Step }
-  | { kind: 'compact'; step: Step };
+  | { kind: 'compact'; step: Step }
+  | { kind: 'notice'; step: Step };
 
 export type WorkPart =
   | { kind: 'thought'; step: Step }
   | { kind: 'tools'; step: Step; toolUseIds?: readonly string[] }
-  | { kind: 'compact'; step: Step };
+  | { kind: 'compact'; step: Step }
+  | { kind: 'notice'; step: Step };
 
 export type TurnSegment =
   | { kind: 'work'; id: string; parts: WorkPart[]; collapsed: boolean }
@@ -263,6 +265,10 @@ export function buildTurnSegments(
   for (const item of items) {
     if (item.kind === 'compact') {
       workParts.push({ kind: 'compact', step: item.step });
+      continue;
+    }
+    if (item.kind === 'notice') {
+      workParts.push({ kind: 'notice', step: item.step });
       continue;
     }
 

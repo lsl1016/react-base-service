@@ -48,6 +48,10 @@ import type {
     PlanStepEventPayload,
     PlanViewUpdatePayload,
     ReactEvent,
+    ReactNoticeDrainedPayload,
+    ReactSteerDiscardedPayload,
+    ReactSteerDrainedPayload,
+    ReactSteerReceiptPayload,
     RunPayload,
     ThoughtDeltaPayload,
     ThoughtEndPayload,
@@ -77,6 +81,7 @@ function createInitialState(): AgentState {
     lastRunStats: null,
     compactState: null,
     lastModelFallback: null,
+    steerState: null,
     plans: {},
   };
 }
@@ -86,6 +91,7 @@ function cloneStep(step: Step): Step {
     ...step,
     displayParts: step.displayParts?.map((part) => ({ ...part })),
     compact: step.compact ? { ...step.compact } : undefined,
+    notice: step.notice ? { ...step.notice } : undefined,
     toolCalls: step.toolCalls.map((toolCall) => ({
       ...toolCall,
       input: { ...toolCall.input },
@@ -93,6 +99,50 @@ function cloneStep(step: Step): Step {
       todoItems: toolCall.todoItems?.map((todo) => ({ ...todo })),
     })),
   };
+}
+
+/** 把 steer 系列与 notice_drained 事件渲染为 main lane 的系统标记 step（不透传 agentPath）。 */
+function buildSteerNoticeStep(index: number, event: ReactEvent, text: string, detail?: string, count?: number): Step {
+  return {
+    index,
+    runId: event.runId ?? '',
+    role: 'notice',
+    thoughts: '',
+    content: '',
+    toolCalls: [],
+    thoughtComplete: true,
+    contentStarted: false,
+    contentComplete: true,
+    notice: { text, detail, count },
+  };
+}
+
+/** steer 准入回执事件的卡片文案。 */
+function steerReceiptNoticeText(type: string, p?: ReactSteerReceiptPayload): string {
+  switch (type) {
+    case 'steer_guided':
+      return '你的消息已作为引导注入运行中的对话，将在下一个模型轮生效';
+    case 'steer_queued':
+      return `当前对话正忙，消息已加入队列${readNumber(p?.queueLength, 0) > 0 ? `（第 ${p?.queueLength} 位）` : ''}`;
+    case 'steer_rejected':
+      return `消息未被接收：${steerReasonText(p?.reason)}`;
+    default:
+      return type;
+  }
+}
+
+/** 准入拒绝/排队原因的中文文案。 */
+function steerReasonText(reason?: string): string {
+  switch (reason) {
+    case 'run_not_steerable':
+      return '对话正在等待你的输入或收尾，暂不能引导';
+    case 'soft_landing':
+      return '对话正在收尾，暂不能引导';
+    case 'attachments_unsupported':
+      return '带附件的消息不支持引导注入';
+    default:
+      return reason ?? 'unknown';
+  }
 }
 
 function clonePlanPublicView(view: PlanPublicView): PlanPublicView {
@@ -130,6 +180,7 @@ function cloneAgentState(state: AgentState): AgentState {
     lastRunStats: state.lastRunStats ? { ...state.lastRunStats } : null,
     compactState: state.compactState ? { ...state.compactState } : null,
     lastModelFallback: state.lastModelFallback ? { ...state.lastModelFallback } : null,
+    steerState: state.steerState ? { ...state.steerState } : null,
     plans: Object.fromEntries(Object.entries(state.plans).map(([planExecutionId, plan]) => [
       planExecutionId,
       {
@@ -1071,6 +1122,70 @@ export class EventReducer {
         };
         this.state.steps.push(compactStep);
         this.state.status = 'running';
+        break;
+      }
+
+      // ─── Steering / 通知邮箱（S1-S3/Q1-A1）───────────────────────────
+      // 系统标记 step 一律不透传 event.agentPath：无论事件来自哪个 lane 都落 main，
+      // 保证引导/队列/通知的可见性不依赖事件归属（子 run 亦然）。
+      case 'steer_guided':
+      case 'steer_queued':
+      case 'steer_rejected': {
+        const p = event.payload as unknown as ReactSteerReceiptPayload;
+        this.state.steerState = {
+          kind: p?.kind ?? event.type.replace('steer_', ''),
+          queueLength: p?.queueLength,
+          reason: p?.reason,
+          pendingInputId: p?.pendingInputId,
+          runId: event.runId,
+        };
+        this.state.steps.push(buildSteerNoticeStep(this.state.steps.length, event, steerReceiptNoticeText(event.type, p)));
+        break;
+      }
+
+      case 'steer_drained': {
+        const p = event.payload as unknown as ReactSteerDrainedPayload;
+        this.state.steerState = {
+          kind: 'drained',
+          pendingInputId: p?.pendingInputId,
+          runId: event.runId,
+        };
+        this.state.steps.push(
+          buildSteerNoticeStep(this.state.steps.length, event, `已注入新一轮对话${p?.pendingInputId ? `（${p.pendingInputId}）` : ''}`),
+        );
+        break;
+      }
+
+      case 'steer_delivery_changed': {
+        const p = event.payload as unknown as ReactSteerDiscardedPayload;
+        this.state.steerState = { kind: 'delivery_changed', reason: p?.reason, runId: event.runId };
+        this.state.steps.push(
+          buildSteerNoticeStep(this.state.steps.length, event, `${readNumber(p?.count, 0)} 条未消费引导已转入队列（本轮对话结束）`),
+        );
+        break;
+      }
+
+      case 'steer_discarded': {
+        const p = event.payload as unknown as ReactSteerDiscardedPayload;
+        this.state.steerState = { kind: 'discarded', reason: p?.reason, runId: event.runId };
+        this.state.steps.push(
+          buildSteerNoticeStep(this.state.steps.length, event, `${readNumber(p?.count, 0)} 条未消费输入已作废（${p?.reason ?? 'unknown'}）`),
+        );
+        break;
+      }
+
+      case 'notice_drained': {
+        const p = event.payload as unknown as ReactNoticeDrainedPayload;
+        this.state.steerState = { kind: 'notice', runId: event.runId };
+        this.state.steps.push(
+          buildSteerNoticeStep(
+            this.state.steps.length,
+            event,
+            `后台任务通知已送达${readNumber(p?.count, 0) > 1 ? `（${p?.count} 条）` : ''}`,
+            p?.content,
+            readNumber(p?.count, 0),
+          ),
+        );
         break;
       }
 

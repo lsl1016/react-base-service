@@ -221,6 +221,29 @@ func handleWSMessage(ctx *gin.Context, connCtx context.Context, write reactServi
 			return runMsgCh, runDone
 		}
 		return startWSPlanCommand(ctx, connCtx, write, msg)
+	case reactService.EventQueueSend:
+		// 队列管理 S3：显式发送一条排队输入（claim-once 晋升 + 当前连接开新 run）。
+		// 与 EventRun 互斥：已有活跃 run 时拒绝（排队项留在队列，由自动续跑或再次发送消费）。
+		if runMsgCh != nil {
+			_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: "queue_send rejected while a run is active"}})
+			return runMsgCh, runDone
+		}
+		var queueSend params.ReactQueueSendReq
+		if err := json.Unmarshal(msg.Payload, &queueSend); err != nil {
+			_ = write(params.ReactEvent{Type: reactService.EventError, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorParamInvalid.ErrNo, ErrMsg: err.Error()}})
+			return runMsgCh, runDone
+		}
+		payload, pendingID, err := reactService.PrepareQueuedRunPayload(ctx, queueSend.SessionID, queueSend.PendingInputID)
+		if err != nil {
+			zlog.Infof(ctx, "[React.WS] queue_send 晋升失败: sessionId=%s, pendingInputId=%s, err=%v", queueSend.SessionID, queueSend.PendingInputID, err)
+			_ = write(params.ReactEvent{Type: reactService.EventError, SessionID: queueSend.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorParamInvalid.ErrNo, ErrMsg: err.Error()}})
+			return runMsgCh, runDone
+		}
+		// 先回 steer_drained（与 S2 自动续跑同词汇：该输入已离开队列、成为新 run 的用户输入），
+		// claim-once 由 createReactRunContext 事务内的条件更新兜底（双端并发发送只成功一次）。
+		_ = write(params.ReactEvent{Type: reactService.EventSteerDrained, SessionID: queueSend.SessionID, Payload: params.ReactSteerDrainedPayload{PendingInputID: pendingID}})
+		payloadBytes, _ := json.Marshal(payload)
+		return startWSRun(ctx, connCtx, write, params.ReactWSMessage{Type: reactService.EventRun, SessionID: queueSend.SessionID, Payload: payloadBytes})
 	case reactService.EventCancel:
 		if err := reactService.Cancel(ctx, msg.RunID, msg.SessionID); err != nil {
 			_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: err.Error()}})

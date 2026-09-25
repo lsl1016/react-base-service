@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	llm "react-base-service/api/llm"
 	"react-base-service/components"
@@ -150,10 +151,16 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 
 	subCtx, cancel := context.WithCancelCause(s.runCtx)
 	registerReactRunCancel(subRunID, cancel)
+	registerReactRunSoftLanding(subRunID)
+	watchdog := startSubAgentWatchdog(cancel)
 	metrics.RunsActive.Inc()
 	defer func() {
+		if watchdog != nil {
+			watchdog.Stop()
+		}
 		cancel(nil)
 		unregisterReactRunCancel(subRunID)
+		unregisterReactRunSoftLanding(subRunID)
 		metrics.RunsActive.Dec()
 		// 子 run 的工作区随子 run 终态释放（幂等；未分配为空操作）。
 		workspace.Default().ReleaseRun(s.ctx, subRunID)
@@ -227,14 +234,20 @@ func (s *reactEngineState) launchBackgroundDelegate(agent model.Agent, input del
 
 	subCtx, cancel := context.WithCancelCause(s.runCtx)
 	registerReactRunCancel(subRunID, cancel)
+	registerReactRunSoftLanding(subRunID)
+	watchdog := startSubAgentWatchdog(cancel)
 	metrics.RunsActive.Inc()
 	subEmitter := &runEventEmitter{runID: subRunID, sessionID: s.sessionID, agentPath: subReq.agentPath, write: s.emitter.write}
 	zlog.Infof(s.ctx, "[React.Delegate] 子Agent后台启动: parentRun=%s, subRun=%s, agentKey=%s, agentPath=%s", s.runID, subRunID, agent.AgentKey, subReq.agentPath)
 
 	go func() {
 		defer func() {
+			if watchdog != nil {
+				watchdog.Stop()
+			}
 			cancel(nil)
 			unregisterReactRunCancel(subRunID)
+			unregisterReactRunSoftLanding(subRunID)
 			metrics.RunsActive.Dec()
 			// 子 run 的工作区随子 run 终态释放（幂等；未分配为空操作）。
 			workspace.Default().ReleaseRun(detached, subRunID)
@@ -458,12 +471,32 @@ func (s *reactEngineState) createSubAgentRunRecord(req *runtimeRequest, subRunID
 	return persistUserInput(s.ctx, helpers.MysqlClientLLM, req, subRunID, s.sessionID)
 }
 
+// startSubAgentWatchdog 启动子 run 墙钟看门狗（A2，SubAgent.MaxRunSeconds，0=不限）：
+// 到点以 ErrReactRunTimeout 取消子 run——终态置 timeout，完成通知按失败（timeout）回灌。
+// 对齐 ZCode 子代理看门狗的简化版：墙钟口径而非不活跃口径；cancel 在子 run 已终态后触发为空操作。
+func startSubAgentWatchdog(cancel context.CancelCauseFunc) *time.Timer {
+	d := conf.GetReactRuntimeConfig().SubAgent.SubAgentWatchdogDuration()
+	if d <= 0 {
+		return nil
+	}
+	return time.AfterFunc(d, func() { cancel(ErrReactRunTimeout) })
+}
+
 // finalizeSubAgentRunError 收敛子 run 的失败终态（run() 错误路径的子 run 对应物）。
 // ctx 由调用方提供：后台监视 goroutine 必须传脱离 WS 连接的 headless ctx。
+// 看门狗超时（A2）以独立的 timeout 终态收敛（对齐外层 run 的超时语义）。
 func (s *reactEngineState) finalizeSubAgentRunError(ctx *gin.Context, subRunID string, loopErr error) {
 	if IsReactRunCancelled(loopErr) {
 		metrics.RunsTotal.WithLabelValues("cancelled").Inc()
 		_ = model.UpdateReactRunByRunID(ctx, subRunID, map[string]any{"state": model.ReactRunStateCancelled})
+		return
+	}
+	if IsReactRunTimeout(loopErr) {
+		metrics.RunsTotal.WithLabelValues("timeout").Inc()
+		_ = model.UpdateReactRunByRunID(ctx, subRunID, map[string]any{
+			"state":         model.ReactRunStateTimeout,
+			"error_message": fmt.Sprintf("subagent watchdog timeout: max_run_seconds=%d", conf.GetReactRuntimeConfig().SubAgent.MaxRunSeconds),
+		})
 		return
 	}
 	metrics.RunsTotal.WithLabelValues("error").Inc()

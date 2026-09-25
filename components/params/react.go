@@ -1,6 +1,9 @@
 package params
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 type ReactWSMessage struct {
 	Type      string          `json:"type"`
@@ -262,9 +265,80 @@ type ReactSteerDiscardedPayload struct {
 
 // ReactNoticeDrainedPayload 是运行时通知邮箱（Q1）在模型步边界吸收后台完成通知的事件
 //（notice_drained）：MessageID 指向合并落库的 react_notice 消息，前端渲染为系统卡片。
+// Content 仅历史回放（session/events）填充：实时事件只有吸收事实，正文在消息表里；
+// 历史（replay）把 react_notice 消息映射回本事件时携带信封正文供卡片渲染。
 type ReactNoticeDrainedPayload struct {
 	MessageID string `json:"messageId"`
 	Count     int    `json:"count"`
+	Content   string `json:"content,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// S3 队列管理 API（/react/queue/*）
+// ---------------------------------------------------------------------------
+
+// ReactQueueItem 是队列管理视图里的一条排队输入。
+type ReactQueueItem struct {
+	ID             uint      `json:"id"`
+	PendingInputID string    `json:"pendingInputId"`
+	SessionID      string    `json:"sessionId"`
+	Content        string    `json:"content"`
+	Seq            int       `json:"seq"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// ReactQueueListReq 查询会话队列（S3）。
+type ReactQueueListReq struct {
+	SessionID   string   `json:"sessionId"`
+	CallerKey   string   `json:"callerKey"`
+	RouteValues []string `json:"routeValues"`
+}
+
+// ReactQueueListResp 是队列查询响应：items 为 FIFO 排序的排队输入，
+// autoDrain/queueEnabled 回显当前 steering 配置（前端据此决定是否提示显式发送）。
+type ReactQueueListResp struct {
+	Items        []ReactQueueItem `json:"items"`
+	QueueEnabled bool             `json:"queueEnabled"`
+	AutoDrain    bool             `json:"autoDrain"`
+}
+
+// ReactQueueUpdateReq 编辑一条排队输入的内容（S3）。
+type ReactQueueUpdateReq struct {
+	SessionID   string   `json:"sessionId"`
+	CallerKey   string   `json:"callerKey"`
+	RouteValues []string `json:"routeValues"`
+	ID          uint     `json:"id"`
+	Content     string   `json:"content"`
+}
+
+// ReactQueueReorderReq 重排会话队列（S3）：IDList 按期望的新顺序给出全部排队输入 ID。
+type ReactQueueReorderReq struct {
+	SessionID   string   `json:"sessionId"`
+	CallerKey   string   `json:"callerKey"`
+	RouteValues []string `json:"routeValues"`
+	IDList      []uint   `json:"idList"`
+}
+
+// ReactQueueDeleteReq 删除（取消）一条排队输入（S3）：账本置 cancelled。
+type ReactQueueDeleteReq struct {
+	SessionID   string   `json:"sessionId"`
+	CallerKey   string   `json:"callerKey"`
+	RouteValues []string `json:"routeValues"`
+	ID          uint     `json:"id"`
+}
+
+// ReactQueueMutateResp 是 update/reorder/delete 的统一响应：claimed=false 表示该输入
+// 已被晋升或作废（多端并发下的 claim-once 落空）。
+type ReactQueueMutateResp struct {
+	Claimed       bool `json:"claimed"`
+	QueueLength   int  `json:"queueLength"`
+}
+
+// ReactQueueSendReq 是 WS queue_send 消息的载荷（S3 显式发送：取队首/指定排队输入开新 run）。
+type ReactQueueSendReq struct {
+	SessionID      string `json:"sessionId"`
+	PendingInputID string `json:"pendingInputId"`
 }
 
 type ReactSessionListReq struct {

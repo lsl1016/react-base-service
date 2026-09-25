@@ -10,7 +10,7 @@ func (p ExecutionProfile) allowsInternalTool(name string) bool {
 		return p.AllowPlan
 	case metaToolGetTool, metaToolExecuteTool, metaToolListTools:
 		return p.AllowDynamicTools
-	case metaToolDelegateAgent:
+	case metaToolDelegateAgent, metaToolSendMessage:
 		return p.AllowSubagent
 	case metaToolLoadRuntimeCode:
 		return p.AllowWorkspace

@@ -274,7 +274,27 @@ func (b *historyEventBuilder) appendMessageEvents(message model.ReactMessage) {
 		b.appendToolResultEvents(message)
 	case model.ReactMessageTypeCompactSummary:
 		b.appendCompactEvent(message)
+	case model.ReactMessageTypeNotice:
+		// 运行时通知邮箱（Q1）：react_notice 消息回放为 notice_drained 事件（与实时吸收
+		// 事件同词汇），payload 携带信封正文供前端渲染系统卡片。
+		b.appendNoticeEvent(message)
 	}
+}
+
+// appendNoticeEvent 把一条 react_notice 消息还原为 notice_drained 历史事件。
+func (b *historyEventBuilder) appendNoticeEvent(message model.ReactMessage) {
+	var content struct {
+		Content string `json:"content"`
+	}
+	_ = json.Unmarshal([]byte(message.ContentJSON), &content)
+	if strings.TrimSpace(content.Content) == "" {
+		return
+	}
+	b.appendStepEvent(message.StepIndex, EventNoticeDrained, message.RunID, params.ReactNoticeDrainedPayload{
+		MessageID: message.MessageID,
+		Count:     1,
+		Content:   content.Content,
+	}, message.CreatedAt)
 }
 
 func (b *historyEventBuilder) appendRunEvent(message model.ReactMessage) {

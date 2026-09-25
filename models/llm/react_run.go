@@ -290,3 +290,16 @@ func GetReactRunsBySessionIDWithDB(ctx *gin.Context, db *gorm.DB, sessionID stri
 	}
 	return runs, nil
 }
+
+// GetReactRunsByParentRunIDWithDB 返回一次委派（父 run）下的全部子 run（创建序），
+// 供 SendMessage（A2）定位消息投递目标。
+func GetReactRunsByParentRunIDWithDB(ctx *gin.Context, db *gorm.DB, parentRunID string) ([]ReactRun, error) {
+	var runs []ReactRun
+	err := db.Model(&ReactRun{}).WithContext(ctx).
+		Where("parent_run_id = ?", parentRunID).
+		Order("created_at ASC, id ASC").Find(&runs).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return runs, nil
+}

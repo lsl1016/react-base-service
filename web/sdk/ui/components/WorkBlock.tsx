@@ -18,6 +18,7 @@ import type { Step, ToolCallState } from '../../runtime/types';
 import type { ClientTool } from '../../tools/types';
 import { ThoughtBlock } from './ThoughtBlock';
 import { CompactDivider } from './CompactDivider';
+import { NoticeChip } from './NoticeChip';
 import { AutoScrollPanel } from './AutoScrollPanel';
 import { PhaseGapIndicator } from './PhaseGapIndicator';
 import { ToolCallView } from './ToolCallView';
@@ -163,6 +164,10 @@ export function WorkBlock(props: WorkBlockProps) {
                     const part = partAccessor();
                     return part.kind === 'compact' ? part : undefined;
                   });
+                  const noticePart = createMemo(() => {
+                    const part = partAccessor();
+                    return part.kind === 'notice' ? part : undefined;
+                  });
                   const thoughtPart = createMemo(() => {
                     const part = partAccessor();
                     return part.kind === 'thought' ? part : undefined;
@@ -176,6 +181,9 @@ export function WorkBlock(props: WorkBlockProps) {
                     <>
                       <Show when={compactPart()}>
                         {(part) => <CompactDivider step={part().step} />}
+                      </Show>
+                      <Show when={noticePart()}>
+                        {(part) => <NoticeChip step={part().step} />}
                       </Show>
                       <Show when={thoughtPart()}>
                         {(part) => <WorkThought step={part().step} />}

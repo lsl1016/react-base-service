@@ -3,6 +3,7 @@ package conf
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"react-base-service/golib/base"
 	"react-base-service/golib/env"
@@ -259,6 +260,18 @@ type ReactSubAgentConfig struct {
 	DefaultMaxSteps int `yaml:"default_max_steps"`
 	// MaxDepth 是委派嵌套深度上限（子 Agent 再委派），防递归失控；外层 run 深度为 0。
 	MaxDepth int `yaml:"max_depth"`
+	// MaxRunSeconds 是单个子 run 的 wall-clock 看门狗上限（A2，秒，0=不限）：
+	// 超时以 ErrReactRunTimeout 取消子 run，终态置 timeout 并按失败回灌完成通知
+	//（对齐 ZCode 子代理看门狗的简化版：墙钟口径而非不活跃口径）。
+	MaxRunSeconds int `yaml:"max_run_seconds"`
+}
+
+// SubAgentWatchdogDuration 解析 max_run_seconds：<=0 表示不启用看门狗（返回 0）。
+func (c ReactSubAgentConfig) SubAgentWatchdogDuration() time.Duration {
+	if c.MaxRunSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(c.MaxRunSeconds) * time.Second
 }
 
 // SubAgentEnabled 解析 subagent.enabled：未配置时默认 false。

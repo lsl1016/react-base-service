@@ -41,6 +41,9 @@ const (
 	// metaToolDelegateAgent 把子任务委派给注册表中的专家子 Agent（隔离子 run 执行，结果回填父循环）。
 	// 描述按 caller 可见 agent 清单动态渲染，主 LLM 由此"发现"子代理（OH TaskToolSet 模式）。
 	metaToolDelegateAgent = "delegate_agent"
+	// metaToolSendMessage 向已委派的子代理发送补充消息（A2 父→子通道，见 send_message.go；
+	// 复用 S1 guide 注入机制，对齐 ZCode messageSink）。
+	metaToolSendMessage = "send_message"
 	// 长期记忆三工具：memory.enabled 开启时注册（见 memory.go）。
 	metaToolMemoryList  = "memory_list"
 	metaToolMemoryRead  = "memory_read"
@@ -53,7 +56,7 @@ const (
 // isInternalMetaTool 判断工具名是否属于 Runtime 内置 Meta Tool，内置工具不走外部工具注册表。
 func isInternalMetaTool(name string) bool {
 	switch name {
-	case metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolAskQuestion, metaToolDisplayFiles, metaToolResolveAsyncTask, metaToolGetAsyncTask, metaToolReadAttachment, metaToolInspectAttachment, metaToolCreatePlan, metaToolDelegateAgent, metaToolLoadRuntimeCode, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite:
+	case metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolAskQuestion, metaToolDisplayFiles, metaToolResolveAsyncTask, metaToolGetAsyncTask, metaToolReadAttachment, metaToolInspectAttachment, metaToolCreatePlan, metaToolDelegateAgent, metaToolSendMessage, metaToolLoadRuntimeCode, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite:
 		return true
 	default:
 		return false
@@ -104,6 +107,7 @@ func runtimeToolDefinitions(req *runtimeRequest, profile ExecutionProfile) []llm
 	definitions := internalMetaToolDefinitionsForType(req.payload.Type)
 	if profile.AllowSubagent && req.delegationAllowed() {
 		definitions = append(definitions, delegateAgentToolDefinition(req.agents))
+		definitions = append(definitions, sendMessageToolDefinition())
 	}
 	return definitions
 }
@@ -355,6 +359,8 @@ func (s *reactEngineState) executeInternalToolContent(call llm.ToolCall, step in
 		return noToolMeta(executeCreatePlan(s.sessionID, s.runID, call.Input))
 	case metaToolDelegateAgent:
 		return noToolMeta(s.executeDelegateAgent(call, step))
+	case metaToolSendMessage:
+		return noToolMeta(s.executeSendMessage(call, step))
 	case metaToolLoadRuntimeCode:
 		return noToolMeta(s.executeLoadRuntimeCode(call.Input))
 	case metaToolResolveAsyncTask:

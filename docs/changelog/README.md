@@ -12,3 +12,4 @@
 | [20260925_v1.0_新增Steering引导注入与运行中消息准入账本](20260925_v1.0_新增Steering引导注入与运行中消息准入账本.md) | `react_runtime` | active | S1：运行中消息准入账本 tblLlmReactPendingInput、guide 唯一注入点（tool_result 落库后/纯文本 finish 前）、三路结算与 steer_* 回执事件 |
 | [20260925_v1.0_新增Steering排队与run结束自动续跑](20260925_v1.0_新增Steering排队与run结束自动续跑.md) | `react_runtime` | active | S2：不可引导时排队入账（payload 快照）、run 结束自动续跑队首（claim-once 晋升原子化）、guide 降级排队、失败暂停语义 |
 | [20260925_v1.0_新增运行时通知邮箱与后台委派](20260925_v1.0_新增运行时通知邮箱与后台委派.md) | `react_runtime` | active | Q1/A1：运行时命令箱承载后台完成通知（模型步边界吸收 + 账本镜像 + claim-once + react_notice 消息）；delegate_agent background 后台执行并回灌父 run |
+| [20260925_v1.0_新增队列管理与SendMessage看门狗](20260925_v1.0_新增队列管理与SendMessage看门狗.md) | `react_runtime` | active | S3/A2：队列管理 API（list/update/reorder/delete + WS queue_send，重排同步账本 seq）、send_message 父→子消息通道与 max_run_seconds 看门狗；SDK 接入 Steering/通知事件与 NoticeChip |

@@ -265,7 +265,7 @@ func runSingle(ctx *gin.Context, parent context.Context, payload params.ReactRun
 			cancelledRun, _ := model.GetReactRunByRunID(ctx, runID)
 			usedTokens, maxTokens := reactContextWindowFields(cancelledRun)
 			// 结算先于终态事件：前端先看到 steer_discarded 再看到 cancelled。
-			settleRunPendingInputs(ctx, emitter, runID, model.ReactPendingSettleTurnCancelled)
+			settleRunPendingInputs(ctx, emitter, runID, true, model.ReactPendingSettleTurnCancelled)
 			_ = emitter.Emit(EventCancelled, params.ReactCancelledPayload{OK: true, Reason: "本次运行已被用户取消", ContextUsedTokens: usedTokens, MaxContextTokens: maxTokens})
 			return &RunResult{RunID: runID, SessionID: sessionID}, err, nil
 		}
@@ -278,7 +278,7 @@ func runSingle(ctx *gin.Context, parent context.Context, payload params.ReactRun
 			})
 			timedOutRun, _ := model.GetReactRunByRunID(ctx, runID)
 			usedTokens, maxTokens := reactContextWindowFields(timedOutRun)
-			settleRunPendingInputs(ctx, emitter, runID, model.ReactPendingSettleTurnFailed)
+			settleRunPendingInputs(ctx, emitter, runID, true, model.ReactPendingSettleTurnFailed)
 			_ = emitter.Emit(EventTimeout, params.ReactCancelledPayload{OK: false, Reason: "本次运行超出时间上限被终止", ContextUsedTokens: usedTokens, MaxContextTokens: maxTokens})
 			return &RunResult{RunID: runID, SessionID: sessionID}, err, nil
 		}
@@ -298,7 +298,7 @@ func runSingle(ctx *gin.Context, parent context.Context, payload params.ReactRun
 			"state":         model.ReactRunStateError,
 			"error_message": errorMessage,
 		})
-		settleRunPendingInputs(ctx, emitter, runID, model.ReactPendingSettleTurnFailed)
+		settleRunPendingInputs(ctx, emitter, runID, true, model.ReactPendingSettleTurnFailed)
 		if !IsReactClientDisconnected(err) {
 			usedTokens, maxTokens := reactContextWindowFields(run)
 			_ = emitter.Emit(EventError, params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: errorMessage, ContextUsedTokens: usedTokens, MaxContextTokens: maxTokens})
@@ -439,7 +439,7 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 				return err
 			}
 			if !claimed {
-				return components.ErrorParamInvalid.Sprintf("排队输入已被消费或作废: %d", req.promotePendingInputID)
+				return components.ParamInvalidf("排队输入已被消费或作废: %d", req.promotePendingInputID)
 			}
 		}
 		return model.UpdateReactSessionBySessionIDWithDB(ctx, tx, sessionID, map[string]any{

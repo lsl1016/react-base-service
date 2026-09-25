@@ -186,6 +186,101 @@ func GetNextQueuedBySessionWithDB(ctx *gin.Context, db *gorm.DB, sessionID strin
 	return &pendings[0], nil
 }
 
+// ListQueuedBySessionWithDB 返回会话内全部 queued 用户输入（S3 队列管理查询），
+// 按准入序号 FIFO 排序。
+func ListQueuedBySessionWithDB(ctx *gin.Context, db *gorm.DB, sessionID string) ([]ReactPendingInput, error) {
+	var pendings []ReactPendingInput
+	err := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Where("session_id = ? AND kind = ? AND status = ?", sessionID, ReactPendingKindUserInput, ReactPendingStatusQueued).
+		Order("seq ASC, id ASC").Find(&pendings).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return pendings, nil
+}
+
+// GetQueuedByIDWithDB 按会话与 ID 读取一条 queued 用户输入（显式发送前加载 payload 快照）；
+// 未命中或非 queued 返回 nil。
+func GetQueuedByIDWithDB(ctx *gin.Context, db *gorm.DB, sessionID string, id uint) (*ReactPendingInput, error) {
+	var pendings []ReactPendingInput
+	err := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Where("session_id = ? AND id = ? AND kind = ? AND status = ?", sessionID, id, ReactPendingKindUserInput, ReactPendingStatusQueued).
+		Limit(1).Find(&pendings).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	if len(pendings) == 0 {
+		return nil, nil
+	}
+	return &pendings[0], nil
+}
+
+// GetReactPendingInputByIDWithDB 按主键读取账本行（A2 发送后复核投递结果）；
+// 未命中返回 nil。
+func GetReactPendingInputByIDWithDB(ctx *gin.Context, db *gorm.DB, id uint) (*ReactPendingInput, error) {
+	var pendings []ReactPendingInput
+	err := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Where("id = ?", id).Limit(1).Find(&pendings).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	if len(pendings) == 0 {
+		return nil, nil
+	}
+	return &pendings[0], nil
+}
+
+// ListQueuedBySessionForUpdateWithDB 是 ListQueuedBySessionWithDB 的行锁版本：
+// 重排事务内先锁定当前 queued 集合并重新校验，再无条件改写 seq（避免
+// MySQL"值未变化时 RowsAffected=0"与 claim 判定混淆）。
+func ListQueuedBySessionForUpdateWithDB(ctx *gin.Context, db *gorm.DB, sessionID string) ([]ReactPendingInput, error) {
+	var pendings []ReactPendingInput
+	err := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("session_id = ? AND kind = ? AND status = ?", sessionID, ReactPendingKindUserInput, ReactPendingStatusQueued).
+		Order("seq ASC, id ASC").Find(&pendings).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return pendings, nil
+}
+
+// UpdateQueuedInputSeqLockedWithDB 无条件改写一条 queued 输入的 seq。
+// 调用方必须在同一事务内先用 ListQueuedBySessionForUpdateWithDB 锁定并校验该行。
+func UpdateQueuedInputSeqLockedWithDB(ctx *gin.Context, db *gorm.DB, sessionID string, id uint, seq int) error {
+	tx := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Where("session_id = ? AND id = ?", sessionID, id).
+		Updates(map[string]any{"seq": seq})
+	if tx.Error != nil {
+		return components.ErrorDbUpdate.Wrap(tx.Error)
+	}
+	return nil
+}
+
+// UpdateQueuedInputContentLockedWithDB 无条件改写一条 queued 输入的内容。
+// 调用方必须在同一事务内先用 ListQueuedBySessionForUpdateWithDB 锁定并确认该行存在。
+func UpdateQueuedInputContentLockedWithDB(ctx *gin.Context, db *gorm.DB, sessionID string, id uint, content string) error {
+	tx := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Where("session_id = ? AND id = ?", sessionID, id).
+		Updates(map[string]any{"content": content})
+	if tx.Error != nil {
+		return components.ErrorDbUpdate.Wrap(tx.Error)
+	}
+	return nil
+}
+
+// CancelQueuedInputWithDB 将一条 queued 输入置 cancelled（S3 用户主动删除）：
+// 条件更新 claim-safe，与晋升互斥。cancelled 是用户语义的终态，不写 settle_reason。
+func CancelQueuedInputWithDB(ctx *gin.Context, db *gorm.DB, sessionID string, id uint) (bool, error) {
+	tx := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Where("session_id = ? AND id = ? AND kind = ? AND status = ?", sessionID, id, ReactPendingKindUserInput, ReactPendingStatusQueued).
+		Updates(map[string]any{"status": ReactPendingStatusCancelled})
+	if tx.Error != nil {
+		return false, components.ErrorDbUpdate.Wrap(tx.Error)
+	}
+	return tx.RowsAffected > 0, nil
+}
+
 // MarkPendingInputPromotedWithDB 将 queued 行晋升为某次新 run 的用户输入（S2 自动续跑/显式发送）：
 // 条件更新实现 claim-once，并归属到新 run。必须与该 run 的创建、用户消息落库在同一事务内执行，
 // 保证"账本置 guided + 用户消息落库"的 promote 原子性。

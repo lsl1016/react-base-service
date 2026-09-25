@@ -115,8 +115,8 @@ export interface Step {
   runId: string;
   /** 多 Agent 归属：子 Agent 产出的步骤形如 main/ops-agent（按 (runId,index) 独立归组） */
   agentPath?: string;
-  /** 角色：user=用户输入，assistant=模型回复，compact=上下文压缩分隔标记 */
-  role: 'user' | 'assistant' | 'compact';
+  /** 角色：user=用户输入，assistant=模型回复，compact=上下文压缩分隔标记，notice=系统通知/引导标记 */
+  role: 'user' | 'assistant' | 'compact' | 'notice';
   /** 模型思考过程的文本（由 thought_delta 流式拼接，thought_end 后为最终值） */
   thoughts: string;
   /** 模型最终回答的文本（由 content_delta 流式拼接，content_end 后为最终值） */
@@ -141,6 +141,15 @@ export interface Step {
     afterMessageCount: number;
     /** 压缩摘要文本，hover 展示 */
     summary: string;
+  };
+  /** 仅 role='notice' 时有值：Steering 引导/队列/后台通知的系统卡片展示信息 */
+  notice?: {
+    /** 卡片文案（摘要行） */
+    text: string;
+    /** 详细内容（如 notice_drained 历史回放携带的 <task-notification> 信封正文），折叠展示 */
+    detail?: string;
+    /** 计数（通知合并条数/作废条数） */
+    count?: number;
   };
 }
 
@@ -191,8 +200,24 @@ export interface AgentState {
   compactState: CompactState | null;
   /** 当前 Run 最近一次后端模型互备切换，用于 UI 提示。 */
   lastModelFallback: ModelFallbackPayload | null;
+  /** Steering/通知邮箱的最新投影：准入回执、队列长度与最近一次系统标记（UI 顶部提示用）。 */
+  steerState: SteerState | null;
   /** 当前会话内 Plan 的最新公开视图和折叠执行详情。 */
   plans: Record<string, PlanRuntimeState>;
+}
+
+/** Steering 运行中消息准入的轻量投影（每次 steer_* 事件整体替换） */
+export interface SteerState {
+  /** 最近一次准入结论：guided / queued / rejected / drained / discarded / delivery_changed / notice */
+  kind: string;
+  /** 队列长度（steer_queued/queue 类变更时有值） */
+  queueLength?: number;
+  /** queue/rejected 原因 */
+  reason?: string;
+  /** 关联的 pendingInputId */
+  pendingInputId?: string;
+  /** 关联的 runId */
+  runId?: string;
 }
 /**
  * 单轮(run)反馈状态

@@ -125,7 +125,7 @@ ZCode 的 Session = **一个持久身份行 + 事实行集合（SQLite）+ 一�
 - `state.finish`（含 `finishExhausted`）之后检查本 session 未消费 queued 行：开启 auto-drain（默认开）则用队首内容**自动开启新 run**（复用现有 `run()` 入口，模型/工具快照按新 run 正常解析），其余排队项顺延；未开启则留待用户显式"发送队列项"。（✅ 已实施：run() 循环化 + runSingle 抽取，同一 WS 连接内续跑整条队列；晋升 claim-once（条件更新）与新 run 创建、用户消息落库同一事务，实现 promoteSessionInput 原子性）
 - 失败语义对齐 ZCode：run 非 cancel 失败（error 态）时暂停自动续跑（queue paused），cancel 时剩余 guide 降级 queue——留给用户决定是否继续，避免错误循环烧钱。（✅ 已实施：自动续跑仅在 run 成功收敛后触发，cancel/error/timeout 天然暂停；queue 开启时 run 终态的未消费 guide 一律降级排队而非作废，广播 steer_delivery_changed）
 
-**S3（P2）：队列管理 API**——删除/编辑/重排/预留（多端抢占防护）、auto-drain 开关、队列表查询接口。重排必须同步更新账本序号（对齐 ZCode"冷热事实分叉"教训）。
+**S3（P2）：队列管理 API**——删除/编辑/重排/预留（多端抢占防护）、auto-drain 开关、队列表查询接口。重排必须同步更新账本序号（对齐 ZCode"冷热事实分叉"教训）。（✅ 已实施，2026-09-25，见 `docs/changelog/20260925_v1.0_新增队列管理与SendMessage看门狗.md`：/react/queue/{list,update,reorder,delete} 四端点 + WS `queue_send` 显式发送（同一连接晋升开新 run，保留实时事件流——不提供 HTTP 发送入口）；重排为事务内行锁读校验排列后同步改写账本 seq，实测自动续跑按重排后顺序消费；删除置 cancelled；auto-drain 开关沿用运行时设置在线覆盖（DB > yaml > 默认），queue/list 回显当前配置。预留（reserve）未单独实现——多端抢占防护由晋升/编辑/删除的 claim-once 条件更新与事务行锁覆盖，ZCode 的 reserve 事件词汇留待多窗口场景出现时再补）
 
 ---
 
@@ -187,7 +187,7 @@ ZCode 的 Session = **一个持久身份行 + 事实行集合（SQLite）+ 一�
 2. 完成监视 goroutine：子 run 终态（finished/error/cancelled/timeout）→ 取最后非空 assistant 消息（复用 `subAgentFinalResponse`）+ usage → 条件更新 claim → 写账本行 + 入父 run 命令箱。（✅ 已实施：顺序调整为"run 行锁事务内校验父 run 活跃 + 落账本行，提交后入箱"——claim 与落账合一，投递围栏见 §3.3 第 3 条实施记录）
 3. 父 run 已结束时：通知结算 `discarded(run_finished)`（不复活 run，结果可在前端子 run 卡片查看）。与 ZCode 的一个**有意分歧**：父取消时级联取消后台子 run（ZCode detach 存活）——成本可控优先，避免用户取消后仍在烧 token；如需 detach 语义后续加开关。（✅ 已实施；实施偏差：父 run 已终态时不落账本行，仅记日志——账本只记录"存在过待消费意图"的事实，子 run 行本身即权威结果记录；父取消级联取消已实测：主 run cancelled、后台子 run state=cancelled、通知不回灌）
 
-**A2（P2）：SendMessage + 看门狗。** 父→子自由文本 = 向子 run 的 pendingInputs 注入 guide（**完全复用 S1 机制**，这正是 ZCode messageSink 的做法）；子已终态则报错或（远期）以该 agentPath 历史重建续聊 run。看门狗：`SubAgent.MaxRunSeconds`（默认 0=不限）超时置 timeout 终态，通知按失败回灌。
+**A2（P2）：SendMessage + 看门狗。** 父→子自由文本 = 向子 run 的 pendingInputs 注入 guide（**完全复用 S1 机制**，这正是 ZCode messageSink 的做法）；子已终态则报错或（远期）以该 agentPath 历史重建续聊 run。看门狗：`SubAgent.MaxRunSeconds`（默认 0=不限）超时置 timeout 终态，通知按失败回灌。（✅ 已实施，2026-09-25，见 `docs/changelog/20260925_v1.0_新增队列管理与SendMessage看门狗.md`：新 Meta Tool `send_message`（AllowSubagent 门控），目标选择活跃优先、归属校验限本 run 直接委派的子 run；软着陆收尾窗口拒收（对齐 S1 纪律，子 run 注册软着陆标记）；发送后复核账本行，被终态结算则如实报错。实施中发现并修正一个语义问题：子 run 的未消费 guide 若按 S2 fallback 降级会改投会话队列（定向消息语义错误）——settleRunPendingInputs 增加 isOuterRun 参数，子 run 未消费 guide 一律 discarded。看门狗为墙钟简化版（ZCode 为不活跃口径），同步/后台委派均挂接，超时置 timeout 终态并按失败回灌通知。"以 agentPath 历史重建续聊 run"仍留远期）
 
 ---
 

@@ -100,7 +100,8 @@ function DefaultStartBlock() {
 
 type SectionItem =
   | { kind: 'step'; step: Step }
-  | { kind: 'compact'; step: Step };
+  | { kind: 'compact'; step: Step }
+  | { kind: 'notice'; step: Step };
 
 interface MessageSection {
   id: string;
@@ -157,7 +158,7 @@ function buildMessageSections(steps: Step[]): MessageSection[] {
     }
 
     const section = ensureSection(step, index);
-    section.items.push({ kind: step.role === 'compact' ? 'compact' : 'step', step });
+    section.items.push({ kind: step.role === 'compact' ? 'compact' : step.role === 'notice' ? 'notice' : 'step', step });
   });
 
   return sections;

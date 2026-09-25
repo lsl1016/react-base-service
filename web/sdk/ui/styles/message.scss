@@ -247,6 +247,37 @@
   white-space: nowrap;
 }
 
+// NoticeChip：Steering 引导/队列/后台任务通知的系统标记条（role='notice' 的 Step）。
+// 分隔条复用 compact-divider 样式；detail 为可展开的通知正文（如 <task-notification> 信封）。
+.agent-ui-notice-chip {
+  margin: $agent-ui-spacing-xs 0;
+}
+
+.agent-ui-notice-chip-detail {
+  margin: $agent-ui-spacing-xs 0 0;
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-quaternary;
+
+  summary {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  pre {
+    margin: $agent-ui-spacing-xs 0 0;
+    padding: $agent-ui-spacing-sm;
+    max-height: 240px;
+    overflow: auto;
+    border: 1px solid $agent-ui-border-color-light;
+    border-radius: 6px;
+    background: transparent;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: $agent-ui-font-size-xs;
+  }
+}
+
 
 
 

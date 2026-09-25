@@ -700,7 +700,7 @@ func (s *reactEngineState) finish(content, terminationReason string) error {
 	}
 	// Steering S1/S2 + Q1：run 正常结束仍未消费的输入统一结算——
 	// 后台通知 discarded（run_finished），guide 按 queue 开关降级排队或 discarded。
-	settleRunPendingInputs(s.ctx, s.emitter, s.runID, model.ReactPendingSettleRunFinished)
+	settleRunPendingInputs(s.ctx, s.emitter, s.runID, s.agentPath == "", model.ReactPendingSettleRunFinished)
 	return s.emitter.Emit(EventDone, params.ReactDonePayload{
 		InputTokens:           s.inputTokens,
 		OutputTokens:          s.outputTokens,

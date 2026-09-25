@@ -345,6 +345,10 @@ export interface PlanStepEventPayload {
  *              client_tool_use_start(前端工具) → client_tool_use_end
  * - 上下文压缩：compact_start → compact_end
  * - 任务管理：todo_update
+ * - Steering（运行中消息准入）：steer_guided | steer_queued | steer_rejected（准入回执）
+ *              steer_drained（guide/队列项/显式发送项注入模型轮） | steer_delivery_changed（guide 降级排队）
+ *              steer_discarded（未消费输入结算作废）
+ * - 通知邮箱：notice_drained（后台任务完成通知被吸收进当前模型轮）
  * - 终态事件：done | error | cancelled（三选一，标记 run 结束）
  * - 心跳：heartbeat（服务端每 20s 发送，用于保活）
  */
@@ -367,6 +371,13 @@ export type EventType =
   | 'plan_view_update'
   | 'plan_step_event'
   | 'model_fallback'
+  | 'steer_guided'
+  | 'steer_queued'
+  | 'steer_rejected'
+  | 'steer_drained'
+  | 'steer_delivery_changed'
+  | 'steer_discarded'
+  | 'notice_drained'
   | 'done'
   | 'error'
   | 'cancelled'
@@ -497,6 +508,38 @@ export interface ReactToolConfirmRequestPayload {
   mode: string;
   /** 触发原因（confirm_risky 时含命中的风险正则） */
   reason?: string;
+}
+
+/** Steering 准入回执（steer_guided / steer_queued / steer_rejected 事件共用） */
+export interface ReactSteerReceiptPayload {
+  /** guided / queued / rejected */
+  kind: string;
+  pendingInputId?: string;
+  /** queued 时为当前队列长度 */
+  queueLength?: number;
+  /** queue/rejected 时的原因：run_not_steerable / soft_landing / attachments_unsupported */
+  reason?: string;
+}
+
+/** steer_drained 事件 payload：guide/队列项/显式发送项已注入模型轮 */
+export interface ReactSteerDrainedPayload {
+  pendingInputId: string;
+  messageId?: string;
+}
+
+/** steer_discarded / steer_delivery_changed 事件共用 payload */
+export interface ReactSteerDiscardedPayload {
+  count: number;
+  /** turn_cancelled / turn_failed / run_finished / session_resumed / turn_ended */
+  reason: string;
+}
+
+/** notice_drained 事件 payload：后台任务完成通知被吸收进当前模型轮；
+ *  content 仅历史回放（session/events）携带（react_notice 消息的信封正文） */
+export interface ReactNoticeDrainedPayload {
+  messageId: string;
+  count: number;
+  content?: string;
 }
 
 export interface ClientToolUseStartPayload {
