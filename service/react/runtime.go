@@ -194,21 +194,44 @@ func RunWithClientReaderContext(ctx *gin.Context, parent context.Context, payloa
 //   6. 统一收敛 finished / error / cancelled，并释放本 Run 的 Workspace。
 //
 // 这里负责 Run 生命周期，不实现 Tool、Memory、Agent 等领域能力本身。
+//
+// Steering S2：run 正常结束后若队列中还有排队输入且自动续跑开启，则用队首内容
+// 在同一连接内自动开启下一个 run（模型/工具快照按新 run 重新解析），循环直至队列排空；
+// cancel/error/timeout 收敛不续跑（失败语义对齐 ZCode：错误后暂停，留给用户决定）。
 func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayload, sessionID string, write EventWriter, readClient ClientMessageReader) (*RunResult, error) {
+	currentPayload := payload
+	currentSessionID := sessionID
+	for {
+		result, err, nextPayload := runSingle(ctx, parent, currentPayload, currentSessionID, write, readClient)
+		if err != nil || nextPayload == nil {
+			return result, err
+		}
+		if result != nil && result.SessionID != "" {
+			currentSessionID = result.SessionID
+		}
+		currentPayload = *nextPayload
+	}
+}
+
+// runSingle 执行单个 run（含终态收敛与 Steering 结算/降级）；
+// 返回的 nextPayload 非空表示需要自动续跑队首排队输入。
+func runSingle(ctx *gin.Context, parent context.Context, payload params.ReactRunPayload, sessionID string, write EventWriter, readClient ClientMessageReader) (*RunResult, error, *params.ReactRunPayload) {
 	req, err := prepareRuntimeRequest(ctx, payload, sessionID)
 	if err != nil {
-		return nil, err
+		return nil, err, nil
 	}
+	// Steering S2：自动续跑时待晋升的排队输入 ID（由 run 循环写入 payload）。
+	req.promotePendingInputID = payload.PromotePendingInputID
 	compactCfg := compactConfigForModel(req.resolvedModelKey)
 	initialTools := runtimeToolDefinitions(req, executionProfileForRun(req))
 	initialSystemContent := buildReactSystemContent(req.systemPrompt, renderToolIndexSummary(req.toolsIndexSnapshotJSON), renderSkillIndexSummary(req.skillsIndexSnapshotJSON), req.memoryContext, req.graphMemoryContext)
 	if err := checkEntryInputTokens(initialSystemContent, req.modelUserMessage, initialTools, compactCfg.TokenTrigger); err != nil {
-		return nil, err
+		return nil, err, nil
 	}
 
 	runID, sessionID, err := createReactRunContext(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, err, nil
 	}
 
 	if req.callerRuntimeContext.SessionID == "" {
@@ -219,10 +242,13 @@ func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayloa
 	req.clientHub = newClientMessageHub(readClient)
 	runCtx, cancel := context.WithCancelCause(components.ContextWithCallerRuntime(parent, req.callerRuntimeContext))
 	registerReactRunCancel(runID, cancel)
+	// Steering：注册软着陆标记（准入决策据此在收尾窗口拒绝 guide），run 结束时注销。
+	registerReactRunSoftLanding(runID)
 	metrics.RunsActive.Inc()
 	defer func() {
 		cancel(nil)
 		unregisterReactRunCancel(runID)
+		unregisterReactRunSoftLanding(runID)
 		metrics.RunsActive.Dec()
 		// 释放本 run 分配的代码工作区（未分配时为空操作；workspace 未启用同理）。
 		workspace.Default().ReleaseRun(ctx, runID)
@@ -238,8 +264,10 @@ func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayloa
 			_ = model.UpdateReactRunByRunID(ctx, runID, map[string]any{"state": model.ReactRunStateCancelled})
 			cancelledRun, _ := model.GetReactRunByRunID(ctx, runID)
 			usedTokens, maxTokens := reactContextWindowFields(cancelledRun)
+			// 结算先于终态事件：前端先看到 steer_discarded 再看到 cancelled。
+			settleRunPendingGuides(ctx, emitter, runID, model.ReactPendingSettleTurnCancelled)
 			_ = emitter.Emit(EventCancelled, params.ReactCancelledPayload{OK: true, Reason: "本次运行已被用户取消", ContextUsedTokens: usedTokens, MaxContextTokens: maxTokens})
-			return &RunResult{RunID: runID, SessionID: sessionID}, err
+			return &RunResult{RunID: runID, SessionID: sessionID}, err, nil
 		}
 		if IsReactRunTimeout(err) {
 			// run 级 wall-clock 边界：按 timeout 终态优雅收敛（不是 error，也不是 cancelled）。
@@ -250,8 +278,9 @@ func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayloa
 			})
 			timedOutRun, _ := model.GetReactRunByRunID(ctx, runID)
 			usedTokens, maxTokens := reactContextWindowFields(timedOutRun)
+			settleRunPendingGuides(ctx, emitter, runID, model.ReactPendingSettleTurnFailed)
 			_ = emitter.Emit(EventTimeout, params.ReactCancelledPayload{OK: false, Reason: "本次运行超出时间上限被终止", ContextUsedTokens: usedTokens, MaxContextTokens: maxTokens})
-			return &RunResult{RunID: runID, SessionID: sessionID}, err
+			return &RunResult{RunID: runID, SessionID: sessionID}, err, nil
 		}
 
 		errorMessage := err.Error()
@@ -269,14 +298,27 @@ func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayloa
 			"state":         model.ReactRunStateError,
 			"error_message": errorMessage,
 		})
+		settleRunPendingGuides(ctx, emitter, runID, model.ReactPendingSettleTurnFailed)
 		if !IsReactClientDisconnected(err) {
 			usedTokens, maxTokens := reactContextWindowFields(run)
 			_ = emitter.Emit(EventError, params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: errorMessage, ContextUsedTokens: usedTokens, MaxContextTokens: maxTokens})
 		}
-		return &RunResult{RunID: runID, SessionID: sessionID}, err
+		return &RunResult{RunID: runID, SessionID: sessionID}, err, nil
 	}
 
-	return &RunResult{RunID: runID, SessionID: sessionID}, nil
+	// Steering S2：run 正常结束（含 finishExhausted）后自动续跑队首排队输入；
+	// 读取失败只降级为"本轮不续跑"，队列留给下一次 run 结束后消费。
+	if shouldAutoDrainQueue(conf.GetReactRuntimeConfig().Steering.QueueEnabled(), conf.GetReactRuntimeConfig().Steering.QueueAutoDrainEnabled(), true) {
+		nextPayload, pendingID, drainErr := dequeueQueuedHeadForAutoDrain(ctx, sessionID)
+		if drainErr != nil {
+			zlog.Warnf(ctx, "[React.Steer] 读取自动续跑队首失败(本轮不续跑): sessionId=%s, err=%v", sessionID, drainErr)
+		} else if nextPayload != nil {
+			zlog.Infof(ctx, "[React.Steer] run 结束自动续跑队首: sessionId=%s, prevRunId=%s, pendingInputId=%s", sessionID, runID, pendingID)
+			_ = emitter.Emit(EventSteerDrained, params.ReactSteerDrainedPayload{PendingInputID: pendingID})
+			return &RunResult{RunID: runID, SessionID: sessionID}, nil, nextPayload
+		}
+	}
+	return &RunResult{RunID: runID, SessionID: sessionID}, nil, nil
 }
 
 // reactContextWindowFields 在 run 结束(含 error/cancelled/timeout)时计算上下文窗口与已用 token。
@@ -294,12 +336,17 @@ func reactContextWindowFields(run *model.ReactRun) (usedTokens, maxTokens int) {
 
 // createReactRunContext 在一个数据库写事务内建立本次 Run 的持久化起点。
 //
-// 事务内同时完成 Session 获取/创建、Session 行锁、同会话并发 Run 检查、历史快照读取、
-// ReactRun 创建和用户输入落库。放在同一事务中，是为了保证“一个 Session 同时只有一个外层
-// 活跃 Run”的约束和历史恢复视图一致，避免两个请求交错创建 Run。
+// 事务内同时完成 Session 获取/创建、Session 行锁、同会话并发 Run 检查（Steering 准入）、
+// 历史快照读取、ReactRun 创建和用户输入落库。放在同一事务中，是为了保证“一个 Session 同时
+// 只有一个外层活跃 Run”的约束和历史恢复视图一致，避免两个请求交错创建 Run。
+//
+// Steering（S1）：命中活跃 run 时不再一律硬拒绝——run 运行中且可引导时，本次输入作为 guide
+// 落账本并返回回执（以 steerReceiptError 穿透，绝不启动新 run）；其余按排队配置落账或保持
+// 原硬拒绝错误。准入与"active 检查 + 账本写入"同事务，杜绝同一会话双 run 的异步窗口。
 func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, string, error) {
 	var runID string
 	var sessionID string
+	var steerReceipt *SteerReceipt
 
 	err := model.GetLLMDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
@@ -316,7 +363,31 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 			return err
 		}
 		if active {
+			if conf.GetReactRuntimeConfig().Steering.SteeringEnabled() {
+				activeRun, err := model.GetActiveOuterReactRunBySessionIDWithDB(ctx, tx, sessionID)
+				if err != nil {
+					return err
+				}
+				if activeRun != nil {
+					receipt, err := admitSteeringInputTx(ctx, tx, sessionID, activeRun, req.payload, len(req.attachments) > 0)
+					if err != nil {
+						return err
+					}
+					// 提交账本写入后以回执穿透返回（事务闭包返回 error 会回滚准入落账）。
+					steerReceipt = &receipt
+					return nil
+				}
+			}
 			return components.ErrorReactRunActive.Sprintf(sessionID)
+		}
+
+		// 重启不复活队列：能走到"创建新 run"，说明会话已无活跃 run。
+		// admitted 残留（进程崩溃/竞态窗口遗留）与上一进程遗留的 queued 行统一作废。
+		if _, err := model.SettlePendingInputsBySessionWithDB(ctx, tx, sessionID, model.ReactPendingSettleSessionResumed); err != nil {
+			return err
+		}
+		if _, err := model.SettleStaleQueuedBySessionWithDB(ctx, tx, sessionID, steeringProcessStart); err != nil {
+			return err
 		}
 
 		storedMessages, err := model.GetOuterReactMessagesBySessionIDWithDB(ctx, tx, sessionID)
@@ -360,6 +431,17 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 		if err := persistUserInput(ctx, tx, req, runID, sessionID); err != nil {
 			return err
 		}
+		// Steering S2：自动续跑的排队输入在此事务内 claim-once 晋升（与 run 创建、
+		// 用户消息落库原子）；已被晋升/作废则整体回滚，杜绝双 run 消费同一条排队输入。
+		if req.promotePendingInputID > 0 {
+			claimed, err := model.MarkPendingInputPromotedWithDB(ctx, tx, req.promotePendingInputID, runID)
+			if err != nil {
+				return err
+			}
+			if !claimed {
+				return components.ErrorParamInvalid.Sprintf("排队输入已被消费或作废: %d", req.promotePendingInputID)
+			}
+		}
 		return model.UpdateReactSessionBySessionIDWithDB(ctx, tx, sessionID, map[string]any{
 			"last_run_id":  runID,
 			"last_message": trimRunLastMessage(req.payload.UserPrompt),
@@ -367,6 +449,9 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 	})
 	if err != nil {
 		return "", "", err
+	}
+	if steerReceipt != nil {
+		return "", "", &steerReceiptError{receipt: *steerReceipt}
 	}
 	return runID, sessionID, nil
 }
@@ -612,14 +697,20 @@ func getOrCreateReactSession(ctx *gin.Context, tx *gorm.DB, req *runtimeRequest)
 
 // validateReactSessionOwnership 校验显式 sessionId 的业务归属，避免跨用户、Caller 或路由复用上下文。
 func validateReactSessionOwnership(session *model.ReactSession, req *runtimeRequest) error {
-	if session == nil || req == nil {
+	return validateReactSessionContext(session, req.userName, req.payload.CallerKey, req.routeValuesJSON, req.payload.Type)
+}
+
+// validateReactSessionContext 按「会话归属五元组」校验访问合法性；
+// run 启动（validateReactSessionOwnership）与 Steering 准入（SteerSession）共用同一口径。
+func validateReactSessionContext(session *model.ReactSession, userName, callerKey, routeValuesJSON, sessionType string) error {
+	if session == nil {
 		return components.ErrorParamInvalid.Sprintf("session 不存在")
 	}
 	if session.State != model.ReactSessionStateActive ||
-		session.UserName != req.userName ||
-		session.CallerKey != req.payload.CallerKey ||
-		session.RouteValues != req.routeValuesJSON ||
-		session.SessionType != req.payload.Type {
+		session.UserName != userName ||
+		session.CallerKey != callerKey ||
+		session.RouteValues != routeValuesJSON ||
+		session.SessionType != sessionType {
 		return components.ErrorParamInvalid.Sprintf("sessionId 无权访问或上下文不匹配")
 	}
 	return nil

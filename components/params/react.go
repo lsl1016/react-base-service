@@ -43,6 +43,9 @@ type ReactRunPayload struct {
 	TokenBudget int `json:"tokenBudget,omitempty"`
 	// ExecutionMode 控制本轮执行范式；空值按 react 兼容旧客户端。
 	ExecutionMode ReactExecutionMode `json:"executionMode,omitempty"`
+	// PromotePendingInputID 是 Steering S2 自动续跑时待晋升的排队输入账本 ID。
+	// 仅服务端 run 循环内部传递，不参与 WS/API 序列化，也不写入账本 payload 快照。
+	PromotePendingInputID uint `json:"-"`
 }
 
 type ReactModelInfo struct {
@@ -231,6 +234,30 @@ type ReactCancelledPayload struct {
 	Reason            string `json:"reason,omitempty"`
 	ContextUsedTokens int    `json:"contextUsedTokens"`
 	MaxContextTokens  int    `json:"maxContextTokens"`
+}
+
+// ReactSteerReceiptPayload 是 Steering 准入回执（steer_guided/steer_queued/steer_rejected）：
+// kind 对齐 ZCode PromptAdmissionReceipt 词汇；reason 为 queue/rejected 时的原因
+// （run_not_steerable/soft_landing/attachments_unsupported）。
+type ReactSteerReceiptPayload struct {
+	Kind           string `json:"kind"`
+	PendingInputID string `json:"pendingInputId,omitempty"`
+	QueueLength    int    `json:"queueLength,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+// ReactSteerDrainedPayload 是引擎在模型步边界消费 guide 的事件（steer_drained）：
+// 注入的用户消息 messageId 随事件下发，前端可在对应 run 卡片内渲染"引导"标记。
+type ReactSteerDrainedPayload struct {
+	PendingInputID string `json:"pendingInputId"`
+	MessageID      string `json:"messageId,omitempty"`
+}
+
+// ReactSteerDiscardedPayload 是未消费 guide 被结算作废的事件（steer_discarded）：
+// reason 对齐 ZCode discard 词汇（turn_cancelled/turn_failed/run_finished/session_resumed）。
+type ReactSteerDiscardedPayload struct {
+	Count  int64  `json:"count"`
+	Reason string `json:"reason"`
 }
 
 type ReactSessionListReq struct {

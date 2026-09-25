@@ -199,8 +199,12 @@ func GetReactMessageByMessageID(ctx *gin.Context, messageID string) (*ReactMessa
 }
 
 func GetReactMessageMaxSeqByRunID(ctx *gin.Context, runID string) (int, error) {
+	return GetReactMessageMaxSeqByRunIDWithDB(ctx, helpers.MysqlClientLLM, runID)
+}
+
+func GetReactMessageMaxSeqByRunIDWithDB(ctx *gin.Context, db *gorm.DB, runID string) (int, error) {
 	var maxSeq *int
-	err := helpers.MysqlClientLLM.Model(&ReactMessage{}).WithContext(ctx).
+	err := db.Model(&ReactMessage{}).WithContext(ctx).
 		Where("run_id = ?", runID).
 		Select("MAX(seq)").Scan(&maxSeq).Error
 	if err != nil {

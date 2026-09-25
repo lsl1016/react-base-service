@@ -63,6 +63,9 @@ type runtimeRequestExecution struct {
 	clientHub           *clientMessageHub
 	agentPermissionMode string
 	tokenBudget         int
+	// promotePendingInputID 是 Steering S2 自动续跑时待晋升的排队输入账本 ID（0=无）；
+	// 在 createReactRunContext 事务内与 run 创建、用户消息落库一起原子置 guided。
+	promotePendingInputID uint
 }
 
 // runtimeRequestConversation 是历史、当前输入和可恢复运行态。

@@ -139,12 +139,7 @@ func ExpireReactRunsByRunIDs(ctx context.Context, runIDs []string) error {
 		return nil
 	}
 	tx := helpers.MysqlClientLLM.Model(&ReactRun{}).WithContext(ctx).
-		Where("run_id IN ? AND state IN ?", runIDs, []string{
-			ReactRunStateRunning,
-			ReactRunStateWaitingClientMessage,
-			ReactRunStateWaitingPlan,
-			ReactRunStateCancelling,
-		}).Updates(map[string]any{
+		Where("run_id IN ? AND state IN ?", runIDs, reactActiveRunStates).Updates(map[string]any{
 		"state": ReactRunStateExpired,
 	})
 	if tx.Error != nil {
@@ -195,19 +190,38 @@ func HasActiveReactRun(ctx *gin.Context, sessionID string) (bool, error) {
 	return HasActiveReactRunWithDB(ctx, helpers.MysqlClientLLM, sessionID)
 }
 
+// reactActiveRunStates 是「活跃 run」的状态集合（并发检查与 Steering 准入共用同一口径）。
+var reactActiveRunStates = []string{
+	ReactRunStateRunning,
+	ReactRunStateWaitingClientMessage,
+	ReactRunStateWaitingPlan,
+	ReactRunStateCancelling,
+}
+
 func HasActiveReactRunWithDB(ctx *gin.Context, db *gorm.DB, sessionID string) (bool, error) {
 	var count int64
 	err := db.Model(&ReactRun{}).WithContext(ctx).
-		Where("session_id = ? AND state IN ?", sessionID, []string{
-			ReactRunStateRunning,
-			ReactRunStateWaitingClientMessage,
-			ReactRunStateWaitingPlan,
-			ReactRunStateCancelling,
-		}).Count(&count).Error
+		Where("session_id = ? AND state IN ?", sessionID, reactActiveRunStates).Count(&count).Error
 	if err != nil {
 		return false, components.ErrorDbSelect.Wrap(err)
 	}
 	return count > 0, nil
+}
+
+// GetActiveOuterReactRunBySessionIDWithDB 返回会话最近的活跃外层 run（排除委派子 run），
+// 供 Steering 准入定位注入目标。子 run 不接受引导；未命中返回 nil。
+func GetActiveOuterReactRunBySessionIDWithDB(ctx *gin.Context, db *gorm.DB, sessionID string) (*ReactRun, error) {
+	var run ReactRun
+	err := db.Model(&ReactRun{}).WithContext(ctx).
+		Where("session_id = ? AND "+outerRunCondition+" AND state IN ?", sessionID, reactActiveRunStates).
+		Order("created_at DESC, id DESC").First(&run).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return &run, nil
 }
 
 func GetLatestReactRunBySessionIDWithDB(ctx *gin.Context, db *gorm.DB, sessionID string) (*ReactRun, error) {

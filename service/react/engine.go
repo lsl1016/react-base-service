@@ -185,6 +185,13 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 				zlog.Infof(ctx, "[React.Boundary] 输出截断自动续写: runId=%s, step=%d, continuation=%d/%d", runID, step, state.continuationCount, conf.GetReactRuntimeConfig().Loop.OutputContinuationMax)
 				continue
 			}
+			// Steering S1（turn-stop.ts:195 对齐）：纯文本步是可续跑边界——run 收敛前先查
+			// pending guide，有则不结束 run，注入后继续下一轮。软着陆收尾窗口内不再接收 guide。
+			if !state.softLandingActive {
+				if injected, drainErr := state.drainPendingGuideBoundary(step); drainErr == nil && injected {
+					continue
+				}
+			}
 			// 没有工具调用时说明本轮已经得到最终回答，直接收敛 run 状态并结束循环。
 			return state.finish(streamResult.Content, streamResult.TerminationReason)
 		}
@@ -227,6 +234,14 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 		}
 		if persistErr != nil {
 			return persistErr
+		}
+		// Steering S1（turn-tools.ts:469 对齐）：guide 唯一的工具批注入点——整批 tool_result
+		// 落库之后、下一次模型请求之前，注入的 user 消息成为请求尾部，
+		// 绝不插入 assistant tool_use 与 tool_result 之间。软着陆窗口内不再消费。
+		if !state.softLandingActive {
+			if _, drainErr := state.drainPendingGuideBoundary(step); drainErr != nil {
+				return drainErr
+			}
 		}
 	}
 
@@ -671,6 +686,9 @@ func (s *reactEngineState) finish(content, terminationReason string) error {
 			"last_message": trimRunLastMessage(content),
 		})
 	}
+	// Steering S1：run 正常结束仍未消费的 guide 结算 discarded(run_finished)
+	//（软着陆窗口收尾/消费失败等场景；S2 将改为降级排队）。
+	settleRunPendingGuides(s.ctx, s.emitter, s.runID, model.ReactPendingSettleRunFinished)
 	return s.emitter.Emit(EventDone, params.ReactDonePayload{
 		InputTokens:           s.inputTokens,
 		OutputTokens:          s.outputTokens,

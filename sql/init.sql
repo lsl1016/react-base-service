@@ -379,6 +379,30 @@ CREATE TABLE IF NOT EXISTS `tblLlmReactMessage` (
     INDEX `idx_session_created` (`session_id`, `created_at`, `seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='ReAct消息表';
 
+-- ReAct 会话排队输入账本（Steering：运行中引导/排队，S1/S2）
+-- 对齐 ZCode session_input 设计：准入即落账本（崩溃不丢"输入存在过"这一事实）；
+-- guide 消费 = 同一事务内"账本置 guided + 用户消息落库"；重启后残留 admitted 一律作废（不复活队列）。
+CREATE TABLE IF NOT EXISTS `tblLlmReactPendingInput` (
+    `id`            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `session_id`    VARCHAR(64)  NOT NULL COMMENT '所属会话ID',
+    `run_id`        VARCHAR(64)  NOT NULL COMMENT 'admitted 时归属的run ID',
+    `kind`          VARCHAR(32)  NOT NULL DEFAULT 'user_input' COMMENT '输入种类: user_input/notification(Q1预留)',
+    `delivery`      VARCHAR(16)  NOT NULL DEFAULT 'guide' COMMENT '投递方式: guide(引导注入当前run)/queue(排队待晋升)',
+    `status`        VARCHAR(32)  NOT NULL DEFAULT 'admitted' COMMENT '状态: admitted/guided/queued/cancelled/discarded',
+    `content`       MEDIUMTEXT   COMMENT '用户输入内容',
+    `seq`           INT          NOT NULL DEFAULT 0 COMMENT '会话内准入序号(单调递增,决定FIFO消费顺序)',
+    `payload_json`  MEDIUMTEXT   COMMENT '准入时原始run请求快照(JSON,queue晋升/自动续跑据此重建run请求)',
+    `settle_reason` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '结算原因(discarded时): turn_cancelled/turn_failed/run_finished/session_resumed',
+    `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX `idx_session_status` (`session_id`, `status`, `seq`),
+    INDEX `idx_run_status` (`run_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='ReAct会话排队输入账本(Steering pending input)';
+
+-- 存量环境增量迁移（新环境由上方建表语句直接包含）：
+-- ALTER TABLE `tblLlmReactPendingInput`
+--     ADD COLUMN `payload_json` MEDIUMTEXT COMMENT '准入时原始run请求快照(JSON,queue晋升/自动续跑据此重建run请求)' AFTER `seq`;
+
 -- ---------------------------------------------------------------------------
 -- 四、ReAct 周边能力（工具大结果 / 产物 / 异步任务 / 反馈 / 附件）
 -- ---------------------------------------------------------------------------

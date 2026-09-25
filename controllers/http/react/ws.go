@@ -197,7 +197,10 @@ func handleWSMessage(ctx *gin.Context, connCtx context.Context, write reactServi
 	switch strings.TrimSpace(msg.Type) {
 	case reactService.EventRun:
 		if runMsgCh != nil {
-			_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: "react run is active"}})
+			// Steering S1：run 活跃不再硬拒绝——新用户消息走准入（guide/queue/明确拒绝），
+			// 回执以 steer_guided/steer_queued/steer_rejected 事件下发；Steering 未开启时保持
+			// 历史错误事件行为。
+			reactService.HandleWSSteer(ctx, write, msg)
 			return runMsgCh, runDone
 		}
 		return startWSRun(ctx, connCtx, write, msg)
@@ -278,6 +281,12 @@ func startWSRun(ctx *gin.Context, connCtx context.Context, write reactService.Ev
 		}
 		result, err := dispatchRunExecution(ctx, connCtx, payload, msg.SessionID, write, readClient)
 		if err == nil || reactService.IsReactRunCancelled(err) || reactService.IsReactClientDisconnected(err) {
+			return
+		}
+		// Steering 准入回执（跨连接 run 冲突场景）：guided/queued/rejected 是准入结论，
+		// 不是运行失败，按 steering 回执事件下发。
+		if receipt, ok := reactService.SteerReceiptFromError(err); ok {
+			reactService.EmitSteerReceipt(write, receipt, msg.SessionID)
 			return
 		}
 

@@ -113,6 +113,45 @@ type ReactRuntimeConfig struct {
 	ModelRetry ReactModelRetryConfig `yaml:"model_retry"`
 	// Tool 控制服务端工具执行的运行时级默认策略。
 	Tool ReactToolConfig `yaml:"tool"`
+	// Steering 控制 Steering（运行中引导/排队）能力；未配置时默认关闭，
+	// 运行中新用户消息保持历史"硬拒绝"行为（Session与Steering机制借鉴方案 S1/S2）。
+	Steering ReactSteeringConfig `yaml:"steering"`
+}
+
+// ReactSteeringConfig Steering 配置：guide 引导注入与 queue 排队（S2）分开关。
+type ReactSteeringConfig struct {
+	// Enabled 控制 guide 引导注入总开关；未配置默认 false（保持历史行为）。
+	Enabled *bool `yaml:"enabled"`
+	// Queue 控制不可引导（waiting 状态/软着陆/带附件）时是否排队；
+	// 未配置默认 false（S1 阶段一律明确拒绝，S2 灰度开启）。
+	Queue *bool `yaml:"queue"`
+	// QueueAutoDrain 控制 run 正常结束后是否自动续跑队首（S2）；未配置默认 true。
+	// 仅在 queue 开启时生效；run 出错/取消/超时收敛不自动续跑（留给用户决定）。
+	QueueAutoDrain *bool `yaml:"queue_auto_drain"`
+}
+
+// SteeringEnabled 解析 steering.enabled：未配置默认 false。
+func (c ReactSteeringConfig) SteeringEnabled() bool {
+	if c.Enabled != nil {
+		return *c.Enabled
+	}
+	return false
+}
+
+// QueueEnabled 解析 steering.queue：未配置默认 false。
+func (c ReactSteeringConfig) QueueEnabled() bool {
+	if c.Queue != nil {
+		return *c.Queue
+	}
+	return false
+}
+
+// QueueAutoDrainEnabled 解析 steering.queue_auto_drain：未配置默认 true。
+func (c ReactSteeringConfig) QueueAutoDrainEnabled() bool {
+	if c.QueueAutoDrain != nil {
+		return *c.QueueAutoDrain
+	}
+	return true
 }
 
 // ReactLoopConfig 主循环终止边界配置。除 MaxSteps 外的边界都支持 0=不限的语义；

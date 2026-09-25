@@ -109,20 +109,21 @@ ZCode 的 Session = **一个持久身份行 + 事实行集合（SQLite）+ 一�
 
 ### 2.3 落地方案
 
-**S1（P0）：guide 引导注入。**
+**S1（P0）：guide 引导注入。**（✅ 已实施，2026-09-25，见 `docs/changelog/20260925_v1.0_新增Steering引导注入与运行中消息准入账本.md`）
 
 1. 准入改造：`StartRun`/WS 消息处理中，命中 active run 时不再直接报错——若该 run 状态为 `running`（非 waiting_*/cancelling）、非软着陆收尾、输入无附件、配置允许 steering → 返回 `{kind:"guided", pendingInputId, queueLength}`；否则走 S2 排队；`waiting_client_message`/`waiting_plan`/`cancelling` 状态一律走排队或拒绝（不打断 HITL 等待）。
-2. 存储：新增 `tblLlmReactPendingInput`（session_id、run_id、kind=user_input/notification、delivery=guide/queue、status=admitted/guided/queued/cancelled/discarded、content、seq、created_at）。**guide 消费 = 同一事务内"账本置 guided + 用户消息落库"**（对齐 ZCode promoteSessionInput 原子性；本项目事务内先 `persistUserInput` 等价物再更新账本行）。
-3. 注入点（唯一）：`engine.go:217-218` 之后、下一次 `callModelRound` 之前——本轮所有 tool_result 已落库，注入的 user 消息成为请求尾部，天然满足"不插入 tool_use/tool_result 之间"。
-4. 纯文本边界续跑：`engine.go:177-189` 的 finish 分支先查 pending guide——有则**不结束 run**，注入后 `continue`（对齐 `turn-stop.ts:195-200`）。需配套防抖：guide 循环受循环预算/软着陆约束，软着陆激活期间不再接收 guide。
-5. 取消/出错回退：run 取消或硬错误时，未消费 admitted 行结算为 `discarded(turn_cancelled)`（S1 的 Phase 1 闭合修复已在 `executeToolCalls` 收口，此处一致）；进程重启后残留 admitted 行在下一次 `createReactRunContext` 统一结算 `discarded(session_resumed)`。
-6. WS/前端协议：新增 `steer_queued/guided` 上行回执与 `turn_steer_*` 下行事件（对齐 ZCode 事件词汇：queued/delivery_changed/drained/rejected/discarded/reordered）。
+   - 实施记录：准入决策纯函数化（`steerAdmissionDecision`），queue 决策分支已实现但由 `steering.queue`（默认 false）灰度；软着陆经进程内注册表对准入 goroutine 可见；账本表增加 `settle_reason` 列记录结算原因（方案表格未列，属最小必要扩展）。
+2. 存储：新增 `tblLlmReactPendingInput`（session_id、run_id、kind=user_input/notification、delivery=guide/queue、status=admitted/guided/queued/cancelled/discarded、content、seq、created_at）。**guide 消费 = 同一事务内"账本置 guided + 用户消息落库"**（对齐 ZCode promoteSessionInput 原子性；本项目事务内先 `persistUserInput` 等价物再更新账本行）。（✅ 已实施，含 settle_reason 列）
+3. 注入点（唯一）：`engine.go:217-218` 之后、下一次 `callModelRound` 之前——本轮所有 tool_result 已落库，注入的 user 消息成为请求尾部，天然满足"不插入 tool_use/tool_result 之间"。（✅ 已实施，另补纯文本 finish 边界）
+4. 纯文本边界续跑：`engine.go:177-189` 的 finish 分支先查 pending guide——有则**不结束 run**，注入后 `continue`（对齐 `turn-stop.ts:195-200`）。需配套防抖：guide 循环受循环预算/软着陆约束，软着陆激活期间不再接收 guide。（✅ 已实施，另规定输出截断续写优先于 guide）
+5. 取消/出错回退：run 取消或硬错误时，未消费 admitted 行结算为 `discarded(turn_cancelled)`（S1 的 Phase 1 闭合修复已在 `executeToolCalls` 收口，此处一致）；进程重启后残留 admitted 行在下一次 `createReactRunContext` 统一结算 `discarded(session_resumed)`。（✅ 已实施，采用 ZCode 完整词汇：cancelled/断连→turn_cancelled、error/timeout/expired→turn_failed、正常结束未消费→run_finished）
+6. WS/前端协议：新增 `steer_queued/guided` 上行回执与 `turn_steer_*` 下行事件（对齐 ZCode 事件词汇：queued/delivery_changed/drained/rejected/discarded/reordered）。（✅ 已实施为 `steer_guided/steer_queued/steer_rejected/steer_drained/steer_discarded` 下行事件——本项目上行/下行统一走 WS 事件通道，未拆双通道；S3 做队列管理时再补 delivery_changed/reordered）
 
-**S2（P0）：queue 排队 + run 结束自动续跑。**
+**S2（P0）：queue 排队 + run 结束自动续跑。**（✅ 已实施，2026-09-25，见 `docs/changelog/20260925_v1.0_新增Steering排队与run结束自动续跑.md`）
 
-- busy 且不可引导（有附件/waiting 状态/配置关闭）→ 账本落 `queued` 行，回执 `{kind:"queued"}`。
-- `state.finish`（含 `finishExhausted`）之后检查本 session 未消费 queued 行：开启 auto-drain（默认开）则用队首内容**自动开启新 run**（复用现有 `run()` 入口，模型/工具快照按新 run 正常解析），其余排队项顺延；未开启则留待用户显式"发送队列项"。
-- 失败语义对齐 ZCode：run 非 cancel 失败（error 态）时暂停自动续跑（queue paused），cancel 时剩余 guide 降级 queue——留给用户决定是否继续，避免错误循环烧钱。
+- busy 且不可引导（有附件/waiting 状态/配置关闭）→ 账本落 `queued` 行，回执 `{kind:"queued"}`。（✅ 已实施；准入时保存原始 run 请求快照 payload_json——steer 消息不带模型选择时回填被引导 run 的实际模型，晋升重建 run 请求时 prepareRuntimeRequest 仍全量重新解析）
+- `state.finish`（含 `finishExhausted`）之后检查本 session 未消费 queued 行：开启 auto-drain（默认开）则用队首内容**自动开启新 run**（复用现有 `run()` 入口，模型/工具快照按新 run 正常解析），其余排队项顺延；未开启则留待用户显式"发送队列项"。（✅ 已实施：run() 循环化 + runSingle 抽取，同一 WS 连接内续跑整条队列；晋升 claim-once（条件更新）与新 run 创建、用户消息落库同一事务，实现 promoteSessionInput 原子性）
+- 失败语义对齐 ZCode：run 非 cancel 失败（error 态）时暂停自动续跑（queue paused），cancel 时剩余 guide 降级 queue——留给用户决定是否继续，避免错误循环烧钱。（✅ 已实施：自动续跑仅在 run 成功收敛后触发，cancel/error/timeout 天然暂停；queue 开启时 run 终态的未消费 guide 一律降级排队而非作废，广播 steer_delivery_changed）
 
 **S3（P2）：队列管理 API**——删除/编辑/重排/预留（多端抢占防护）、auto-drain 开关、队列表查询接口。重排必须同步更新账本序号（对齐 ZCode"冷热事实分叉"教训）。
 

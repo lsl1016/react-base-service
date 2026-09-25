@@ -19,6 +19,13 @@ llm:
   react:
     # create_plan（计划确认）能力开关；未配置默认 true。
     allow_plan: false
+    # Steering（运行中引导/排队）：enabled 控制 guide 引导注入总开关（未配置默认 false）；
+    # queue 控制不可引导时排队（S2，未配置默认 false）；queue_auto_drain 控制 run 正常结束后
+    # 自动续跑队首（S2，未配置默认 true，仅 queue 开启时生效）。
+    steering:
+      enabled: true
+      queue: true
+      queue_auto_drain: true
     # 请求未传 maxSteps 时的默认最大推理轮次。maxSteps 只是防御性最后闸门：
     # 正常终止由软着陆/预算/超时等明确边界承担（见 docs/plan/20260925_AgentLoop终止边界与循环治理优化方案.md）。
     max_steps: 200

@@ -134,6 +134,10 @@ func (s *reactEngineState) enterSoftLanding(reason string, remainingSteps int, r
 	}
 	s.softLandingActive = true
 	s.softLandingReason = reason
+	// Steering：外层 run 进入收尾窗口后不再接收 guide（跨 goroutine 对准入决策可见）。
+	if s.agentPath == "" {
+		markRunSoftLanding(s.runID)
+	}
 	metrics.SoftLandingsTotal.WithLabelValues(reason).Inc()
 	s.logWarnf("[React.Boundary] 进入软着陆收尾窗口: runId=%s, reason=%s, remainingSteps=%d, remainingMillis=%d", s.runID, reason, remainingSteps, remainingMillis)
 	if s.emitter != nil {
