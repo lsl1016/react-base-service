@@ -206,6 +206,7 @@ const mountAgent = () => {
     disposeSQLClientTools = null;
     disposeContextUsageSubscription?.();
     disposeContextUsageSubscription = null;
+    detachContextUsageCard();
     currentHandle.destroy();
   }
 
@@ -453,6 +454,7 @@ const openDeleteCallerModal = () => {
 const clearDeletedCaller = () => {
   disposeSQLClientTools?.();
   disposeSQLClientTools = null;
+  detachContextUsageCard();
   currentHandle?.destroy?.();
   currentHandle = null;
   callerKeyInput.value = '';
@@ -1894,8 +1896,8 @@ toggleSDKThemeButton.addEventListener('click', () => {
 applySDKTheme(sdkTheme);
 
 // ============================================================
-// 上下文容量挂件（挂在对话栏右上角）：
-// 收起态胶囊 + 悬浮/点击展开的详情卡片（容量进度条 / 分类占比 / 缓存命中率）。
+// Context usage card anchored to the SDK usage ring beside the send button.
+// Hover previews and click pins the detail card (capacity / breakdown / cache hit rate).
 // 数据来自 POST /react/usage/context（会话最近一轮模型调用的聚合），
 // SDK 状态变化、悬浮与固定展开时刷新；分类 key 与后端 ContextBreakdown 对齐。
 // ============================================================
@@ -1921,6 +1923,11 @@ let ctxUsage = ctxEmptyUsage();
 let ctxSessionId = null;
 let ctxUsageTimer = null;
 let disposeContextUsageSubscription = null;
+let ctxRingAnchor = null;
+let ctxPinned = false;
+let ctxCloseTimer = null;
+let ctxCardEventsBound = false;
+let ctxAnchorObserver = null;
 
 const formatWanTokens = (tokens) => (
   tokens >= 10000 ? `${+(tokens / 10000).toFixed(1)}万` : String(tokens)
@@ -1940,8 +1947,6 @@ const renderContextUsageCard = (data = ctxUsage) => {
     $('ctx-breakdown').innerHTML = '<li class="rp-ctx-row rp-ctx-row-empty">发送新消息后统计上下文构成</li>';
     $('ctx-cache-fill').style.width = data.hasData ? `${(Math.max(0, Math.min(1, data.cacheHitRate || 0)) * 100).toFixed(1)}%` : '0%';
     $('ctx-cache-value').textContent = data.hasData ? `${Math.round(Math.max(0, Math.min(1, data.cacheHitRate || 0)) * 100)}%` : '--';
-    if ($('ctx-trigger-bar')) $('ctx-trigger-bar').innerHTML = '';
-    if ($('ctx-trigger-text')) $('ctx-trigger-text').textContent = `上下文 ${data.hasData ? capacityShare.toFixed(1) + '%' : '--'}`;
     return;
   }
   const segmentsHtml = categories.map(({ key, tokens }) => {
@@ -1965,10 +1970,6 @@ const renderContextUsageCard = (data = ctxUsage) => {
   const cacheHit = Math.max(0, Math.min(1, data.cacheHitRate || 0));
   $('ctx-cache-fill').style.width = `${(cacheHit * 100).toFixed(1)}%`;
   $('ctx-cache-value').textContent = `${Math.round(cacheHit * 100)}%`;
-  const triggerBar = $('ctx-trigger-bar');
-  if (triggerBar) triggerBar.innerHTML = segmentsHtml;
-  const triggerText = $('ctx-trigger-text');
-  if (triggerText) triggerText.textContent = `上下文 ${capacityShare.toFixed(1)}%`;
 };
 
 const refreshContextUsage = async () => {
@@ -2012,32 +2013,135 @@ const subscribeContextUsage = () => {
 
 renderContextUsageCard();
 
-// 交互：悬浮展开交给 CSS :hover（渲染器原生跟随指针，无 mouseleave 依赖，
-// 不会出现卡在展开态的问题）；点击固定（再点一次或 Esc 收起）由这里接管。
-// 悬浮/固定时拉取最新数据，固定展开期间每 15s 自刷新。
-(() => {
+const syncContextUsageTimer = () => {
+  if (ctxPinned) {
+    refreshContextUsage();
+    if (!ctxUsageTimer) ctxUsageTimer = setInterval(refreshContextUsage, 15000);
+    return;
+  }
+  if (ctxUsageTimer) {
+    clearInterval(ctxUsageTimer);
+    ctxUsageTimer = null;
+  }
+};
+
+const updateContextUsageCardPosition = () => {
   const widget = $('ctx-widget');
-  const trigger = $('ctx-trigger');
-  if (!widget || !trigger) return;
-  const setPinned = (pinned) => {
-    widget.classList.toggle('rp-pinned', pinned);
-    widget.classList.toggle('rp-open', pinned);
-    trigger.setAttribute('aria-expanded', pinned ? 'true' : 'false');
-    if (pinned) {
-      refreshContextUsage();
-      if (!ctxUsageTimer) ctxUsageTimer = setInterval(refreshContextUsage, 15000);
-    } else if (ctxUsageTimer) {
-      clearInterval(ctxUsageTimer);
-      ctxUsageTimer = null;
-    }
-  };
-  widget.addEventListener('mouseenter', () => refreshContextUsage());
-  trigger.addEventListener('click', () => {
-    setPinned(!widget.classList.contains('rp-pinned'));
+  const card = $('context-usage-card');
+  const anchor = ctxRingAnchor || document.querySelector('#agent-root .agent-ui-usage-ring');
+  if (!widget || !card || !anchor) return;
+
+  const gap = 10;
+  const margin = 12;
+  const anchorRect = anchor.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const cardWidth = cardRect.width || Math.min(300, window.innerWidth - margin * 2);
+  const cardHeight = cardRect.height || 180;
+  const maxLeft = Math.max(margin, window.innerWidth - cardWidth - margin);
+  const left = Math.min(maxLeft, Math.max(margin, anchorRect.right - cardWidth));
+  let top = anchorRect.top - cardHeight - gap;
+  if (top < margin) top = anchorRect.bottom + gap;
+
+  widget.style.setProperty('--ctx-widget-left', `${Math.round(left)}px`);
+  widget.style.setProperty('--ctx-widget-top', `${Math.round(top)}px`);
+};
+
+const setContextUsageOpen = (open, { pinned = ctxPinned } = {}) => {
+  const widget = $('ctx-widget');
+  if (!widget) return;
+  ctxPinned = pinned;
+  const visible = open || ctxPinned;
+  widget.classList.toggle('rp-open', visible);
+  widget.classList.toggle('rp-pinned', ctxPinned);
+  if (ctxRingAnchor) {
+    ctxRingAnchor.setAttribute('aria-expanded', visible ? 'true' : 'false');
+  }
+  if (visible) {
+    updateContextUsageCardPosition();
+  }
+  syncContextUsageTimer();
+};
+
+const scheduleContextUsageClose = () => {
+  window.clearTimeout(ctxCloseTimer);
+  ctxCloseTimer = window.setTimeout(() => {
+    if (!ctxPinned) setContextUsageOpen(false, { pinned: false });
+  }, 120);
+};
+
+const openContextUsagePreview = () => {
+  window.clearTimeout(ctxCloseTimer);
+  refreshContextUsage();
+  setContextUsageOpen(true, { pinned: ctxPinned });
+};
+
+const attachContextUsageCard = () => {
+  const widget = $('ctx-widget');
+  const card = $('context-usage-card');
+  const anchor = document.querySelector('#agent-root .agent-ui-usage-ring');
+  if (!widget || !card || !anchor) return;
+
+  if (!ctxCardEventsBound) {
+    card.addEventListener('mouseenter', () => window.clearTimeout(ctxCloseTimer));
+    card.addEventListener('mouseleave', scheduleContextUsageClose);
+    ctxCardEventsBound = true;
+  }
+
+  if (ctxRingAnchor === anchor) {
+    updateContextUsageCardPosition();
+    return;
+  }
+
+  ctxRingAnchor = anchor;
+  anchor.classList.add('rp-ctx-ring-anchor');
+  anchor.setAttribute('role', 'button');
+  anchor.setAttribute('tabindex', '0');
+  anchor.setAttribute('aria-controls', 'context-usage-card');
+  anchor.setAttribute('aria-expanded', widget.classList.contains('rp-open') ? 'true' : 'false');
+
+  anchor.addEventListener('mouseenter', openContextUsagePreview);
+  anchor.addEventListener('mouseleave', scheduleContextUsageClose);
+  anchor.addEventListener('focusin', openContextUsagePreview);
+  anchor.addEventListener('focusout', scheduleContextUsageClose);
+  anchor.addEventListener('click', (event) => {
+    event.preventDefault();
+    window.clearTimeout(ctxCloseTimer);
+    setContextUsageOpen(!ctxPinned, { pinned: !ctxPinned });
+  });
+  anchor.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    window.clearTimeout(ctxCloseTimer);
+    setContextUsageOpen(!ctxPinned, { pinned: !ctxPinned });
+  });
+  updateContextUsageCardPosition();
+};
+
+const detachContextUsageCard = () => {
+  const widget = $('ctx-widget');
+  ctxPinned = false;
+  ctxRingAnchor = null;
+  window.clearTimeout(ctxCloseTimer);
+  widget?.classList.remove('rp-open', 'rp-pinned');
+  syncContextUsageTimer();
+};
+
+// Bind the context usage card to the SDK usage ring.
+(() => {
+  attachContextUsageCard();
+  ctxAnchorObserver = new MutationObserver(attachContextUsageCard);
+  ctxAnchorObserver.observe(container, { childList: true, subtree: true });
+  window.addEventListener('resize', updateContextUsageCardPosition);
+  window.addEventListener('scroll', updateContextUsageCardPosition, true);
+  document.addEventListener('pointerdown', (event) => {
+    if (!ctxPinned) return;
+    const card = $('context-usage-card');
+    if (ctxRingAnchor?.contains(event.target) || card?.contains(event.target)) return;
+    setContextUsageOpen(false, { pinned: false });
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && widget.classList.contains('rp-pinned')) {
-      setPinned(false);
+    if (event.key === 'Escape' && ctxPinned) {
+      setContextUsageOpen(false, { pinned: false });
     }
   });
 })();

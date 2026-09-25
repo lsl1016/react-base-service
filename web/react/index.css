@@ -1158,9 +1158,8 @@
 }
 
 /* ============================================================
-   上下文容量挂件：挂在对话栏右上角，默认收起成胶囊，
-   悬浮预览 / 点击固定展开（容量进度条 + 分类占比 + 缓存命中率）。
-   纯 UI 演示：数据由 index.js 的 renderContextUsageCard 注入，后续可换真实接口。
+   Context usage card: anchored to the SDK usage ring beside send.
+   Hover previews and click pins the detail card.
    ============================================================ */
 .rp-agent-wrap {
   position: relative;
@@ -1176,19 +1175,18 @@
   --ctx-track: #e2e8f0;
   --ctx-fill-ok: #16a34a;
   --ctx-surface: #ffffff;
-  position: absolute;
-  right: 16px;
-  bottom: 88px;
-  z-index: 6;
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: flex-end;
+  position: fixed;
+  left: var(--ctx-widget-left, -9999px);
+  top: var(--ctx-widget-top, -9999px);
+  z-index: 80;
+  display: block;
+  pointer-events: none;
 }
 
 @container (max-width: 420px) {
   .rp-ctx-widget {
-    right: 10px;
-    bottom: 76px;
+    left: var(--ctx-widget-left, -9999px);
+    top: var(--ctx-widget-top, -9999px);
   }
 }
 
@@ -1201,63 +1199,10 @@
   --ctx-surface: #1e293b;
 }
 
-/* 收起态：胶囊触发器（迷你分段条 + 百分比） */
-.rp-ctx-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 26px;
-  padding: 0 11px;
-  border: 1px solid var(--ctx-line);
-  border-radius: 999px;
-  background: var(--ctx-surface);
-  color: var(--ctx-text);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.1);
-}
-
-.rp-ctx-trigger:hover {
-  border-color: rgba(37, 99, 235, 0.32);
-}
-
-.rp-ctx-widget.rp-pinned .rp-ctx-trigger {
-  color: #2563eb;
-  border-color: rgba(37, 99, 235, 0.32);
-}
-
-[data-agent-ui-theme='dark'] .rp-ctx-widget.rp-pinned .rp-ctx-trigger,
-[data-agent-ui-theme='dark'] .rp-ctx-trigger:hover {
-  color: #93b4f8;
-  border-color: rgba(147, 180, 248, 0.4);
-}
-
-.rp-ctx-trigger-bar {
-  display: inline-flex;
-  gap: 1px;
-  width: 44px;
-  height: 5px;
-  flex: none;
-  border-radius: 999px;
-  background: var(--ctx-track);
-  overflow: hidden;
-}
-
-.rp-ctx-trigger-bar .rp-ctx-seg {
-  min-width: 1px;
-  border-radius: 0;
-}
-
-.rp-ctx-trigger-text {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* 展开态：详情卡片（默认隐藏，悬浮/固定时淡入下移展开） */
+/* Detail card: hidden by default, shown from the SDK usage ring. */
 .rp-ctx-card {
   width: min(300px, calc(100vw - 48px));
-  margin-bottom: 8px;
+  margin: 0;
   padding: 12px;
   border: 1px solid var(--ctx-line);
   border-radius: 12px;
@@ -1265,15 +1210,20 @@
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.16);
   opacity: 0;
   visibility: hidden;
+  pointer-events: none;
   transform: translateY(6px);
   transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
 }
 
-.rp-ctx-widget:hover .rp-ctx-card,
 .rp-ctx-widget.rp-open .rp-ctx-card {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
   transform: none;
+}
+
+.rp-agent-root .agent-ui-usage-ring-tooltip {
+  display: none;
 }
 
 .rp-ctx-head {
