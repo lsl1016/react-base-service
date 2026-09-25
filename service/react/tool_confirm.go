@@ -153,14 +153,14 @@ func (s *reactEngineState) confirmServerToolIfNeeded(call llm.ToolCall, tool mod
 			return false, fmt.Sprintf("确认等待超时（%d 秒），用户未响应", seconds), nil
 		}
 		if IsReactRunCancelled(waitErr) || IsReactClientDisconnected(waitErr) {
-			// 等待确认被中断：补 rejected 终态与历史 tool_result，让卡片收敛、悬空 tool_use 有配对。
-			s.persistToolConfirmInterrupted(call, tool, step, startedAt, waitErr)
+			// 等待确认被中断：登记 rejected 终态，由引擎层本轮收口统一落库，让卡片收敛、悬空 tool_use 有配对。
+			s.recordToolConfirmInterrupted(call, tool, step, startedAt, waitErr)
 		}
 		return false, "", waitErr
 	}
 	switch answer.Type {
 	case EventCancel:
-		s.persistToolConfirmInterrupted(call, tool, step, startedAt, ErrReactRunCancelled)
+		s.recordToolConfirmInterrupted(call, tool, step, startedAt, ErrReactRunCancelled)
 		return false, "", ErrReactRunCancelled
 	case EventToolConfirmAnswer:
 		var payload toolConfirmAnswerPayload
@@ -209,9 +209,9 @@ func renderToolRejectedResult(tool model.Tool, reason string) string {
 	return fmt.Sprintf("用户拒绝执行工具 %s：%s。请勿重试同一操作，改为说明需要用户授权后等待，或换用只读方式继续。", tool.Name, note)
 }
 
-// persistToolConfirmInterrupted 在等待确认被取消/断线时补终态：
-// tool_use_end(rejected) + 历史 tool_result，语义与 ask_question 中断路径一致。
-func (s *reactEngineState) persistToolConfirmInterrupted(call llm.ToolCall, tool model.Tool, step int, startedAt time.Time, waitErr error) {
+// recordToolConfirmInterrupted 在等待确认被取消/断线时登记终态（tool_use_end(rejected) +
+// 中断 tool_result 交由引擎层本轮收口统一落库），语义与 ask_question 中断路径一致。
+func (s *reactEngineState) recordToolConfirmInterrupted(call llm.ToolCall, tool model.Tool, step int, startedAt time.Time, waitErr error) {
 	status, _, interrupted := classifyToolInterruption(s.runCtx, waitErr)
 	if !interrupted {
 		return
@@ -222,9 +222,7 @@ func (s *reactEngineState) persistToolConfirmInterrupted(call llm.ToolCall, tool
 	}
 	normalized := normalizeToolResult(call.ID, content, true, executedByServer)
 	normalized.Status = toolExecutionStatusRejected
-	if _, err := persistToolResultMessage(s.ctx, s.req, s.runID, s.sessionID, []llm.ToolResultContent{{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: true}}, step); err != nil {
-		zlog.Warnf(s.ctx, "[React.ToolConfirm] 中断确认结果落库失败(忽略): runId=%s, toolUseId=%s, err=%v", s.runID, call.ID, err)
-	}
+	s.recordInterruptedToolResult(llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: true})
 	if status == toolExecutionStatusCancelled {
 		_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{
 			ToolUseID: call.ID, Content: normalized.Content, IsError: true,

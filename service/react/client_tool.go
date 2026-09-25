@@ -49,7 +49,7 @@ func (s *reactEngineState) executeClientToolCalls(calls []reactClientToolCall, s
 
 	outputs, _, err := s.waitClientToolOutputs(callByID)
 	if err != nil && !IsErrInteractionTimeout(err) {
-		s.persistClientToolInterruptedResults(pendingToolCalls(calls), step, err)
+		s.recordClientToolInterruptedResults(pendingToolCalls(calls), step, err)
 		return nil, err
 	}
 	if IsErrInteractionTimeout(err) {
@@ -103,7 +103,7 @@ func (s *reactEngineState) executeClientTool(call llm.ToolCall, tool model.Tool,
 		_ = model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateRunning, "pending_tool_use_ids": "[]"})
 	}
 	if err != nil && !IsErrInteractionTimeout(err) {
-		s.persistClientToolInterruptedResults([]llm.ToolCall{call}, step, err)
+		s.recordClientToolInterruptedResults([]llm.ToolCall{call}, step, err)
 		return llm.ToolResultContent{}, err
 	}
 	if IsErrInteractionTimeout(err) {
@@ -242,13 +242,12 @@ func pendingToolCalls(calls []reactClientToolCall) []llm.ToolCall {
 	return toolCalls
 }
 
-// persistClientToolInterruptedResults 在等待前端回填期间发生取消/断线时，为所有 pending Client Tool
-// 补一条明确的终态 tool_result。这样历史回放不会永远停留在 waiting，也能提醒后续模型：
-// 对存在副作用的前端操作，断线后不能盲目重试，必须先确认真实前端状态。
+// recordClientToolInterruptedResults 在等待前端回填期间发生取消/断线时，为所有 pending Client Tool
+// 登记明确的终态 tool_result（由引擎层本轮收口统一落库）。这样历史回放不会永远停留在 waiting，
+// 也能提醒后续模型：对存在副作用的前端操作，断线后不能盲目重试，必须先确认真实前端状态。
 //
-// 让历史消息能看出工具未返回结果；用户取消记为 cancelled，断连仍记为 error。
-// 取消时连接仍在，额外补发 client_tool_use_end 让前端工具卡片收敛；落库失败不阻断原有流程。
-func (s *reactEngineState) persistClientToolInterruptedResults(calls []llm.ToolCall, step int, waitErr error) {
+// 取消记为 cancelled，断连仍记为 error；取消时连接仍在，额外补发 client_tool_use_end 让前端工具卡片收敛。
+func (s *reactEngineState) recordClientToolInterruptedResults(calls []llm.ToolCall, step int, waitErr error) {
 	status, content, interrupted := classifyToolInterruption(s.runCtx, waitErr)
 	if len(calls) == 0 || !interrupted {
 		return
@@ -265,9 +264,7 @@ func (s *reactEngineState) persistClientToolInterruptedResults(calls []llm.ToolC
 		normalized.Status = status
 		results = append(results, llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: true})
 		toolOutputs = append(toolOutputs, params.ReactClientToolOutput{ToolUseID: call.ID, Content: normalized.Content, IsError: true, Status: status})
-	}
-	if _, err := persistToolResultMessage(s.ctx, s.req, s.runID, s.sessionID, results, step); err != nil {
-		return
+		s.recordInterruptedToolResult(results[len(results)-1])
 	}
 	if status == toolExecutionStatusCancelled {
 		_ = s.clientToolEmitter().EmitStep(step, EventClientToolUseEnd, params.ReactClientToolUseEndPayload{ToolOutputs: toolOutputs})

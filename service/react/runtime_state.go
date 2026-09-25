@@ -95,6 +95,11 @@ type reactEngineState struct {
 	services   runtimeServices
 	clientHub  *clientMessageHub
 
+	// roundInterruptedResults 登记本轮被中断路径合成、待引擎收口统一落库的 tool_result
+	//（toolUseID -> 结果）。Tool Runtime 闭合治理（Phase 1）：中断回填的唯一持久化点
+	// 是引擎层的轮次结果落库，这里只登记不落库，保证每个 tool_use 恰好一条 tool_result。
+	roundInterruptedResults map[string]llm.ToolResultContent
+
 	agentPath           string
 	depth               int
 	agentPermissionMode string

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | 日期 | 2026-09-25 |
-| 状态 | 待评审 |
+| 状态 | Phase 1/2 已实施（2026-09-25，见 `docs/changelog/20260925_v1.0_修复工具结果闭合不变量与tool_call去重.md`）；Phase 3-5 待评审 |
 | 参照系 | 上级目录 `ZCode` 仓库（`apps/zcode-cli/packages/core`）的 Tool Runtime 实现 |
 | 适用范围 | `react-base-service` ReAct Runtime（`service/react`）+ 工具层（`service/tool`） |
 | 关联文档 | `docs/plan/20260925_AgentLoop终止边界与循环治理优化方案.md`（其 Phase 4"工具执行治理"由本方案展开并取代）；`docs/plan/20260925_Session与Steering机制借鉴方案.md`（Session/Steering/命令队列/Subagent 层，其 S1 依赖本方案 Phase 1 的闭合修复） |
@@ -67,6 +67,8 @@ ZCode 中一次模型 tool_use 的完整流水线（`packages/core/src/` 内）�
 
 ## 2. Phase 1（P0）：tool_result 闭合不变量修复
 
+> **已实施（2026-09-25）**：三道防线落地——中断登记制（`tool_closure.go` + 四个中断路径改 `record*`）、引擎单点落库（`engine.go` 错误路径先落库再返回、`checkTokenBudget` 回填）、重建孤儿回填（`reactMessagesToChatMessagesWithRefs` 接入 `backfillOrphanToolResults`）；中断文案区分 not_executed / unknown_execution_state。实施细节与验证见 `docs/changelog/20260925_v1.0_修复工具结果闭合不变量与tool_call去重.md`（开发库存量孤儿 19 个，重建回填后归 0）。下文保留原始设计分析。
+
 ### 2.1 ZCode 的铁律
 
 `packages/core/src/runtime/methods/turn-tools.ts:142` 注释原文：
@@ -108,6 +110,8 @@ ZCode 合成结果严格区分两类（`runtime/methods/streaming-tool-synthetic
 ---
 
 ## 3. Phase 2（P0）：tool_call id 去重
+
+> **已实施（2026-09-25）**：两层去重落地——`collectLLMStreamWithEmitter` 收集阶段按非空 id 去重，`executeToolCalls` 入口对同轮重复 id 回灌拒绝结果不执行（第三层由收口补全结构自然获得）。下文保留原始设计分析。
 
 ZCode 三层去重：
 
@@ -243,8 +247,8 @@ Phase 1 闭合修复 ──┬──> Phase 2 id 去重 ──> Phase 3 元数�
 
 | Phase | 优先级 | 触碰文件 | 风险 |
 |---|---|---|---|
-| 1 闭合不变量 | P0 | `service/react/engine.go`、`tool_dispatch.go`、`runtime_support.go` | 低（补齐回填路径） |
-| 2 id 去重 | P0 | `engine.go`、`tool_dispatch.go` | 低 |
+| 1 闭合不变量（✅ 已实施） | P0 | `service/react/engine.go`、`tool_dispatch.go`、`runtime_support.go`、`tool_closure.go`（新增） | 低（补齐回填路径） |
+| 2 id 去重（✅ 已实施） | P0 | `engine.go`、`tool_dispatch.go`、`tool_closure.go` | 低 |
 | 3 元数据+调度 | P1 | `models/llm/tool.go`、`service/tool/*`、`tool_dispatch.go` | 中（默认值等价上线控风险） |
 | 4 边界再校验 | P1 | `tool_dispatch.go`、`business_tool.go` | 低 |
 | 5 hook 链 | P1 | `tool_dispatch.go`、新增 `hooks.go` | 中（纯重构，靠行为不变测试兜底） |

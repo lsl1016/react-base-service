@@ -1,7 +1,7 @@
 ---
 title: ReAct Runtime 模块功能文档
-date: 2026-09-19
-version: v1.0
+date: 2026-09-25
+version: v1.1
 type: system
 module: react_runtime
 maintainer: react-base-service 项目组
@@ -59,6 +59,16 @@ Runtime 通过独立 service 复用 Tool、Memory、Agent、Workspace 等能力�
 
 运行时支持历史上下文压缩；大 Tool Result 可落库并通过 `resultRef` 按需读取，避免全量结果持续占用模型上下文。
 
+### 3.6 Tool 结果闭合不变量与调用去重
+
+「每个 assistant tool_use 必须有配对 tool_result」是结构保证（闭合治理 Phase 1，见 `service/react/tool_closure.go`），由三道防线构成：
+
+1. **中断登记制**：取消/断线/确认与问答等待被打断时，中断路径只把合成结果登记到 `reactEngineState.roundInterruptedResults`（同时保留 resultRef 落库与卡片收敛事件），不单独写 tool_result 消息；
+2. **引擎单点落库**：`executeToolCalls` 返回的 results 永远与 calls 等长且槽位配对（中断登记优先、未开始调用合成"未执行"、异常缺位合成"状态未知"），模型轮循环无论执行是否出错，先落库本轮 tool_result 再返回；预算超限终止前同样回填；
+3. **重建孤儿回填**：`reactMessagesToChatMessagesWithRefs` 构建上下文时对存量数据或极端故障（结果落库失败）留下的孤儿 tool_use 插入合成结果，保证恢复后的 provider 请求永远合法。
+
+tool_call id 双层去重（Phase 2）：流收集阶段按非空 id 去重（防 adapter/协议重复投递），执行入口对同轮重复 id 直接回灌拒绝结果不执行。中断结果文案区分 not_executed（未执行、可按失败处理）与 unknown_execution_state（副作用状态未知、先核实再重试）两种语义。
+
 ## 4. 数据模型
 
 | 表/模型 | 作用 |
@@ -83,3 +93,4 @@ Runtime 通过独立 service 复用 Tool、Memory、Agent、Workspace 等能力�
 | 版本 | 日期 | 修改人 | 变更说明 |
 |---|---|---|---|
 | v1.0 | 2026-09-19 | react-base-service 项目组 | 从 main 分支代码建立 ReAct Runtime 文档基线 |
+| v1.1 | 2026-09-25 | react-base-service 项目组 | 新增 3.6 节：Tool 结果闭合不变量（中断登记制/引擎单点落库/重建孤儿回填）与 tool_call id 双层去重 |

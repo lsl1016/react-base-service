@@ -75,6 +75,8 @@ func normalizeToolResult(toolUseID, content string, isError bool, executedBy str
 }
 
 // classifyToolInterruption 区分用户主动取消和客户端断连；只有前者属于 cancelled，断连仍按 error 处理。
+// 文案统一为"执行中被打断、结果未提交、副作用状态未知"（ZCode unknown_execution_state 语义）：
+// 调用已经 started，不能宣称"未执行"，必须引导模型先核实状态再决定是否重试。
 func classifyToolInterruption(runCtx context.Context, err error) (status, content string, ok bool) {
 	var cause error
 	if runCtx != nil {
@@ -82,17 +84,19 @@ func classifyToolInterruption(runCtx context.Context, err error) (status, conten
 	}
 	switch {
 	case errors.Is(err, ErrReactClientDisconnected) || errors.Is(cause, ErrReactClientDisconnected):
-		return toolExecutionStatusError, "连接断开，工具执行已中断，结果可能不确定。", true
+		return toolExecutionStatusError, "连接断开，工具执行已中断，结果未提交，副作用状态未知。请先核实当前状态再决定是否重试，不要盲目重试同一操作。", true
 	case errors.Is(err, ErrReactRunCancelled) || errors.Is(cause, ErrReactRunCancelled):
-		return toolExecutionStatusCancelled, "用户取消了本次运行，工具未完成执行。", true
+		return toolExecutionStatusCancelled, "用户取消了本次运行，工具执行被中断，结果未提交，副作用状态未知。请先核实当前状态再决定是否重试，不要盲目重试同一操作。", true
 	case errors.Is(err, context.Canceled):
-		return toolExecutionStatusError, "工具执行上下文已中断，结果可能不确定。", true
+		return toolExecutionStatusError, "工具执行上下文已中断，结果未提交，副作用状态未知。请先核实当前状态再决定是否重试，不要盲目重试同一操作。", true
 	default:
 		return "", "", false
 	}
 }
 
-// closeInterruptedToolUse 为已经发出 start 事件的工具补齐结构化终态和历史 tool_result，随后由调用方继续向上传播中断错误。
+// closeInterruptedToolUse 为已经发出 start 事件的工具合成结构化终态并登记中断结果，
+// 由引擎层在本轮收口时统一落库（闭合治理 Phase 1：不在此处单独落库，避免与轮次整体
+// 落库产生重复 tool_result），随后由调用方继续向上传播中断错误。
 func (s *reactEngineState) closeInterruptedToolUse(call llm.ToolCall, step int, executedBy string, startedAt time.Time, err error) llm.ToolResultContent {
 	status, content, ok := classifyToolInterruption(s.runCtx, err)
 	if !ok {
@@ -106,9 +110,7 @@ func (s *reactEngineState) closeInterruptedToolUse(call llm.ToolCall, step int, 
 			zlog.Warnf(s.ctx, "[React] 中断工具结果引用落库失败(忽略): runId=%s, toolUseId=%s, err=%v", s.runID, call.ID, storeErr)
 		}
 	}
-	if _, persistErr := persistToolResultMessage(s.ctx, s.req, s.runID, s.sessionID, []llm.ToolResultContent{result}, step); persistErr != nil {
-		zlog.Warnf(s.ctx, "[React] 中断工具结果落库失败(忽略): runId=%s, toolUseId=%s, err=%v", s.runID, call.ID, persistErr)
-	}
+	s.recordInterruptedToolResult(result)
 	if s.emitter != nil && s.emitter.write != nil {
 		_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{
 			ToolUseID: call.ID, Content: normalized.Content, ResultRef: normalized.ResultRef,

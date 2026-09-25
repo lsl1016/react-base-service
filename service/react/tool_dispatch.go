@@ -23,17 +23,27 @@ import (
 // 被允许并行，因为它创建隔离的子 ReactRun。即使并行执行，最终 results 仍按原 ToolCall 索引回填，
 // 因此下一轮模型看到的 tool_result 顺序不会被 goroutine 完成先后打乱。
 //
-// 
+// 闭合治理（Phase 1）：本函数返回的 results 永远与 calls 等长且每个槽位都有配对 ToolUseID——
+// 中断/出错时由 completeToolRoundResults 收口补全（中断登记优先，其次合成"状态未知"），
+// 串行中断后的未开始调用直接合成"未执行"，让引擎层无论如何都能为本轮 tool_use 落一条配对结果。
+//
 // delegate_agent 调用之间可并行（agent 委派无副作用），受 subagent.max_parallel 限制；
 // 其余工具保持串行；并行度 1（默认）时与历史完全串行等价。
 // 并行委派的多个子 run 同时等待用户输入（ask_question/client tool）时，上行消息经
 // clientHub 按 toolUseId 路由到各自的等待者（并行 HITL，见 client_hub.go）。
 func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]llm.ToolResultContent, error) {
-	if s.delegateParallelism(len(calls)) <= 1 {
-		return s.executeToolCallsSerial(calls, step)
+	// 新一轮清空上一轮的中断结果登记：登记表的生命周期与"一轮调度"一致。
+	s.roundInterruptedResults = nil
+	results := make([]llm.ToolResultContent, len(calls))
+	duplicates := duplicateToolCallIndexes(calls)
+	for i := range duplicates {
+		results[i] = s.duplicateToolCallResult(calls[i])
 	}
 
-	results := make([]llm.ToolResultContent, len(calls))
+	if s.delegateParallelism(len(calls)) <= 1 {
+		return s.executeToolCallsSerial(calls, results, duplicates, step)
+	}
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var firstErr error
@@ -49,7 +59,7 @@ func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]l
 	}
 	sem := make(chan struct{}, s.delegateParallelism(len(calls)))
 	for i, call := range calls {
-		if call.Name != metaToolDelegateAgent {
+		if call.Name != metaToolDelegateAgent || duplicates[i] {
 			continue
 		}
 		wg.Add(1)
@@ -64,8 +74,37 @@ func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]l
 			recordErr(err)
 		}(i, call)
 	}
+	lastSerialIndex := -1
+	serialStopped := false
 	for i, call := range calls {
-		if call.Name == metaToolDelegateAgent {
+		if call.Name == metaToolDelegateAgent || duplicates[i] {
+			continue
+		}
+		start := time.Now()
+		result, err := s.executeToolCall(call, step)
+		metrics.ObserveToolCall(s.metricToolName(call), start, result.IsError)
+		results[i] = result
+		lastSerialIndex = i
+		if err != nil {
+			// 串行工具出错即停并返回，与历史中止语义一致；取消/断线错误同时会让在途委派子 run 级联收敛。
+			// 后续未开始的串行调用在 wg.Wait 后按"未执行"补全，保证本轮 tool_use 全部有配对结果。
+			recordErr(err)
+			serialStopped = true
+			break
+		}
+	}
+	wg.Wait()
+	if serialStopped {
+		s.fillUnexecutedSerialSuffix(calls, results, duplicates, lastSerialIndex, true)
+	}
+	completed := s.completeToolRoundResults(calls, results)
+	return completed, firstErr
+}
+
+// executeToolCallsSerial 串行执行路径（含去重跳过）；出错时后续调用补"未执行"结果。
+func (s *reactEngineState) executeToolCallsSerial(calls []llm.ToolCall, results []llm.ToolResultContent, duplicates map[int]bool, step int) ([]llm.ToolResultContent, error) {
+	for i, call := range calls {
+		if duplicates[i] {
 			continue
 		}
 		start := time.Now()
@@ -73,30 +112,23 @@ func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]l
 		metrics.ObserveToolCall(s.metricToolName(call), start, result.IsError)
 		results[i] = result
 		if err != nil {
-			// 串行工具出错即停并返回，与历史中止语义一致；取消/断线错误同时会让在途委派子 run 级联收敛。
-			recordErr(err)
+			s.fillUnexecutedSerialSuffix(calls, results, duplicates, i, false)
 			break
 		}
 	}
-	wg.Wait()
-	if firstErr != nil {
-		return results, firstErr
-	}
-	return results, nil
+	return s.completeToolRoundResults(calls, results), nil
 }
 
-func (s *reactEngineState) executeToolCallsSerial(calls []llm.ToolCall, step int) ([]llm.ToolResultContent, error) {
-	results := make([]llm.ToolResultContent, len(calls))
-	for i, call := range calls {
-		start := time.Now()
-		result, err := s.executeToolCall(call, step)
-		metrics.ObserveToolCall(s.metricToolName(call), start, result.IsError)
-		results[i] = result
-		if err != nil {
-			return results, err
+// fillUnexecutedSerialSuffix 把串行执行停止点之后的未开始调用补成"未执行"结果（确定无副作用）。
+// 并行路径（skipDelegates=true）跳过 delegate_agent：委派 goroutine 在停止点前已全部启动并运行到终态，
+// 其结果槽位由 completeToolRoundResults 收口补全。
+func (s *reactEngineState) fillUnexecutedSerialSuffix(calls []llm.ToolCall, results []llm.ToolResultContent, duplicates map[int]bool, lastExecuted int, skipDelegates bool) {
+	for i := lastExecuted + 1; i < len(calls); i++ {
+		if duplicates[i] || skipDelegates && calls[i].Name == metaToolDelegateAgent || strings.TrimSpace(results[i].ToolUseID) != "" {
+			continue
 		}
+		results[i] = s.synthesizeUnexecutedToolResult(calls[i], toolUnexecutedContent)
 	}
-	return results, nil
 }
 
 // delegateParallelism 返回本轮 delegate_agent 的并行度：
@@ -183,6 +215,10 @@ func (s *reactEngineState) executeServerTool(call llm.ToolCall, tool model.Tool,
 	// 危险操作确认门（P2-3）：permission_mode 命中时先等人工允许；拒绝按 rejected 工具结果回填。
 	approved, rejectReason, confirmErr := s.confirmServerToolIfNeeded(call, tool, json.RawMessage(call.Input), step, start)
 	if confirmErr != nil {
+		// 确认等待被取消/断线时中断结果已登记（闭合治理 Phase 1）：取回登记结果保证槽位配对。
+		if recorded, ok := s.interruptedToolResult(call.ID); ok {
+			return recorded, confirmErr
+		}
 		return llm.ToolResultContent{}, confirmErr
 	}
 	if !approved {

@@ -209,9 +209,9 @@ func (s *reactEngineState) executeAskQuestion(call llm.ToolCall, step int) (llm.
 			_ = interactionEmitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, IsError: true, ExecutedBy: executedByInternal, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds()})
 			return llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: true}, nil
 		}
-		// 取消/断线时补一条「未作答」tool_result：历史可见、悬空 tool_use 有配对、实时卡片可收敛。
+		// 取消/断线时登记「未作答」tool_result：历史可见、悬空 tool_use 有配对、实时卡片可收敛。
 		if IsReactRunCancelled(err) || IsReactClientDisconnected(err) {
-			s.persistAskQuestionCancelledResult(call, input, step, start, err)
+			s.recordAskQuestionCancelledResult(call, input, step, start, err)
 		}
 		return llm.ToolResultContent{}, err
 	}
@@ -335,10 +335,10 @@ func renderAskQuestionTimeoutResult() string {
 	return string(data)
 }
 
-// persistAskQuestionCancelledResult 在等待作答被取消或断线时补一条 tool_result 落库：
-// 一是让历史消息能看出「问题未作答」，二是避免下一轮 LLM 上下文出现悬空 tool_use。
-// 取消时连接仍在，额外补发 tool_use_end 让实时 UI 的提问卡片收敛到终态；落库失败不阻断原有取消流程。
-func (s *reactEngineState) persistAskQuestionCancelledResult(call llm.ToolCall, input askQuestionInput, step int, start time.Time, waitErr error) {
+// recordAskQuestionCancelledResult 在等待作答被取消或断线时登记一条"未作答"tool_result
+//（由引擎层本轮收口统一落库）：一是让历史消息能看出「问题未作答」，二是避免下一轮
+// LLM 上下文出现悬空 tool_use。取消时连接仍在，额外补发 tool_use_end 让实时 UI 的提问卡片收敛。
+func (s *reactEngineState) recordAskQuestionCancelledResult(call llm.ToolCall, input askQuestionInput, step int, start time.Time, waitErr error) {
 	status, _, interrupted := classifyToolInterruption(s.runCtx, waitErr)
 	if !interrupted {
 		return
@@ -346,9 +346,7 @@ func (s *reactEngineState) persistAskQuestionCancelledResult(call llm.ToolCall, 
 	content := renderAskQuestionCancelledResult(input, waitErr)
 	normalized := normalizeToolResult(call.ID, content, true, executedByInternal)
 	normalized.Status = status
-	if _, err := persistToolResultMessage(s.ctx, s.req, s.runID, s.sessionID, []llm.ToolResultContent{{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: normalized.IsError}}, step); err != nil {
-		return
-	}
+	s.recordInterruptedToolResult(llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: normalized.IsError})
 	if status == toolExecutionStatusCancelled {
 		_ = s.clientToolEmitter().EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, IsError: normalized.IsError, ExecutedBy: executedByInternal, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds()})
 	}

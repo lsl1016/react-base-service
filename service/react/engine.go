@@ -198,24 +198,36 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 
 		// 子代理预算（P3）：仅在还有后续工具轮次时检查——已产出最终回答的轮次保留完成态
 		//（OH max_budget_per_run 同款语义）；超限错误经委派软错误通道回填父循环。
+		// 闭合不变量：assistant tool_use 已落库，超限终止前先为本轮未执行调用回填配对结果。
 		if err := state.checkTokenBudget(req.tokenBudget); err != nil {
+			state.persistBudgetExhaustedToolResults(streamResult.ToolCalls, step)
 			return err
 		}
 
-		results, err := state.executeToolCalls(streamResult.ToolCalls, step)
-		if err != nil {
-			return err
-		}
+		// 闭合不变量（Tool Runtime 闭合治理 Phase 1）：assistant tool_use 已在上方落库，
+		// 任何退出路径都必须先为本轮 tool_use 落配对 tool_result 再返回——包括执行错误、
+		// 取消与断线。executeToolCalls 已保证 results 与 calls 等长且槽位配对。
+		results, execErr := state.executeToolCalls(streamResult.ToolCalls, step)
 		state.recordToolAnomaly(streamResult.ToolCalls)
 		// 结算本轮重复调用提醒注入（渲染发生在本轮 contextMessages 中）。
 		state.consumeAnomalyRender()
 		_, userMsg := llm.BuildToolRoundMessagesWithReasoning(streamResult.Content, streamResult.ReasoningContent, streamResult.ReasoningSignature, streamResult.ToolCalls, results)
-		toolResultRef, err := persistToolResultMessage(ctx, req, runID, sessionID, results, step)
-		if err != nil {
-			return err
+		toolResultRef, persistErr := persistToolResultMessage(ctx, req, runID, sessionID, results, step)
+		if persistErr != nil {
+			// 极端故障（DB 不可用）：本轮结果未落库，历史重建时的孤儿回填兜底会补齐配对。
+			zlog.Errorf(ctx, "[React.Closure] 工具结果落库失败(重建回填兜底): runId=%s, step=%d, toolUseIds=%v, err=%v", runID, step, reactToolUseIDs(streamResult.ToolCalls), persistErr)
 		}
 		state.messages = append(state.messages, assistantMsg, userMsg)
-		state.messageRefs = append(state.messageRefs, []reactMessageRef{assistantRef}, []reactMessageRef{toolResultRef})
+		state.messageRefs = append(state.messageRefs, []reactMessageRef{assistantRef})
+		if persistErr == nil {
+			state.messageRefs = append(state.messageRefs, []reactMessageRef{toolResultRef})
+		}
+		if execErr != nil {
+			return execErr
+		}
+		if persistErr != nil {
+			return persistErr
+		}
 	}
 
 	// 防御性闸门：正常路径应先被软着陆收尾拦截；触达这里说明收尾窗口内也未能产出最终回答，
@@ -361,9 +373,7 @@ func (s *reactEngineState) persistBudgetExhaustedToolResults(calls []llm.ToolCal
 	}
 	results := make([]llm.ToolResultContent, 0, len(calls))
 	for _, call := range calls {
-		normalized := normalizeToolResult(call.ID, "执行预算已耗尽，该工具未执行。", true, s.executedBy(call.Name))
-		normalized.Status = toolExecutionStatusCancelled
-		results = append(results, llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: true})
+		results = append(results, s.synthesizeUnexecutedToolResult(call, "执行预算已耗尽，该工具未执行。"))
 	}
 	if _, err := persistToolResultMessage(s.ctx, s.req, s.runID, s.sessionID, results, step); err != nil {
 		s.logWarnf("[React.Boundary] 预算耗尽工具结果回填失败(忽略): runId=%s, err=%v", s.runID, err)
@@ -421,6 +431,7 @@ func (s *reactEngineState) collectLLMStreamWithEmitter(stream <-chan llm.StreamC
 	var reasoningBlockContent strings.Builder
 	var reasoningSignature string
 	var toolCalls []llm.ToolCall
+	seenToolCallIDs := make(map[string]bool)
 	var inputTokens, outputTokens int
 	var cacheReadTokens, cacheCreateTokens int
 	var stopReason, terminationReason string
@@ -587,7 +598,17 @@ consume:
 			stopReason = chunk.StopReason
 			terminationReason = chunk.TerminationReason
 			if len(chunk.ToolCalls) > 0 {
-				toolCalls = chunk.ToolCalls
+				// 去重（闭合治理 Phase 2）：协议兼容或自定义 adapter 可能重复投递同 id 的
+				// final tool_call，runtime 按 id 去重，避免同一次响应内重复执行。
+				for _, call := range chunk.ToolCalls {
+					if call.ID != "" {
+						if seenToolCallIDs[call.ID] {
+							continue
+						}
+						seenToolCallIDs[call.ID] = true
+					}
+					toolCalls = append(toolCalls, call)
+				}
 			}
 			if err := closeThought(true); err != nil {
 				return result(), err
@@ -735,7 +756,9 @@ func reactMessagesToChatMessagesWithRefs(storedMessages []model.ReactMessage) ([
 			refs = append(refs, []reactMessageRef{reactMessageRefFromStored(stored)})
 		}
 	}
-	return messages, refs
+	// 闭合治理（Phase 1）第三道防线：存量数据或极端故障（结果落库失败）留下的孤儿 tool_use
+	// 在重建上下文时回填合成结果，避免恢复后的 provider 请求因未配对历史被拒绝。
+	return backfillOrphanToolResults(messages, refs)
 }
 
 func filterCoveredReactMessages(storedMessages []model.ReactMessage) []model.ReactMessage {
@@ -918,4 +941,13 @@ func reactToolCallNames(calls []llm.ToolCall) []string {
 		names = append(names, call.Name)
 	}
 	return names
+}
+
+// reactToolUseIDs 提取本轮 tool_use id 列表，用于闭合治理日志排查。
+func reactToolUseIDs(calls []llm.ToolCall) []string {
+	ids := make([]string, 0, len(calls))
+	for _, call := range calls {
+		ids = append(ids, call.ID)
+	}
+	return ids
 }
