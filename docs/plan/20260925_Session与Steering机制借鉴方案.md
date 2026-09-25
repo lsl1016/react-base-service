@@ -153,12 +153,12 @@ ZCode 的 Session = **一个持久身份行 + 事实行集合（SQLite）+ 一�
 - `clientMessageHub` 是工具应答邮箱，不承载机器事件。
 - 但本项目有一个天然优势：`state.messages` 只被 run 的循环 goroutine 触碰——Go 单 goroutine 消费 + 边界注入即可获得 ZCode 用命令队列实现的全部串行化保证，无需复杂锁。
 
-### 3.3 落地方案（Q1，P1）
+### 3.3 落地方案（Q1，P1）（✅ 已实施，2026-09-25，见 `docs/changelog/20260925_v1.0_新增运行时通知邮箱与后台委派.md`）
 
-1. 每 run 一个 `runtimeCommandBox`：mutex + 有序切片 + notify channel；命令类型先只做一种 `notification`（后台委派完成），结构预留 kind 字段。
-2. 消费点：引擎循环顶部、`step > 0` 时（对齐 ZCode 吸收器位置），全部取出、合并为**一条** user 消息（内容以 `<task-notification>` 风格 XML 信封拼接：task-id/status/summary/result/usage），落库为新 message_type（如 `notice`，前端渲染为系统卡片、可选不进历史回放——即 model-only 语义）。
-3. 落库镜像与恢复：入队时写 `tblLlmReactPendingInput`（kind=notification，status=admitted）；消费即置 guided；run 已结束/取消时消费前校验 run 状态，陈旧即丢弃并结算 `discarded(run_finished)`；run 重启不复活（对齐"后台子进程随重启已死"）。
-4. claim-once：通知入队用条件更新（`UPDATE ... SET status='notified' WHERE id=? AND status='pending'`）原子抢占，防重复回灌。
+1. 每 run 一个 `runtimeCommandBox`：mutex + 有序切片 + notify channel；命令类型先只做一种 `notification`（后台委派完成），结构预留 kind 字段。（✅ 已实施；实施偏差：省去 notify channel——Go 引擎只在模型步边界轮询吸收，无可被唤醒的等待点，channel 无消费场景；kind 语义由账本行 kind 列承载）
+2. 消费点：引擎循环顶部、`step > 0` 时（对齐 ZCode 吸收器位置），全部取出、合并为**一条** user 消息（内容以 `<task-notification>` 风格 XML 信封拼接：task-id/status/summary/result/usage），落库为新 message_type（如 `notice`，前端渲染为系统卡片、可选不进历史回放——即 model-only 语义）。（✅ 已实施：message_type=`react_notice`，历史回放与上下文重建经 modelMessage 通用解析路径包含该消息——保持"落库顺序=送模型顺序"不变量；另补纯文本 finish 判定前的兜底吸收点，通知不受软着陆约束；吸收即重置重复调用检测器；新增 `notice_drained` 下行事件供前端实时渲染系统卡片）
+3. 落库镜像与恢复：入队时写 `tblLlmReactPendingInput`（kind=notification，status=admitted）；消费即置 guided；run 已结束/取消时消费前校验 run 状态，陈旧即丢弃并结算 `discarded(run_finished)`；run 重启不复活（对齐"后台子进程随重启已死"）。（✅ 已实施并加强：投递方在 run **行锁事务**内校验父 run 活跃后落账、提交后入箱——投递与父 run 终态收敛串行化，父 run 已终态则不落账不入箱（比"落账后陈旧丢弃"更早拦截，无残留行）；run 终态未消费通知一律结算 discarded（结算函数按 kind 隔离：通知绝不参与 queue 降级与自动续跑）；重启不复活由既有 session_resumed 结算兜底）
+4. claim-once：通知入队用条件更新（`UPDATE ... SET status='notified' WHERE id=? AND status='pending'`）原子抢占，防重复回灌。（✅ 已实施：沿用账本既有词汇——吸收事务内 `UPDATE ... SET status='guided' WHERE id=? AND status='admitted'` 条件更新，与通知消息落库同一事务）
 
 ---
 
@@ -181,11 +181,11 @@ ZCode 的 Session = **一个持久身份行 + 事实行集合（SQLite）+ 一�
 
 ### 4.3 落地方案
 
-**A1（P1）：后台委派 + 完成通知（依赖 Q1）。**
+**A1（P1）：后台委派 + 完成通知（依赖 Q1）。（✅ 已实施，2026-09-25，见 `docs/changelog/20260925_v1.0_新增运行时通知邮箱与后台委派.md`）**
 
-1. `delegate_agent` 入参加 `background`（工具描述同步更新）；background=true 时：注册子 run（复用现有 `createSubAgentRunRecord` + 全局 cancel 注册）后**立即返回**工具结果："已后台启动委派 agent X（runId=…），完成后自动通知；请简要告知用户已启动并结束本轮回复"（对齐 ZCode async_launched 文案纪律）。
-2. 完成监视 goroutine：子 run 终态（finished/error/cancelled/timeout）→ 取最后非空 assistant 消息（复用 `subAgentFinalResponse`）+ usage → 条件更新 claim → 写账本行 + 入父 run 命令箱。
-3. 父 run 已结束时：通知结算 `discarded(run_finished)`（不复活 run，结果可在前端子 run 卡片查看）。与 ZCode 的一个**有意分歧**：父取消时级联取消后台子 run（ZCode detach 存活）——成本可控优先，避免用户取消后仍在烧 token；如需 detach 语义后续加开关。
+1. `delegate_agent` 入参加 `background`（工具描述同步更新）；background=true 时：注册子 run（复用现有 `createSubAgentRunRecord` + 全局 cancel 注册）后**立即返回**工具结果："已后台启动委派 agent X（runId=…），完成后自动通知；请简要告知用户已启动并结束本轮回复"（对齐 ZCode async_launched 文案纪律）。（✅ 已实施）
+2. 完成监视 goroutine：子 run 终态（finished/error/cancelled/timeout）→ 取最后非空 assistant 消息（复用 `subAgentFinalResponse`）+ usage → 条件更新 claim → 写账本行 + 入父 run 命令箱。（✅ 已实施：顺序调整为"run 行锁事务内校验父 run 活跃 + 落账本行，提交后入箱"——claim 与落账合一，投递围栏见 §3.3 第 3 条实施记录）
+3. 父 run 已结束时：通知结算 `discarded(run_finished)`（不复活 run，结果可在前端子 run 卡片查看）。与 ZCode 的一个**有意分歧**：父取消时级联取消后台子 run（ZCode detach 存活）——成本可控优先，避免用户取消后仍在烧 token；如需 detach 语义后续加开关。（✅ 已实施；实施偏差：父 run 已终态时不落账本行，仅记日志——账本只记录"存在过待消费意图"的事实，子 run 行本身即权威结果记录；父取消级联取消已实测：主 run cancelled、后台子 run state=cancelled、通知不回灌）
 
 **A2（P2）：SendMessage + 看门狗。** 父→子自由文本 = 向子 run 的 pendingInputs 注入 guide（**完全复用 S1 机制**，这正是 ZCode messageSink 的做法）；子已终态则报错或（远期）以该 agentPath 历史重建续聊 run。看门狗：`SubAgent.MaxRunSeconds`（默认 0=不限）超时置 timeout 终态，通知按失败回灌。
 

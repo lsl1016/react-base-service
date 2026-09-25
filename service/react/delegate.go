@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 
 	llm "react-base-service/api/llm"
@@ -33,6 +35,7 @@ import (
 	"react-base-service/service/workspace"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"react-base-service/golib/zlog"
 )
 
@@ -54,6 +57,9 @@ type delegateAgentInput struct {
 	AgentKey string `json:"agent_key"`
 	Task     string `json:"task"`
 	Expect   string `json:"expect"`
+	// Background=true 时异步启动（async_launched 等价物，A1）：立即返回启动回执，
+	// 子 run 完成后经运行时通知邮箱（Q1 命令箱）回灌父 run。
+	Background bool `json:"background"`
 }
 
 // delegateAgentToolDefinition 构造 delegate_agent 工具声明，描述动态渲染可用子 Agent 清单。
@@ -61,7 +67,8 @@ type delegateAgentInput struct {
 func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 	agentKeys := make([]string, 0, len(agents))
 	var sb strings.Builder
-	sb.WriteString("把一个自包含的子任务委派给专家子 Agent 隔离执行，阻塞等待其结论后返回。")
+	sb.WriteString("把一个自包含的子任务委派给专家子 Agent 隔离执行，默认阻塞等待其结论后返回；")
+	sb.WriteString("background=true 时立即返回（后台执行），完成通知自动回灌当前运行，适合耗时较长、无需阻塞当前对话的独立子任务。")
 	sb.WriteString("子 Agent 看不到当前对话历史，task 必须包含完成子任务所需的全部背景、已知信息与期望产出；")
 	sb.WriteString("需要多个子 Agent 配合时分别委派，不要把多个目标塞进一次调用。\n可用子 Agent：\n")
 	for _, agent := range agents {
@@ -86,6 +93,10 @@ func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 				},
 				"task":   stringSchema("完整自包含的任务描述。子 Agent 看不到当前对话，必须写明任务目标、全部已知信息（ID、时间范围、报错原文等）与需要产出什么。"),
 				"expect": stringSchema("期望返回什么（可选），例如：根因结论 + 关键证据。"),
+				"background": map[string]interface{}{
+					"type":        "boolean",
+					"description": "true=后台委派：立即返回，子 Agent 完成后以系统通知自动回灌当前运行（适合耗时长、无需阻塞对话的子任务）；缺省 false=阻塞等待结论。",
+				},
 			},
 			"required":             []string{"description", "agent_key", "task"},
 			"additionalProperties": false,
@@ -127,6 +138,11 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 		return fmt.Sprintf("agent %s is not available, available agents: %s", input.AgentKey, strings.Join(s.visibleAgentKeys(), ", ")), true, nil
 	}
 
+	// A1 后台委派：注册隔离子 run 后立即返回启动回执，完成通知经 Q1 命令箱回灌。
+	if input.Background {
+		return s.launchBackgroundDelegate(agent, input)
+	}
+
 	subReq, subRunID, err := s.buildSubAgentRuntimeRequest(agent, input.Task, input.Expect)
 	if err != nil {
 		return "", true, err
@@ -149,9 +165,9 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 	loopErr := executeReactLoop(s.ctx, subCtx, subReq, subRunID, s.sessionID, subEmitter, s.readClient)
 	// 委派计量（OH delegate:{id} 口径的等价物）：子 run 终态后把其 token 消耗（含其自身委派的
 	// 间接消耗，递归口径）原子累加进父 run 的 delegated 列，父级报表/预算口径由此闭环。
-	s.accumulateDelegatedTokens(subRunID, agent.AgentKey)
+	s.accumulateDelegatedTokens(s.ctx, subRunID, agent.AgentKey)
 	if loopErr != nil {
-		s.finalizeSubAgentRunError(subRunID, loopErr)
+		s.finalizeSubAgentRunError(s.ctx, subRunID, loopErr)
 		if IsReactRunCancelled(loopErr) || IsReactClientDisconnected(loopErr) || errors.Is(loopErr, context.DeadlineExceeded) {
 			metrics.ReactDelegationsTotal.WithLabelValues(agent.AgentKey, "cancelled").Inc()
 			return "", false, loopErr
@@ -174,6 +190,155 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 		"finalResponse": finalResponse,
 	})
 	return string(resultPayload), false, nil
+}
+
+// backgroundDelegateOutcome 是后台子 run 终态的投递输入（完成监视 goroutine 汇总）。
+type backgroundDelegateOutcome struct {
+	AgentKey  string
+	AgentPath string
+	SubRunID  string
+	LoopErr   error
+}
+
+// launchBackgroundDelegate 后台启动一次委派（A1，async_launched 等价物）：
+// 组装与同步路径完全一致的隔离子 run（独立 run 行/历史清空/工具过滤/模型继承），
+// 注册取消句柄后立即返回启动回执，子 run 在监视 goroutine 中执行到终态。
+//
+// 生命周期语义（与 ZCode 的有意分歧，方案 §4.3）：子 runCtx 从父 runCtx 派生——
+// 父 run 取消/断连级联取消后台子 run，成本可控优先，避免用户取消后仍在烧 token；
+// detach 存活语义如需支持后续加开关。
+//
+// gin ctx 用 headless 快照：后台子 run 可能比父 run/WS 连接活得久，原 gin ctx 归还
+// 连接后会被 gin 池回收复用，后台 goroutine 不能再持有；runCtx 的取消级联不受影响。
+// 父请求 Cookie 捕获进快照，HTTP 业务工具与同步委派保持同一调用态。
+func (s *reactEngineState) launchBackgroundDelegate(agent model.Agent, input delegateAgentInput) (string, bool, error) {
+	subReq, subRunID, err := s.buildSubAgentRuntimeRequest(agent, input.Task, input.Expect)
+	if err != nil {
+		return "", true, err
+	}
+	detached := newHeadlessGinContext(s.req.userName)
+	if cookies := requestCookies(s.ctx); len(cookies) > 0 {
+		inner := httptest.NewRequest(http.MethodPost, "/react/background-delegate", nil)
+		for name, value := range cookies {
+			inner.AddCookie(&http.Cookie{Name: name, Value: value})
+		}
+		detached.Request = inner
+	}
+
+	subCtx, cancel := context.WithCancelCause(s.runCtx)
+	registerReactRunCancel(subRunID, cancel)
+	metrics.RunsActive.Inc()
+	subEmitter := &runEventEmitter{runID: subRunID, sessionID: s.sessionID, agentPath: subReq.agentPath, write: s.emitter.write}
+	zlog.Infof(s.ctx, "[React.Delegate] 子Agent后台启动: parentRun=%s, subRun=%s, agentKey=%s, agentPath=%s", s.runID, subRunID, agent.AgentKey, subReq.agentPath)
+
+	go func() {
+		defer func() {
+			cancel(nil)
+			unregisterReactRunCancel(subRunID)
+			metrics.RunsActive.Dec()
+			// 子 run 的工作区随子 run 终态释放（幂等；未分配为空操作）。
+			workspace.Default().ReleaseRun(detached, subRunID)
+		}()
+		loopErr := executeReactLoop(detached, subCtx, subReq, subRunID, s.sessionID, subEmitter, s.readClient)
+		if loopErr != nil {
+			s.finalizeSubAgentRunError(detached, subRunID, loopErr)
+		}
+		s.accumulateDelegatedTokens(detached, subRunID, agent.AgentKey)
+		s.deliverBackgroundNotification(detached, backgroundDelegateOutcome{
+			AgentKey:  agent.AgentKey,
+			AgentPath: subReq.agentPath,
+			SubRunID:  subRunID,
+			LoopErr:   loopErr,
+		})
+	}()
+
+	metrics.ReactDelegationsTotal.WithLabelValues(agent.AgentKey, "background").Inc()
+	return renderBackgroundDelegateLaunchedText(agent.AgentKey, subRunID), false, nil
+}
+
+// deliverBackgroundNotification 把后台子 run 终态封装为完成通知并投递父 run 命令箱（Q1 消费端）：
+// 先读子 run 终态产物（最终回复/usage），再在 run 行锁事务内校验父 run 活跃并落账本行
+// （kind=notification, status=admitted），提交后入箱。账本行是唯一持久痕迹；
+// 父 run 已终态时不落账不入箱（结果留在子 run 记录里，绝不为通知复活 run）。
+func (s *reactEngineState) deliverBackgroundNotification(ctx *gin.Context, outcome backgroundDelegateOutcome) {
+	status := backgroundNotificationStatus(outcome.LoopErr)
+	summary := ""
+	if outcome.LoopErr != nil {
+		summary = outcome.LoopErr.Error()
+		if IsReactClientDisconnected(outcome.LoopErr) {
+			summary = "client disconnected"
+		}
+	} else {
+		final, err := subAgentFinalResponse(ctx, outcome.SubRunID)
+		if err != nil {
+			status = "error"
+			summary = fmt.Sprintf("子 Agent 未产生最终回复: %v", err)
+		} else {
+			summary = final
+		}
+	}
+	metrics.ReactDelegationsTotal.WithLabelValues(outcome.AgentKey, status).Inc()
+
+	inputTokens, outputTokens := 0, 0
+	if run, err := model.GetReactRunByRunID(ctx, outcome.SubRunID); err == nil && run != nil {
+		inputTokens = run.TotalInputTokens + run.DelegatedInputTokens
+		outputTokens = run.TotalOutputTokens + run.DelegatedOutputTokens
+	}
+
+	row := &model.ReactPendingInput{
+		SessionID: s.sessionID,
+		RunID:     s.runID,
+		Kind:      model.ReactPendingKindNotification,
+		Delivery:  model.ReactPendingDeliveryGuide,
+		Status:    model.ReactPendingStatusAdmitted,
+		Content:   renderTaskNotificationEnvelope(runtimeNotification{
+			SubRunID:     outcome.SubRunID,
+			AgentKey:     outcome.AgentKey,
+			AgentPath:    outcome.AgentPath,
+			Status:       status,
+			Summary:      summary,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+		}),
+	}
+	err := model.GetLLMDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 父 run 活跃校验与账本落账同事务（run 行锁）：与父 run 终态收敛
+		//（先改 state 再结算）串行化，杜绝"父 run 恰好收尾"窗口产生无人消费的残留行。
+		parentRun, err := model.GetReactRunByRunIDForUpdateWithDB(ctx, tx, s.runID)
+		if err != nil {
+			return err
+		}
+		if parentRun == nil || !shouldDeliverBackgroundNotification(parentRun.State) {
+			return errBackgroundParentInactive
+		}
+		seq, err := model.GetReactPendingInputMaxSeqBySessionIDWithDB(ctx, tx, s.sessionID)
+		if err != nil {
+			return err
+		}
+		row.Seq = seq + 1
+		return model.CreateReactPendingInputWithDB(ctx, tx, row)
+	})
+	if errors.Is(err, errBackgroundParentInactive) {
+		zlog.Infof(ctx, "[React.Notify] 父 run 已终态，后台完成通知不回灌(结果见子 run 记录): parentRun=%s, subRun=%s, agent=%s, status=%s", s.runID, outcome.SubRunID, outcome.AgentKey, status)
+		return
+	}
+	if err != nil {
+		zlog.Warnf(ctx, "[React.Notify] 后台完成通知落账失败(忽略,结果见子 run 记录): parentRun=%s, subRun=%s, err=%v", s.runID, outcome.SubRunID, err)
+		return
+	}
+	if s.commands != nil {
+		s.commands.PushNotification(runtimeNotification{
+			PendingInputID: row.ID,
+			SubRunID:       outcome.SubRunID,
+			AgentKey:       outcome.AgentKey,
+			AgentPath:      outcome.AgentPath,
+			Status:         status,
+			Summary:        summary,
+			InputTokens:    inputTokens,
+			OutputTokens:   outputTokens,
+		})
+	}
+	zlog.Infof(ctx, "[React.Notify] 后台委派完成通知已投递命令箱: parentRun=%s, subRun=%s, agent=%s, status=%s, pendingInputId=%s", s.runID, outcome.SubRunID, outcome.AgentKey, status, pendingInputID(row.ID))
 }
 
 // buildSubAgentRuntimeRequest 组装子 run 的运行请求：复用 prepareRuntimeRequest 完成 caller/apikey/
@@ -294,10 +459,11 @@ func (s *reactEngineState) createSubAgentRunRecord(req *runtimeRequest, subRunID
 }
 
 // finalizeSubAgentRunError 收敛子 run 的失败终态（run() 错误路径的子 run 对应物）。
-func (s *reactEngineState) finalizeSubAgentRunError(subRunID string, loopErr error) {
+// ctx 由调用方提供：后台监视 goroutine 必须传脱离 WS 连接的 headless ctx。
+func (s *reactEngineState) finalizeSubAgentRunError(ctx *gin.Context, subRunID string, loopErr error) {
 	if IsReactRunCancelled(loopErr) {
 		metrics.RunsTotal.WithLabelValues("cancelled").Inc()
-		_ = model.UpdateReactRunByRunID(s.ctx, subRunID, map[string]any{"state": model.ReactRunStateCancelled})
+		_ = model.UpdateReactRunByRunID(ctx, subRunID, map[string]any{"state": model.ReactRunStateCancelled})
 		return
 	}
 	metrics.RunsTotal.WithLabelValues("error").Inc()
@@ -305,7 +471,7 @@ func (s *reactEngineState) finalizeSubAgentRunError(subRunID string, loopErr err
 	if IsReactClientDisconnected(loopErr) {
 		errorMessage = "client disconnected"
 	}
-	_ = model.UpdateReactRunByRunID(s.ctx, subRunID, map[string]any{
+	_ = model.UpdateReactRunByRunID(ctx, subRunID, map[string]any{
 		"state":         model.ReactRunStateError,
 		"error_message": errorMessage,
 	})
@@ -355,10 +521,11 @@ func (s *reactEngineState) resolveAgentForKey(agentKey string) (model.Agent, boo
 // accumulateDelegatedTokens 把子 run 的 token 消耗（自身 total + 其 delegated 递归口径）
 // 原子累加进父 run 行；并行委派下多个子 run 并发累加同一父行，SQL 自增天然安全。
 // 同时累加父 state 的内存镜像，供 done 事件的 delegated 口径展示。
-func (s *reactEngineState) accumulateDelegatedTokens(subRunID, agentKey string) {
-	subRun, err := model.GetReactRunByRunID(s.ctx, subRunID)
+// ctx 由调用方提供：后台监视 goroutine 必须传脱离 WS 连接的 headless ctx。
+func (s *reactEngineState) accumulateDelegatedTokens(ctx *gin.Context, subRunID, agentKey string) {
+	subRun, err := model.GetReactRunByRunID(ctx, subRunID)
 	if err != nil || subRun == nil {
-		zlog.Warnf(s.ctx, "[React.Delegate] 读取子 run 计量失败(忽略): parentRun=%s, subRun=%s, err=%v", s.runID, subRunID, err)
+		zlog.Warnf(ctx, "[React.Delegate] 读取子 run 计量失败(忽略): parentRun=%s, subRun=%s, err=%v", s.runID, subRunID, err)
 		return
 	}
 	inputTokens := subRun.TotalInputTokens + subRun.DelegatedInputTokens
@@ -366,8 +533,8 @@ func (s *reactEngineState) accumulateDelegatedTokens(subRunID, agentKey string) 
 	if inputTokens == 0 && outputTokens == 0 {
 		return
 	}
-	if err := model.AccumulateReactRunDelegatedTokens(s.ctx, s.runID, inputTokens, outputTokens); err != nil {
-		zlog.Warnf(s.ctx, "[React.Delegate] 委派计量累加失败(忽略): parentRun=%s, subRun=%s, err=%v", s.runID, subRunID, err)
+	if err := model.AccumulateReactRunDelegatedTokens(ctx, s.runID, inputTokens, outputTokens); err != nil {
+		zlog.Warnf(ctx, "[React.Delegate] 委派计量累加失败(忽略): parentRun=%s, subRun=%s, err=%v", s.runID, subRunID, err)
 	}
 	s.delegatedInputTokens.Add(int64(inputTokens))
 	s.delegatedOutputTokens.Add(int64(outputTokens))

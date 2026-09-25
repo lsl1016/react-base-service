@@ -25,6 +25,10 @@ const (
 	ReactMessageTypeToolResult       = "react_tool_result"
 	ReactMessageTypeCompactSummary   = "react_compact_summary"
 	ReactMessageTypeRuntimeContext   = "react_runtime_context"
+	// ReactMessageTypeNotice 是运行时通知邮箱（Q1）合并落库的机器事件消息：
+	// model-only 的 user 角色 entry（前端渲染系统卡片）；历史回放与上下文重建按
+	// modelMessage 信封走通用解析路径，保证"落库顺序=送模型顺序"不变量。
+	ReactMessageTypeNotice = "react_notice"
 )
 
 type ReactMessage struct {

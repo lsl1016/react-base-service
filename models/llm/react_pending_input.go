@@ -104,11 +104,26 @@ func MarkPendingInputGuidedWithDB(ctx *gin.Context, db *gorm.DB, id uint) (bool,
 	return tx.RowsAffected > 0, nil
 }
 
-// SettlePendingInputsByRunIDWithDB 将 run 内未消费的 admitted 输入批量结算为 discarded，
-// 返回受影响行数。run 取消/出错/超时/正常结束时调用（WHERE status='admitted' 保证与消费事务互斥）。
+// SettlePendingInputsByRunIDWithDB 将 run 内未消费的 admitted 用户输入（kind=user_input）
+// 批量结算为 discarded，返回受影响行数。run 取消/出错/超时/正常结束时调用
+// （WHERE status='admitted' 保证与消费事务互斥）。
+// 后台通知（kind=notification）由 SettleNotificationsByRunIDWithDB 单独结算：
+// 通知绝不降级排队，run 终态后命令箱已死、没有消费方。
 func SettlePendingInputsByRunIDWithDB(ctx *gin.Context, db *gorm.DB, runID, settleReason string) (int64, error) {
 	tx := db.Model(&ReactPendingInput{}).WithContext(ctx).
-		Where("run_id = ? AND status = ?", runID, ReactPendingStatusAdmitted).
+		Where("run_id = ? AND kind = ? AND status = ?", runID, ReactPendingKindUserInput, ReactPendingStatusAdmitted).
+		Updates(map[string]any{"status": ReactPendingStatusDiscarded, "settle_reason": settleReason})
+	if tx.Error != nil {
+		return 0, components.ErrorDbUpdate.Wrap(tx.Error)
+	}
+	return tx.RowsAffected, nil
+}
+
+// SettleNotificationsByRunIDWithDB 将 run 内未消费的 admitted 后台通知结算为 discarded
+// （run 终态后命令箱随 run 死亡，通知没有消费方；结果留在子 run 记录可查），返回受影响行数。
+func SettleNotificationsByRunIDWithDB(ctx *gin.Context, db *gorm.DB, runID, settleReason string) (int64, error) {
+	tx := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Where("run_id = ? AND kind = ? AND status = ?", runID, ReactPendingKindNotification, ReactPendingStatusAdmitted).
 		Updates(map[string]any{"status": ReactPendingStatusDiscarded, "settle_reason": settleReason})
 	if tx.Error != nil {
 		return 0, components.ErrorDbUpdate.Wrap(tx.Error)
@@ -187,9 +202,10 @@ func MarkPendingInputPromotedWithDB(ctx *gin.Context, db *gorm.DB, id uint, runI
 // FallbackPendingInputsToQueueWithDB 将 run 内未消费的 admitted guide 降级为 queue
 // （对齐 ZCode fallbackPendingGuidesToQueue：turn 打断/结束时不丢输入，delivery 改写为 queue），
 // 返回受影响行数。queue 排队关闭时调用方应走 discard 结算而不是本函数。
+// 仅限 kind=user_input：后台通知绝不能变成排队用户输入被自动续跑。
 func FallbackPendingInputsToQueueWithDB(ctx *gin.Context, db *gorm.DB, runID string) (int64, error) {
 	tx := db.Model(&ReactPendingInput{}).WithContext(ctx).
-		Where("run_id = ? AND status = ?", runID, ReactPendingStatusAdmitted).
+		Where("run_id = ? AND kind = ? AND status = ?", runID, ReactPendingKindUserInput, ReactPendingStatusAdmitted).
 		Updates(map[string]any{"status": ReactPendingStatusQueued, "delivery": ReactPendingDeliveryQueue})
 	if tx.Error != nil {
 		return 0, components.ErrorDbUpdate.Wrap(tx.Error)

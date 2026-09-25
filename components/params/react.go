@@ -260,6 +260,13 @@ type ReactSteerDiscardedPayload struct {
 	Reason string `json:"reason"`
 }
 
+// ReactNoticeDrainedPayload 是运行时通知邮箱（Q1）在模型步边界吸收后台完成通知的事件
+//（notice_drained）：MessageID 指向合并落库的 react_notice 消息，前端渲染为系统卡片。
+type ReactNoticeDrainedPayload struct {
+	MessageID string `json:"messageId"`
+	Count     int    `json:"count"`
+}
+
 type ReactSessionListReq struct {
 	CallerKey   string   `json:"callerKey" binding:"required"`
 	RouteValues []string `json:"routeValues"`

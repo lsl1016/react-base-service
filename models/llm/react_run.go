@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -101,6 +102,23 @@ func GetReactRunByRunID(ctx *gin.Context, runID string) (*ReactRun, error) {
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
 	return &run, nil
+}
+
+// GetReactRunByRunIDForUpdateWithDB 行锁读取 run 行（事务内使用）。
+// 通知投递（A1）用它把「父 run 活跃校验 + 账本落账」与父 run 的终态收敛串行化：
+// finish 先改 state 再结算，本查询持锁读到 running 则其后的终态结算必然扫到刚落的账本行。
+func GetReactRunByRunIDForUpdateWithDB(ctx *gin.Context, db *gorm.DB, runID string) (*ReactRun, error) {
+	var runs []ReactRun
+	err := db.Model(&ReactRun{}).WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("run_id = ?", runID).Limit(1).Find(&runs).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	if len(runs) == 0 {
+		return nil, nil
+	}
+	return &runs[0], nil
 }
 
 func UpdateReactRunByRunID(ctx *gin.Context, runID string, updates map[string]any) error {

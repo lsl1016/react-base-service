@@ -1,7 +1,7 @@
 ---
 title: ReAct Runtime 模块功能文档
 date: 2026-09-25
-version: v1.3
+version: v1.4
 type: system
 module: react_runtime
 maintainer: react-base-service 项目组
@@ -81,6 +81,16 @@ tool_call id 双层去重（Phase 2）：流收集阶段按非空 id 去重（�
 5. **终态结算**：queue 开启时，未消费的 admitted guide 在 run 终态降级排队（delivery→queued，广播 `steer_delivery_changed`）；queue 关闭时结算 discarded——取消/断连 → `turn_cancelled`、出错/超时/过期 → `turn_failed`、正常结束仍未消费 → `run_finished`。结算/降级事件先于终态事件（cancelled/error/timeout/done）发送。
 6. **WS 事件词汇**：`steer_guided`/`steer_queued`/`steer_rejected`（准入回执）、`steer_drained`（guide 边界消费 / 自动续跑队首晋升）、`steer_delivery_changed`（guide 降级排队）、`steer_discarded`（结算作废）。
 
+### 3.8 运行时通知邮箱与后台委派（Q1/A1）
+
+机器事件与用户意图分流：Steering 账本承载用户输入（§3.7），运行时命令箱（`service/react/command_box.go`，对齐 ZCode runtime command queue / 轮内吸收器）承载后台任务完成通知：
+
+1. **命令箱**：每个 run 一个 `runtimeCommandBox`（mutex + FIFO 切片），完成监视 goroutine 投递、引擎循环唯一消费；通知投递时镜像账本行（`tblLlmReactPendingInput`，kind=notification、status=admitted），账本行是唯一持久痕迹，命令箱随进程死亡（重启不复活，残留 admitted 由 session_resumed 作废）。
+2. **投递围栏**：后台子 run 终态后，完成监视 goroutine 在 run 行锁事务内校验父 run 活跃并落账本行——父 run 已终态则不落账不入箱（结果留在子 run 记录可查，绝不为通知复活 run）；行锁把投递与父 run 的终态收敛串行化，不会产生无人消费的残留行。
+3. **吸收点**：引擎循环顶部（step>0 起）与纯文本 finish 判定前；全部取出、条件更新 claim-once（admitted→guided）、合并为**一条** model-only 的 user 消息（`react_notice` 类型，`<task-notification>` XML 信封：task-id/agent/status/summary(超长截断)/usage）落库并拼进当前轮请求——不新开 turn；吸收即重置重复调用检测器；通知不受软着陆约束。run 收敛时未消费通知一律结算 discarded（不降级排队）。
+4. **后台委派（A1）**：`delegate_agent` 新增 `background` 参数——true 时组装与同步路径一致的隔离子 run 后立即返回启动回执（async_launched 文案纪律：简要转达、结束本轮回复、不等待不编造结论），子 run 在监视 goroutine 中执行到终态并经命令箱回灌。生命周期锚在父 runCtx（父取消/断连级联取消后台子 run——与 ZCode detach 存活的有意分歧，成本可控优先）；gin ctx 使用 headless 快照（后台子 run 可能比 WS 连接活得久）并保留父请求 Cookie。
+5. **WS 事件**：`notice_drained`（通知被吸收，payload 含 messageId/count）；前端按 `react_notice` 消息类型渲染系统卡片。
+
 ## 4. 数据模型
 
 | 表/模型 | 作用 |
@@ -89,19 +99,19 @@ tool_call id 双层去重（Phase 2）：流收集阶段按非空 id 去重（�
 | `tblLlmReactRun` / `ReactRun` | 单次 Run 状态、模型、步骤、能力快照和 token 使用量 |
 | `tblLlmReactMessage` / `ReactMessage` | 用户、助手、工具等持久化消息 |
 | `tblLlmReactToolResult` / `ReactToolResult` | 大工具结果和 `resultRef` |
-| `tblLlmReactPendingInput` / `ReactPendingInput` | Steering 排队输入账本（guide/queue 准入与结算） |
+| `tblLlmReactPendingInput` / `ReactPendingInput` | Steering 排队输入账本 + 后台通知镜像（kind=user_input/notification） |
 | `tblLlmReactAsyncTask` / `ReactAsyncTask` | 异步提交型 Tool 的跨 Run 状态 |
 | `tblLlmReactArtifact` / `ReactArtifact` | Python 等运行产物元信息 |
 
 `ReactRun.state` 包含 `running`、`waiting_client_message`、`waiting_plan`、`cancelling`、`finished`、`error`、`cancelled`、`expired`、`timeout`。
 
-`ReactPendingInput.status` 流转：`admitted` →（guide 被消费）`guided` / （不可引导降级）`queued` / （结算）`discarded`；`queued` →（晋升为某 run 的输入，自动续跑或 S3 显式发送）`guided` 或（用户取消，S3）`cancelled`；`guided`/`cancelled`/`discarded` 为终态。
+`ReactPendingInput.status` 流转：`admitted` →（guide 被消费 / 通知被吸收）`guided` / （不可引导降级）`queued` / （结算）`discarded`；`queued` →（晋升为某 run 的输入，自动续跑或 S3 显式发送）`guided` 或（用户取消，S3）`cancelled`；`guided`/`cancelled`/`discarded` 为终态。kind=notification 的行绝不进入 queue 降级与自动续跑。
 
 ## 5. 配置项与限制
 
 `conf/mount/custom.yaml` 的 `llm.react` 提供 `max_steps`、`stream_idle_timeout_sec`、`models.*`、`context_compact.*`、`tool_result.*`、`allow_plan`、`steering.enabled`（guide 引导注入总开关，默认 false）、`steering.queue`（排队开关，默认 false）和 `steering.queue_auto_drain`（run 正常结束后自动续跑队首，默认 true，仅 queue 开启时生效）等配置。
 
-当前异步任务机制用于跨 Run 状态提醒，不会在外部任务完成后自动唤醒已结束的 Run。
+当前异步任务机制用于跨 Run 状态提醒，不会在外部任务完成后自动唤醒已结束的 Run；后台委派（§3.8）的完成通知只回灌仍处于运行中的父 run。
 
 ## 6. 历史版本
 
@@ -111,3 +121,4 @@ tool_call id 双层去重（Phase 2）：流收集阶段按非空 id 去重（�
 | v1.1 | 2026-09-25 | react-base-service 项目组 | 新增 3.6 节：Tool 结果闭合不变量（中断登记制/引擎单点落库/重建孤儿回填）与 tool_call id 双层去重 |
 | v1.2 | 2026-09-25 | react-base-service 项目组 | 新增 3.7 节：Steering 引导注入（准入决策、tblLlmReactPendingInput 账本、唯一注入点、三路结算与 WS steer_* 事件）；补全 run 状态枚举与数据模型 |
 | v1.3 | 2026-09-25 | react-base-service 项目组 | 3.7 节扩展 S2：排队（payload 快照 + queueLength 回执）、run 结束自动续跑（claim-once 晋升原子化）、guide 降级排队与失败暂停语义；新增 queue_auto_drain 配置 |
+| v1.4 | 2026-09-25 | react-base-service 项目组 | 新增 3.8 节：运行时通知邮箱（runtimeCommandBox、模型步边界吸收、react_notice 消息、通知结算与 queue 降级隔离）与后台委派（delegate_agent background 参数、async_launched 回执、完成通知经命令箱回灌、父取消级联语义） |

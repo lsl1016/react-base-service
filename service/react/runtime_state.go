@@ -97,6 +97,9 @@ type reactEngineState struct {
 	readClient ClientMessageReader
 	services   runtimeServices
 	clientHub  *clientMessageHub
+	// commands 是本 run 的运行时命令箱（Q1 通知邮箱）：后台委派完成通知经完成监视
+	// goroutine 投递进来，引擎在模型步边界吸收（见 command_box.go）。每个 run 独立一箱。
+	commands *runtimeCommandBox
 
 	// roundInterruptedResults 登记本轮被中断路径合成、待引擎收口统一落库的 tool_result
 	//（toolUseID -> 结果）。Tool Runtime 闭合治理（Phase 1）：中断回填的唯一持久化点
@@ -221,6 +224,7 @@ func newReactEngineState(
 		readClient:          readClient,
 		services:            req.services,
 		clientHub:           req.clientHub,
+		commands:            newRuntimeCommandBox(),
 		agentPath:           req.agentPath,
 		depth:               req.depth,
 		agentPermissionMode: req.agentPermissionMode,

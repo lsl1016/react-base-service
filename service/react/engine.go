@@ -113,6 +113,13 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 
 	maxSteps := normalizeMaxSteps(req.payload.MaxSteps)
 	for step := 0; step < maxSteps; step++ {
+		// Q1（runtime-command-active-loop 对齐）：从第二个模型步起，每次迭代顶部吸收
+		// 后台任务完成通知，合并为一条 model-only user 消息拼进当前轮请求——不新开 turn。
+		if step > 0 {
+			if _, err := state.drainRuntimeNotifications(step); err != nil {
+				return err
+			}
+		}
 		// 软着陆判定：步数临近耗尽/时间超 90%/token 超 90% 时进入收尾窗口（先于本轮模型调用）。
 		state.maybeEnterSoftLanding(step, maxSteps)
 		if err := model.UpdateReactRunByRunID(ctx, runID, map[string]interface{}{"step_index": step}); err != nil {
@@ -191,6 +198,11 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 				if injected, drainErr := state.drainPendingGuideBoundary(step); drainErr == nil && injected {
 					continue
 				}
+			}
+			// Q1：run 收敛前最后吸收一次通知邮箱——后台委派完成通知不因收尾丢失
+			//（吸收后继续下一轮，让模型在最终答复中转达结果；通知不受软着陆约束）。
+			if injected, drainErr := state.drainRuntimeNotifications(step); drainErr == nil && injected {
+				continue
 			}
 			// 没有工具调用时说明本轮已经得到最终回答，直接收敛 run 状态并结束循环。
 			return state.finish(streamResult.Content, streamResult.TerminationReason)
@@ -686,9 +698,9 @@ func (s *reactEngineState) finish(content, terminationReason string) error {
 			"last_message": trimRunLastMessage(content),
 		})
 	}
-	// Steering S1：run 正常结束仍未消费的 guide 结算 discarded(run_finished)
-	//（软着陆窗口收尾/消费失败等场景；S2 将改为降级排队）。
-	settleRunPendingGuides(s.ctx, s.emitter, s.runID, model.ReactPendingSettleRunFinished)
+	// Steering S1/S2 + Q1：run 正常结束仍未消费的输入统一结算——
+	// 后台通知 discarded（run_finished），guide 按 queue 开关降级排队或 discarded。
+	settleRunPendingInputs(s.ctx, s.emitter, s.runID, model.ReactPendingSettleRunFinished)
 	return s.emitter.Emit(EventDone, params.ReactDonePayload{
 		InputTokens:           s.inputTokens,
 		OutputTokens:          s.outputTokens,
