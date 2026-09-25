@@ -149,7 +149,7 @@ func GetClient(platformType, modelKey string) (LLMClient, error) {
 	}
 
 	switch modelKey {
-	case "claude":
+	case "claude", "deepseek":
 		return NewClaudeClient(apiKey, catalog.DefaultVersion, endpoint), nil
 	case "gpt":
 		return NewGPTClient(apiKey, catalog.DefaultVersion, endpoint), nil
@@ -193,7 +193,7 @@ func GetClientWithKey(apiKey, modelKey string) (LLMClient, error) {
 	}
 
 	switch modelKey {
-	case "claude":
+	case "claude", "deepseek":
 		return NewClaudeClient(apiKey, catalog.DefaultVersion, endpoint), nil
 	case "gpt":
 		return NewGPTClient(apiKey, catalog.DefaultVersion, endpoint), nil
@@ -228,18 +228,26 @@ func GetSupportedModels() []ModelMeta {
 // modelKeyClientType 新枚举 model_key → client 类型（gpt/claude）
 // OpenAI 兼容厂商统一走 gpt client，Anthropic 走 claude client
 var modelKeyClientType = map[string]string{
-	"OpenAI":    "gpt",
-	"DeepSeek":  "gpt",
-	"xAI":       "gpt",
-	"Moonshot":  "gpt",
-	"通义千问":      "gpt",
-	"智谱":        "gpt",
-	"火山方舟（字节）":  "gpt",
-	"Google":    "gpt",
-	"MiniMax":   "gpt",
-	"文心一言":      "gpt",
-	"Anthropic": "claude",
-	"自建网关":      "gpt",
+	"OpenAI":             "gpt",
+	"DeepSeek":           "gpt",
+	"DeepSeek Anthropic": "claude",
+	"xAI":                "gpt",
+	"Moonshot":           "gpt",
+	"通义千问":               "gpt",
+	"智谱":                 "gpt",
+	"火山方舟（字节）":           "gpt",
+	"Google":             "gpt",
+	"MiniMax":            "gpt",
+	"文心一言":               "gpt",
+	"Anthropic":          "claude",
+	"自建网关":               "gpt",
+}
+
+// modelKeyEndpointOverrides 声明少数厂商枚举的专用 endpoint key。
+// 例如 DeepSeek 同时有 OpenAI 兼容和 Anthropic 兼容两条接入面，不能只靠 gpt/claude-cn 推导。
+var modelKeyEndpointOverrides = map[string]string{
+	"deepseek":           "deepseek",
+	"DeepSeek Anthropic": "deepseek",
 }
 
 // modelKeyIsCN 标记哪些厂商走国内代理，未出现在此 map 中的默认走国外代理
@@ -277,6 +285,8 @@ func NormalizeModelKey(key string) string {
 		return "gpt"
 	case "claude":
 		return "claude"
+	case "deepseek":
+		return "claude"
 	case "minimax":
 		return "minimax" // 兼容历史枚举值
 	}
@@ -300,7 +310,9 @@ func GetClientWithUserModel(apiKey, modelKey string) (LLMClient, error) {
 	}
 
 	endpointKey := clientType
-	if modelKeyIsCN[modelKey] {
+	if override, ok := modelKeyEndpointOverrides[modelKey]; ok {
+		endpointKey = override
+	} else if modelKeyIsCN[modelKey] {
 		endpointKey = clientType + "-cn"
 	}
 

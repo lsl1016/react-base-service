@@ -24,7 +24,7 @@ func setTestLLMConfig(t *testing.T, apiCfg conf.LLMApiConfig, models map[string]
 func TestResolveApiKey(t *testing.T) {
 	setTestLLMConfig(t, conf.LLMApiConfig{
 		ApiKeys: map[string]string{
-			"demo": "minimax-demo-key",
+			"demo":   "minimax-demo-key",
 			"legacy": "legacy-app-key",
 		},
 	}, nil)
@@ -40,7 +40,7 @@ func TestResolveApiKey(t *testing.T) {
 func TestGetClient_MinimaxUsesPlatformAPIKey(t *testing.T) {
 	setTestLLMConfig(t, conf.LLMApiConfig{
 		ApiKeys: map[string]string{
-			"demo": "minimax-demo-key",
+			"demo":   "minimax-demo-key",
 			"legacy": "legacy-app-key",
 		},
 		Endpoints: map[string]conf.EndpointConfig{
@@ -114,6 +114,68 @@ func TestGetClientWithKey_Minimax(t *testing.T) {
 	}
 	if minimaxClient.apiKey != "custom-minimax-key" {
 		t.Fatalf("apiKey = %q, want %q", minimaxClient.apiKey, "custom-minimax-key")
+	}
+}
+
+func TestGetClient_DeepSeekUsesClaudeClient(t *testing.T) {
+	setTestLLMConfig(t, conf.LLMApiConfig{
+		ApiKeys: map[string]string{
+			"demo": "deepseek-demo-key",
+		},
+		Endpoints: map[string]conf.EndpointConfig{
+			"deepseek": {
+				ApiUrl:    "https://api.deepseek.com/anthropic",
+				MaxTokens: 32768,
+			},
+		},
+	}, map[string]conf.ModelCatalog{
+		"deepseek": {
+			DefaultVersion: "deepseek-flash",
+		},
+	})
+
+	client, err := GetClient("demo", "deepseek")
+	if err != nil {
+		t.Fatalf("GetClient(demo, deepseek) returned error: %v", err)
+	}
+
+	claudeClient, ok := client.(*ClaudeClient)
+	if !ok {
+		t.Fatalf("GetClient(demo, deepseek) returned %T, want *ClaudeClient", client)
+	}
+	if claudeClient.apiKey != "deepseek-demo-key" {
+		t.Fatalf("apiKey = %q, want %q", claudeClient.apiKey, "deepseek-demo-key")
+	}
+	if claudeClient.config.ApiUrl != "https://api.deepseek.com/anthropic" {
+		t.Fatalf("apiUrl = %q", claudeClient.config.ApiUrl)
+	}
+}
+
+func TestGetClientWithUserModel_DeepSeekAnthropicEndpoint(t *testing.T) {
+	setTestLLMConfig(t, conf.LLMApiConfig{
+		Endpoints: map[string]conf.EndpointConfig{
+			"claude": {
+				ApiUrl:    "https://example.com/anthropic",
+				MaxTokens: 4096,
+			},
+			"deepseek": {
+				ApiUrl:    "https://api.deepseek.com/anthropic",
+				MaxTokens: 32768,
+			},
+		},
+	}, nil)
+
+	client, err := GetClientWithUserModel("custom-deepseek-key", "DeepSeek Anthropic")
+	if err != nil {
+		t.Fatalf("GetClientWithUserModel(custom, DeepSeek Anthropic) returned error: %v", err)
+	}
+
+	claudeClient, ok := client.(*ClaudeClient)
+	if !ok {
+		t.Fatalf("GetClientWithUserModel(custom, DeepSeek Anthropic) returned %T, want *ClaudeClient", client)
+	}
+	if claudeClient.config.ApiUrl != "https://api.deepseek.com/anthropic" {
+		t.Fatalf("apiUrl = %q", claudeClient.config.ApiUrl)
 	}
 }
 

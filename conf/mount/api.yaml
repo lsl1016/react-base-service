@@ -7,6 +7,9 @@ llm:
     claude:
       api_url: "https://open.bigmodel.cn/api/anthropic"
       max_tokens: 32768
+    deepseek:
+      api_url: "https://api.deepseek.com/anthropic"
+      max_tokens: 32768
     gpt:
       api_url: "https://openproxy.example.com/openproxy/rp"
       max_tokens: 32768

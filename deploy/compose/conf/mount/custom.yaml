@@ -4,6 +4,10 @@ llm:
     claude:
       default_version: "glm-4.6"
       max_context_tokens: 1000000
+    deepseek:
+      versions: ["deepseek-flash", "deepseek-v4-pro"]
+      default_version: "deepseek-flash"
+      max_context_tokens: 1000000
     gpt:
       default_version: "glm-4.6"
       max_context_tokens: 1000000
@@ -28,6 +32,12 @@ llm:
         - model_key: "claude"
           model_version: "glm-4.6"
           display_name: "GLM 4.6 (Anthropic 协议)"
+        - model_key: "deepseek"
+          model_version: "deepseek-flash"
+          display_name: "DeepSeek Flash (Anthropic 协议)"
+        - model_key: "deepseek"
+          model_version: "deepseek-v4-pro"
+          display_name: "DeepSeek V4 Pro (Anthropic 协议)"
       mutual_failover: false
     # 历史上下文自动压缩：高水位触发、低水位目标。
     context_compact:
