@@ -59,12 +59,17 @@ func buildMemoryContextForRun(ctx *gin.Context, callerKey, userName string) (str
 func memoryToolDefinitions() []llm.ToolDefinition {
 	return []llm.ToolDefinition{
 		objectTool(metaToolMemoryList,
-			"列出当前作用域的长期记忆索引（默认按需层全部）。返回条目的 itemId/title/description/tags/layer，不含正文；需要正文时用 memory_read。",
+			"列出当前作用域的长期记忆索引（默认按需层全部）。返回条目的 itemId/title/description/tags/layer/memoryType，不含正文；需要正文时用 memory_read。",
 			map[string]interface{}{
 				"layer": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"resident", "detached", "all"},
 					"description": "层级过滤，默认 detached。",
+				},
+				"memoryType": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"preference", "fact", "event", "procedure"},
+					"description": "记忆类型过滤，可选。",
 				},
 				"tag":     stringSchema("按标签精确过滤，可选。"),
 				"keyword": stringSchema("标题/描述关键词过滤，可选。"),
@@ -106,6 +111,11 @@ func memoryWriteToolDefinition() llm.ToolDefinition {
 				"title":         stringSchema("短标题（≤32字），create/update 必填。"),
 				"content":       stringSchema("记忆正文，一到三句原子事实（≤500字），create/update 必填。"),
 				"retrievalHint": stringSchema("检索提示：什么场景需要想起这条记忆（≤512字），create/update 必填。"),
+				"memoryType": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"preference", "fact", "event", "procedure"},
+					"description": "记忆类型，默认 fact。preference 仅用于用户明确表达过的稳定偏好（称呼、语言、输出格式偏好）；event 用于带时间的关键决定/经历（正文中注明「截至 YYYY-MM-DD」）；procedure 用于沉淀的可复用工作方法。拿不准就用 fact。update 不传保持原类型。",
+				},
 				"tags":          stringSchema("逗号分隔标签，可选。"),
 				"reason":        stringSchema("必填：为什么写入/修改/删除。"),
 			},
@@ -116,15 +126,17 @@ func memoryWriteToolDefinition() llm.ToolDefinition {
 }
 
 type memoryListInput struct {
-	Layer   string `json:"layer"`
-	Tag     string `json:"tag"`
-	Keyword string `json:"keyword"`
-	Limit   int    `json:"limit"`
+	Layer      string `json:"layer"`
+	MemoryType string `json:"memoryType"`
+	Tag        string `json:"tag"`
+	Keyword    string `json:"keyword"`
+	Limit      int    `json:"limit"`
 }
 
 type memoryListItemView struct {
 	ItemID      uint   `json:"itemId"`
 	Layer       string `json:"layer"`
+	MemoryType  string `json:"memoryType"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Tags        string `json:"tags"`
@@ -142,10 +154,11 @@ func (s *reactEngineState) executeMemoryList(input json.RawMessage) (string, boo
 	memoryRuntime := s.services.memoryExecutor()
 	scope := memoryRuntime.ResolveScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
 	items, err := memoryRuntime.List(s.ctx, scope, memoryService.RuntimeListOptions{
-		Layer:   req.Layer,
-		Tag:     req.Tag,
-		Keyword: req.Keyword,
-		Limit:   req.Limit,
+		Layer:      req.Layer,
+		MemoryType: req.MemoryType,
+		Tag:        req.Tag,
+		Keyword:    req.Keyword,
+		Limit:      req.Limit,
 	})
 	if err != nil {
 		return "", true, err
@@ -202,6 +215,7 @@ type memoryWriteInput struct {
 	Title       string `json:"title"`
 	Content     string `json:"content"`
 	Description string `json:"retrievalHint"`
+	MemoryType  string `json:"memoryType"`
 	Tags        string `json:"tags"`
 	Reason      string `json:"reason"`
 }
@@ -235,6 +249,7 @@ func (s *reactEngineState) executeMemoryWrite(input json.RawMessage) (string, bo
 		Title:            req.Title,
 		Content:          req.Content,
 		Description:      req.Description,
+		MemoryType:       req.MemoryType,
 		Tags:             req.Tags,
 		Reason:           req.Reason,
 		Owner:            scope.WriteOwner,

@@ -122,22 +122,22 @@ func TestAcquireMemoryReflectionCooldownWindow(t *testing.T) {
 	// 独立冷却表操作走包级单例，测试用极短窗口验证语义。
 	key := "test-session-cooldown"
 	deleteReflectionCooldownForTest(key)
-	if !acquireMemoryReflectionCooldown(key, 50*time.Millisecond) {
+	if !memoryReflectionCooldown.acquire(key, 50*time.Millisecond) {
 		t.Fatalf("first acquire should pass")
 	}
-	if acquireMemoryReflectionCooldown(key, 50*time.Millisecond) {
+	if memoryReflectionCooldown.acquire(key, 50*time.Millisecond) {
 		t.Fatalf("second acquire within cooldown should fail")
 	}
 	time.Sleep(60 * time.Millisecond)
-	if !acquireMemoryReflectionCooldown(key, 50*time.Millisecond) {
+	if !memoryReflectionCooldown.acquire(key, 50*time.Millisecond) {
 		t.Fatalf("acquire after cooldown should pass again")
 	}
 	deleteReflectionCooldownForTest(key)
 }
 
 func deleteReflectionCooldownForTest(sessionID string) {
-	memoryReflectionCooldown.Lock()
-	defer memoryReflectionCooldown.Unlock()
+	memoryReflectionCooldown.mu.Lock()
+	defer memoryReflectionCooldown.mu.Unlock()
 	delete(memoryReflectionCooldown.last, sessionID)
 }
 

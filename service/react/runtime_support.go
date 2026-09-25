@@ -307,9 +307,9 @@ func maybeCompactContext(s *reactEngineState, step int) error {
 	if err := s.emitter.EmitStep(step, EventCompactEnd, params.ReactCompactEndPayload{BeforeMessageCount: beforeCount, AfterMessageCount: len(s.messages), Summary: summary}); err != nil {
 		return err
 	}
-	// compact_end 成功后判定是否派生记忆整理（reflection）：异步、受限、绝不阻塞主 run；
+	// compact_end 成功后判定是否派生记忆维护（extractor 优先、与 reflection 互斥）：异步、受限、绝不阻塞主 run；
 	// compactPart 是被压缩掉的原始消息，此刻仍在内存中，直接作为整理素材传入。
-	maybeTriggerMemoryReflection(s, summary, compactPart)
+	maybeTriggerMemoryMaintenance(s, summary, compactPart)
 	return nil
 }
 

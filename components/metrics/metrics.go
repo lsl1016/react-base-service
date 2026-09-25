@@ -108,6 +108,18 @@ var (
 		Help: "Total memory reflection runs by status.",
 	}, []string{"status"})
 
+	// MemoryItemsByType active 记忆条目数水位（owner_type × memory_type，V2 类型化观测）。
+	MemoryItemsByType = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "react_memory_items_by_type",
+		Help: "Active memory items by owner type and memory type.",
+	}, []string{"owner_type", "memory_type"})
+
+	// MemoryExtractorTotal 记忆自动沉淀（extractor）计数（status: triggered/cooldown_skipped/empty/success/error）。
+	MemoryExtractorTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "react_memory_extractor_total",
+		Help: "Total memory extractor runs by status.",
+	}, []string{"status"})
+
 	// GraphMemorySearchTotal 时序图谱检索计数（status: ok/error；工具调用与注入块共用）。
 	GraphMemorySearchTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "react_graph_memory_search_total",

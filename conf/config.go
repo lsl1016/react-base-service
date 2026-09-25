@@ -47,6 +47,12 @@ const (
 	defaultReactMemoryReflectionCooldownMin = 60
 	defaultReactMemoryReflectionMaxWrites   = 20
 	defaultReactMemoryReflectionTranscript  = 16000
+	defaultReactMemoryExtractorCooldownMin  = 60
+	defaultReactMemoryExtractorCandidates   = 8
+	defaultReactMemoryExtractorWrites       = 10
+	defaultReactMemoryExtractorTranscript   = 16000
+	defaultReactMemoryExtractorTopK         = 5
+	defaultReactMemoryExtractorMinConf      = 0.50
 	defaultReactSubAgentMaxParallel         = 1
 	defaultReactSubAgentMaxSteps            = 8
 	defaultReactSubAgentMaxDepth            = 2
@@ -194,6 +200,9 @@ type ReactMemoryConfig struct {
 	AllowUserScope *bool `yaml:"allow_user_scope"`
 	// Reflection 控制压缩事件后的自动整理（后台受限子 run）。
 	Reflection ReactMemoryReflectionConfig `yaml:"reflection"`
+	// Extractor 控制压缩事件后的自动沉淀（结构化抽取+冲突消解流水线，非 agent run）。
+	// 与 Reflection 在 compact_end 触发点互斥：extractor 开启时优先，reflection 不再派生。
+	Extractor ReactMemoryExtractorConfig `yaml:"extractor"`
 }
 
 // ReactMemoryReflectionConfig 控制 reflection：压缩（compact_end）后异步派生受限子 run，
@@ -211,6 +220,34 @@ type ReactMemoryReflectionConfig struct {
 
 // ReflectionEnabled 解析 reflection.enabled：未配置时默认 false。
 func (c ReactMemoryReflectionConfig) ReflectionEnabled() bool {
+	if c.Enabled != nil {
+		return *c.Enabled
+	}
+	return false
+}
+
+// ReactMemoryExtractorConfig 控制记忆自动沉淀流水线：compact_end 后异步执行
+// 「一次 LLM 抽取候选 → 确定性预过滤 → 一次 LLM 批量冲突消解 → 统一写核心落库」，
+// 不派生 agent 子 run。与 Reflection 互斥：本开关开启时 compact_end 只走 extractor。
+type ReactMemoryExtractorConfig struct {
+	// Enabled 控制是否启用自动沉淀；未配置时默认 false（保持 reflection 语义）。
+	Enabled *bool `yaml:"enabled"`
+	// CooldownMinutes 是同一 session 两次 extractor 的最小间隔（进程内冷却表）。
+	CooldownMinutes int `yaml:"cooldown_minutes"`
+	// MaxCandidatesPerRun 是单次抽取允许输出的候选记忆上限。
+	MaxCandidatesPerRun int `yaml:"max_candidates_per_run"`
+	// MaxWritesPerRun 是单次沉淀允许落库的写操作上限（create/update 合计）。
+	MaxWritesPerRun int `yaml:"max_writes_per_run"`
+	// TranscriptCharLimit 是注入给抽取的对话转录字符上限（取最近部分）。
+	TranscriptCharLimit int `yaml:"transcript_char_limit"`
+	// SimilarTopK 是 Resolver 候选召回时每个候选保留的相似存量条目上限。
+	SimilarTopK int `yaml:"similar_top_k"`
+	// MinConfidence 是候选可信度阈值，低于该值的候选直接丢弃。
+	MinConfidence float64 `yaml:"min_confidence"`
+}
+
+// ExtractorEnabled 解析 memory.extractor.enabled：未配置时默认 false。
+func (c ReactMemoryExtractorConfig) ExtractorEnabled() bool {
 	if c.Enabled != nil {
 		return *c.Enabled
 	}
@@ -576,6 +613,26 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 		reflection.TranscriptCharLimit = defaultReactMemoryReflectionTranscript
 	}
 	memory.Reflection = reflection
+	extractor := memory.Extractor
+	if extractor.CooldownMinutes <= 0 {
+		extractor.CooldownMinutes = defaultReactMemoryExtractorCooldownMin
+	}
+	if extractor.MaxCandidatesPerRun <= 0 {
+		extractor.MaxCandidatesPerRun = defaultReactMemoryExtractorCandidates
+	}
+	if extractor.MaxWritesPerRun <= 0 {
+		extractor.MaxWritesPerRun = defaultReactMemoryExtractorWrites
+	}
+	if extractor.TranscriptCharLimit <= 0 {
+		extractor.TranscriptCharLimit = defaultReactMemoryExtractorTranscript
+	}
+	if extractor.SimilarTopK <= 0 {
+		extractor.SimilarTopK = defaultReactMemoryExtractorTopK
+	}
+	if extractor.MinConfidence <= 0 || extractor.MinConfidence >= 1 {
+		extractor.MinConfidence = defaultReactMemoryExtractorMinConf
+	}
+	memory.Extractor = extractor
 	cfg.Memory = memory
 
 	// subagent 策略统一经 EffectiveSubAgentConfig 合并管理面板「运行时配置」的 DB 覆盖

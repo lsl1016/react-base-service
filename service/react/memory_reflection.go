@@ -79,32 +79,35 @@ func internalMetaToolDefinitionsForType(sessionType string) []llm.ToolDefinition
 	return internalMetaToolDefinitions()
 }
 
-// memoryReflectionCooldown 是进程内冷却表：sessionID → 最近一次触发时间。
+// scopedCooldownTable 是进程内冷却表：key → 最近一次触发时间。
 // 进程重启丢失冷却状态是可接受的（最坏情况重启后多触发一次）。
-var memoryReflectionCooldown = struct {
-	sync.Mutex
+type scopedCooldownTable struct {
+	mu   sync.Mutex
 	last map[string]time.Time
-}{last: make(map[string]time.Time)}
+}
 
-// acquireMemoryReflectionCooldown 原子判定并占用冷却窗口；冷却未到返回 false。
-func acquireMemoryReflectionCooldown(sessionID string, cooldown time.Duration) bool {
+// acquire 原子判定并占用冷却窗口；冷却未到返回 false。
+func (t *scopedCooldownTable) acquire(key string, cooldown time.Duration) bool {
 	now := time.Now()
-	memoryReflectionCooldown.Lock()
-	defer memoryReflectionCooldown.Unlock()
-	if last, ok := memoryReflectionCooldown.last[sessionID]; ok && now.Sub(last) < cooldown {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.last[key]; ok && now.Sub(last) < cooldown {
 		return false
 	}
-	memoryReflectionCooldown.last[sessionID] = now
+	t.last[key] = now
 	// 冷却表懒清理：超阈值时剔除已过期条目，避免长生命周期进程无限增长。
-	if len(memoryReflectionCooldown.last) > 1024 {
-		for id, ts := range memoryReflectionCooldown.last {
+	if len(t.last) > 1024 {
+		for id, ts := range t.last {
 			if now.Sub(ts) >= cooldown {
-				delete(memoryReflectionCooldown.last, id)
+				delete(t.last, id)
 			}
 		}
 	}
 	return true
 }
+
+// memoryReflectionCooldown 是 reflection 的冷却表（sessionID 维度）。
+var memoryReflectionCooldown = &scopedCooldownTable{last: make(map[string]time.Time)}
 
 // maybeTriggerMemoryReflection 在 compact_end 成功发出后调用：判定通过则异步派生 reflection run。
 // compacted 是本轮被压缩掉的原始消息（内存中直接持有，无需回库取）。
@@ -127,7 +130,7 @@ func maybeTriggerMemoryReflection(s *reactEngineState, summary string, compacted
 	if strings.TrimSpace(summary) == "" {
 		return
 	}
-	if !acquireMemoryReflectionCooldown(s.sessionID, time.Duration(cfg.Reflection.CooldownMinutes)*time.Minute) {
+	if !memoryReflectionCooldown.acquire(s.sessionID, time.Duration(cfg.Reflection.CooldownMinutes)*time.Minute) {
 		metrics.MemoryReflectionTotal.WithLabelValues("cooldown_skipped").Inc()
 		return
 	}

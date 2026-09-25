@@ -29,7 +29,65 @@ const (
 	MemorySourceModel      = "model"
 	MemorySourceReflection = "reflection"
 	MemorySourceAdmin      = "admin"
+	// MemorySourceExtractor V2 自动沉淀流水线（extractor/resolver）的写入来源。
+	MemorySourceExtractor = "extractor"
+
+	// V2 记忆类型（Phase 1 类型化）：preference 用户偏好 / fact 事实 / event 事件 / procedure 经验方法。
+	MemoryTypePreference = "preference"
+	MemoryTypeFact       = "fact"
+	MemoryTypeEvent      = "event"
+	MemoryTypeProcedure  = "procedure"
+
+	// importance 取值域与 confidence 缺省值；与 DDL DEFAULT 成对维护。
+	MemoryImportanceMin     = 1
+	MemoryImportanceMax     = 5
+	MemoryImportanceDefault = 3
+	MemoryConfidenceDefault = 0.80
 )
+
+// memoryTypeSet 是合法记忆类型集合。
+var memoryTypeSet = map[string]struct{}{
+	MemoryTypePreference: {},
+	MemoryTypeFact:       {},
+	MemoryTypeEvent:      {},
+	MemoryTypeProcedure:  {},
+}
+
+// IsValidMemoryType 判断记忆类型是否合法；管理面/入参校验用（严格拒绝）。
+func IsValidMemoryType(memoryType string) bool {
+	_, ok := memoryTypeSet[memoryType]
+	return ok
+}
+
+// NormalizeMemoryType 归一化记忆类型：空/非法回退 fact（宽松路径：旧快照回滚、extractor 输出兜底）。
+func NormalizeMemoryType(memoryType string) string {
+	if _, ok := memoryTypeSet[memoryType]; ok {
+		return memoryType
+	}
+	return MemoryTypeFact
+}
+
+// NormalizeMemoryConfidence 归一化可信度：<=0 或 >1 视为未提供/非法，回退默认值。
+func NormalizeMemoryConfidence(confidence float64) float64 {
+	if confidence <= 0 || confidence > 1 {
+		return MemoryConfidenceDefault
+	}
+	return confidence
+}
+
+// NormalizeMemoryImportance 归一化重要程度：<=0 视为未提供，回退默认；越界 clamp 到 [1,5]。
+func NormalizeMemoryImportance(importance int) int {
+	if importance <= 0 {
+		return MemoryImportanceDefault
+	}
+	if importance < MemoryImportanceMin {
+		return MemoryImportanceMin
+	}
+	if importance > MemoryImportanceMax {
+		return MemoryImportanceMax
+	}
+	return importance
+}
 
 // MemoryOwner 描述一个记忆归属维度；(OwnerType, OwnerKey) 唯一确定一个记忆空间。
 type MemoryOwner struct {
@@ -53,6 +111,9 @@ type MemoryItem struct {
 	OwnerType   string    `json:"ownerType" gorm:"column:owner_type;not null"`
 	OwnerKey    string    `json:"ownerKey" gorm:"column:owner_key;not null"`
 	Layer       string    `json:"layer" gorm:"column:layer;not null;default:'detached'"`
+	MemoryType  string    `json:"memoryType" gorm:"column:memory_type;not null;default:'fact'"`
+	Confidence  float64   `json:"confidence" gorm:"column:confidence;not null;default:0.8"`
+	Importance  int       `json:"importance" gorm:"column:importance;not null;default:3"`
 	Title       string    `json:"title" gorm:"column:title;not null;default:''"`
 	Content     string    `json:"content" gorm:"column:content;not null"`
 	Description string    `json:"description" gorm:"column:description;not null;default:''"`
@@ -233,15 +294,16 @@ func GetMemoryItemByIDAnyState(ctx *gin.Context, id uint) (*MemoryItem, error) {
 
 // MemoryItemFilter 是管理面列表查询条件；零值字段不参与过滤。
 type MemoryItemFilter struct {
-	OwnerType string
-	OwnerKey  string
-	Layer     string
-	Tag       string
-	Keyword   string
+	OwnerType  string
+	OwnerKey   string
+	Layer      string
+	MemoryType string
+	Tag        string
+	Keyword    string
 	// IncludeDeleted 为 true 时包含软删条目（管理面审计视图）。
 	IncludeDeleted bool
-	Limit         int
-	Offset        int
+	Limit          int
+	Offset         int
 }
 
 // FindMemoryItemsByFilter 按条件分页查询记忆条目，返回明细与总数（不含分页）。
@@ -255,6 +317,9 @@ func FindMemoryItemsByFilter(ctx *gin.Context, filter MemoryItemFilter) ([]Memor
 	}
 	if filter.Layer != "" {
 		query = query.Where("layer = ?", filter.Layer)
+	}
+	if filter.MemoryType != "" {
+		query = query.Where("memory_type = ?", filter.MemoryType)
 	}
 	if filter.Tag != "" {
 		query = query.Where("FIND_IN_SET(?, tags)", filter.Tag)
@@ -325,4 +390,71 @@ func SumResidentCharsGroupedByOwnerType(ctx *gin.Context) ([]MemoryResidentChars
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
 	return rows, nil
+}
+
+// MemoryTypeCount 是指标聚合行：active 条目数按 owner_type × memory_type。
+type MemoryTypeCount struct {
+	OwnerType  string
+	MemoryType string
+	Count      int64
+}
+
+// CountActiveMemoryItemsGroupedByType 按 owner_type × memory_type 聚合 active 条目数（指标观测）。
+func CountActiveMemoryItemsGroupedByType(ctx *gin.Context) ([]MemoryTypeCount, error) {
+	var rows []MemoryTypeCount
+	err := helpers.MysqlClientLLM.Model(&MemoryItem{}).WithContext(ctx).
+		Select("owner_type, memory_type, COUNT(*) AS count").
+		Where("state = ?", MemoryStateActive).
+		Group("owner_type, memory_type").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return rows, nil
+}
+
+// FindActiveMemoryItemsLikeOwner 在单个记忆空间内按关键词多列 LIKE 查询 active 条目（V2 Resolver 候选召回）。
+// keywords 任一命中 title/description/content/tags 即返回；命中集合的去重与打分由调用方完成。
+// 返回按更新时间倒序，limit<=0 时取 20。
+func FindActiveMemoryItemsLikeOwner(ctx *gin.Context, owner MemoryOwner, keywords []string, limit int) ([]MemoryItem, error) {
+	condition, args, ok := buildMemoryKeywordLikeCondition(owner, keywords)
+	if !ok {
+		return []MemoryItem{}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	var items []MemoryItem
+	err := helpers.MysqlClientLLM.Model(&MemoryItem{}).WithContext(ctx).
+		Where(condition, args...).
+		Order("updated_at DESC").Limit(limit).Find(&items).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return items, nil
+}
+
+// buildMemoryKeywordLikeCondition 构造单 owner 的关键词 LIKE 条件：每个关键词命中
+// title/description/content/tags 任一列即算命中；≥2 rune 的关键词才参与（防单字符全表扫）。
+// 无有效关键词时 ok=false，调用方应直接返回空集。
+func buildMemoryKeywordLikeCondition(owner MemoryOwner, keywords []string) (string, []interface{}, bool) {
+	trimmed := make([]string, 0, len(keywords))
+	for _, keyword := range keywords {
+		if keyword = strings.TrimSpace(keyword); len([]rune(keyword)) >= 2 {
+			trimmed = append(trimmed, keyword)
+		}
+	}
+	if len(trimmed) == 0 {
+		return "", nil, false
+	}
+	conditions := make([]string, 0, len(trimmed))
+	args := make([]interface{}, 0, len(trimmed)*4)
+	for _, keyword := range trimmed {
+		like := "%" + keyword + "%"
+		conditions = append(conditions, "(title LIKE ? OR description LIKE ? OR content LIKE ? OR tags LIKE ?)")
+		args = append(args, like, like, like, like)
+	}
+	condition := "owner_type = ? AND owner_key = ? AND state = ? AND (" + strings.Join(conditions, " OR ") + ")"
+	args = append([]interface{}{owner.OwnerType, owner.OwnerKey, MemoryStateActive}, args...)
+	return condition, args, true
 }

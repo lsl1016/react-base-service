@@ -76,27 +76,60 @@ func runtimeOwnerPriority(ownerType string) int {
 	return 0
 }
 
-// RenderRuntimeContext 渲染注入 system prompt 的 <memory> 块。
+// RenderRuntimeContext 渲染注入 system prompt 的 <memory> 块（V2 分节）：
+//   - preference 类型条目（不论层级）全文注入「用户偏好」节，按 importance 降序优先占用常驻字符预算；
+//     超出预算的偏好回退为目录条目，正文经 memory_read 获取；
+//   - 其余 resident 条目沿用常驻节（与偏好节共享 ResidentBudgetChars 预算）；
+//   - detached 条目注入目录索引；非 fact 类型在目录行带类型标记，fact 保持 V1 目录格式。
 func RenderRuntimeContext(items []model.MemoryItem, cfg conf.ReactMemoryConfig) string {
-	var resident, detached []model.MemoryItem
+	var preferences, resident, detached []model.MemoryItem
 	for _, item := range items {
+		if item.MemoryType == model.MemoryTypePreference {
+			preferences = append(preferences, item)
+			continue
+		}
 		if item.Layer == model.MemoryLayerResident {
 			resident = append(resident, item)
 		} else {
 			detached = append(detached, item)
 		}
 	}
-	if len(resident) == 0 && len(detached) == 0 {
+	if len(preferences) == 0 && len(resident) == 0 && len(detached) == 0 {
 		return ""
 	}
+	slices.SortStableFunc(preferences, func(a, b model.MemoryItem) int {
+		if c := cmp.Compare(b.Importance, a.Importance); c != 0 {
+			return c
+		}
+		return b.UpdatedAt.Compare(a.UpdatedAt)
+	})
 
 	var sb strings.Builder
 	sb.WriteString("<memory>\n")
 	sb.WriteString("## 长期记忆（自动维护）\n\n")
 
+	used := 0
+	if len(preferences) > 0 {
+		sb.WriteString("### 用户偏好（始终生效）\n")
+		truncated := 0
+		for _, item := range preferences {
+			line := fmt.Sprintf("- [%s] %s\n", item.Title, strings.TrimSpace(item.Content))
+			if used+len([]rune(line)) > cfg.ResidentBudgetChars {
+				truncated++
+				detached = append(detached, item)
+				continue
+			}
+			sb.WriteString(line)
+			used += len([]rune(line))
+		}
+		if truncated > 0 {
+			sb.WriteString(fmt.Sprintf("（另有 %d 条偏好超出字符预算未全文注入，见下方目录）\n", truncated))
+		}
+		sb.WriteString("\n")
+	}
+
 	if len(resident) > 0 {
 		sb.WriteString("### 常驻\n")
-		used := 0
 		truncated := 0
 		for _, item := range resident {
 			line := fmt.Sprintf("- [%s] %s\n", item.Title, strings.TrimSpace(item.Content))
@@ -125,6 +158,10 @@ func RenderRuntimeContext(items []model.MemoryItem, cfg conf.ReactMemoryConfig) 
 			description := strings.TrimSpace(item.Description)
 			if description == "" {
 				description = strings.TrimSpace(item.Content)
+			}
+			if item.MemoryType != "" && item.MemoryType != model.MemoryTypeFact {
+				sb.WriteString(fmt.Sprintf("- #%d [%s] %s — %s\n", item.ID, item.MemoryType, item.Title, description))
+				continue
 			}
 			sb.WriteString(fmt.Sprintf("- #%d [%s] %s\n", item.ID, item.Title, description))
 		}
@@ -157,16 +194,18 @@ const (
 
 // RuntimeListOptions 是 memory_list 的领域查询条件。
 type RuntimeListOptions struct {
-	Layer   string
-	Tag     string
-	Keyword string
-	Limit   int
+	Layer      string
+	MemoryType string
+	Tag        string
+	Keyword    string
+	Limit      int
 }
 
 // RuntimeListItem 是 memory_list 返回给 Runtime 的稳定视图。
 type RuntimeListItem struct {
 	ItemID      uint   `json:"itemId"`
 	Layer       string `json:"layer"`
+	MemoryType  string `json:"memoryType"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Tags        string `json:"tags"`
@@ -188,6 +227,7 @@ func ListRuntimeItems(ctx *gin.Context, scope RuntimeScope, options RuntimeListO
 	if layer == "" {
 		layer = model.MemoryLayerDetached
 	}
+	memoryType := strings.TrimSpace(options.MemoryType)
 	tag := strings.TrimSpace(options.Tag)
 	keyword := strings.ToLower(strings.TrimSpace(options.Keyword))
 
@@ -200,6 +240,9 @@ func ListRuntimeItems(ctx *gin.Context, scope RuntimeScope, options RuntimeListO
 		if layer != "all" && item.Layer != layer {
 			continue
 		}
+		if memoryType != "" && item.MemoryType != memoryType {
+			continue
+		}
 		if tag != "" && !RuntimeItemHasTag(item.Tags, tag) {
 			continue
 		}
@@ -209,6 +252,7 @@ func ListRuntimeItems(ctx *gin.Context, scope RuntimeScope, options RuntimeListO
 		views = append(views, RuntimeListItem{
 			ItemID:      item.ID,
 			Layer:       item.Layer,
+			MemoryType:  item.MemoryType,
 			Title:       item.Title,
 			Description: item.Description,
 			Tags:        item.Tags,
@@ -241,6 +285,7 @@ func RuntimeItemMatchesKeyword(item model.MemoryItem, keyword string) bool {
 type RuntimeReadItem struct {
 	ItemID     uint   `json:"itemId"`
 	Layer      string `json:"layer"`
+	MemoryType string `json:"memoryType"`
 	Title      string `json:"title"`
 	Content    string `json:"content"`
 	Tags       string `json:"tags"`
@@ -276,6 +321,7 @@ func ReadRuntimeItems(ctx *gin.Context, scope RuntimeScope, itemIDs []uint64) ([
 		views = append(views, RuntimeReadItem{
 			ItemID:     item.ID,
 			Layer:      item.Layer,
+			MemoryType: item.MemoryType,
 			Title:      item.Title,
 			Content:    item.Content,
 			Tags:       item.Tags,
@@ -311,4 +357,14 @@ func (r *Runtime) Read(ctx *gin.Context, scope RuntimeScope, itemIDs []uint64) (
 
 func (r *Runtime) ApplyMutation(ctx *gin.Context, input MutationInput) (map[string]interface{}, error) {
 	return ApplyMutation(ctx, input)
+}
+
+// ActiveItems 返回作用域内全部 active 条目（跨空间覆盖合并后）。
+// 供 V2 extractor 的记忆清单与 resolver 的候选召回使用；渲染/工具链路不经过此方法。
+func (r *Runtime) ActiveItems(ctx *gin.Context, scope RuntimeScope) ([]model.MemoryItem, error) {
+	items, err := model.FindActiveMemoryItemsByOwners(ctx, scope.Owners)
+	if err != nil {
+		return nil, err
+	}
+	return MergeRuntimeItems(items), nil
 }

@@ -29,7 +29,7 @@ const (
 	MaxReasonRunes      = 512
 )
 
-// MutationInput 描述一次记忆写操作；来源（引擎/管理面/未来的 reflection）只影响 Source 与 CreatedBy。
+// MutationInput 描述一次记忆写操作；来源（引擎/管理面/reflection/extractor）只影响 Source 与 CreatedBy。
 type MutationInput struct {
 	Action string // create / update / delete
 	ItemID uint   // update/delete 必填
@@ -40,10 +40,14 @@ type MutationInput struct {
 	Content     string
 	Description string // 检索提示
 	Tags        string
-	Reason      string // 必填，审计根
+	// V2 类型化字段（Phase 1）：create 空值落默认（fact/0.80/3）；update 空值保持原字段不变。
+	MemoryType string
+	Confidence float64
+	Importance int
+	Reason     string // 必填，审计根
 	// Owner 是 create 的目标记忆空间。
 	Owner model.MemoryOwner
-	// Source 是写入来源：model / admin / reflection。
+	// Source 是写入来源：model / admin / reflection / extractor。
 	Source string
 	// CreatedBy 是触发方标识：runID 或管理面操作人。
 	CreatedBy string
@@ -187,6 +191,15 @@ func applyMutation(ctx *gin.Context, input MutationInput) (map[string]interface{
 	if input.Layer != "" && input.Layer != model.MemoryLayerResident && input.Layer != model.MemoryLayerDetached {
 		return nil, fmt.Errorf("layer 仅支持 resident/detached")
 	}
+	if input.MemoryType != "" && !model.IsValidMemoryType(input.MemoryType) {
+		return nil, fmt.Errorf("memory_type 仅支持 preference/fact/event/procedure")
+	}
+	if input.Confidence < 0 || input.Confidence > 1 {
+		return nil, fmt.Errorf("confidence 取值范围 0-1")
+	}
+	if input.Importance != 0 && (input.Importance < model.MemoryImportanceMin || input.Importance > model.MemoryImportanceMax) {
+		return nil, fmt.Errorf("importance 取值范围 %d-%d", model.MemoryImportanceMin, model.MemoryImportanceMax)
+	}
 	if err := ScanSensitiveContent(input.Title, input.Content, input.Description, input.Reason); err != nil {
 		return nil, err
 	}
@@ -245,6 +258,9 @@ func mutateCreate(ctx *gin.Context, tx *gorm.DB, op *MutationInput, cfg conf.Rea
 			Content:       op.Content,
 			Description:   op.Description,
 			Tags:          op.Tags,
+			MemoryType:    op.MemoryType,
+			Confidence:    op.Confidence,
+			Importance:    op.Importance,
 			Reason:        "create 命中同指纹条目，收敛为更新；" + op.Reason,
 			Source:        op.Source,
 			CreatedBy:     op.CreatedBy,
@@ -266,6 +282,9 @@ func mutateCreate(ctx *gin.Context, tx *gorm.DB, op *MutationInput, cfg conf.Rea
 		OwnerType:   owner.OwnerType,
 		OwnerKey:    owner.OwnerKey,
 		Layer:       layer,
+		MemoryType:  model.NormalizeMemoryType(op.MemoryType),
+		Confidence:  model.NormalizeMemoryConfidence(op.Confidence),
+		Importance:  model.NormalizeMemoryImportance(op.Importance),
 		Title:       op.Title,
 		Content:     op.Content,
 		Description: op.Description,
@@ -336,6 +355,16 @@ func applyUpdate(ctx *gin.Context, tx *gorm.DB, item *model.MemoryItem, op *Muta
 		"last_reason": op.Reason,
 		"version":     item.Version + 1,
 	}
+	// 类型化字段：update 只在显式提供时覆盖，否则保持原值（零值=未指定的语义）。
+	if op.MemoryType != "" {
+		updates["memory_type"] = model.NormalizeMemoryType(op.MemoryType)
+	}
+	if op.Confidence > 0 {
+		updates["confidence"] = op.Confidence
+	}
+	if op.Importance > 0 {
+		updates["importance"] = model.NormalizeMemoryImportance(op.Importance)
+	}
 	expectedVersion := 0
 	if !ignoreVersion {
 		expectedVersion = op.Version
@@ -359,6 +388,15 @@ func applyUpdate(ctx *gin.Context, tx *gorm.DB, item *model.MemoryItem, op *Muta
 	after.State = model.MemoryStateActive
 	after.LastReason = op.Reason
 	after.Version = before.Version + 1
+	if op.MemoryType != "" {
+		after.MemoryType = model.NormalizeMemoryType(op.MemoryType)
+	}
+	if op.Confidence > 0 {
+		after.Confidence = op.Confidence
+	}
+	if op.Importance > 0 {
+		after.Importance = model.NormalizeMemoryImportance(op.Importance)
+	}
 	if err := createRevision(ctx, tx, item.ID, "update", &before, &after, op.Reason, op.Source, op.CreatedBy); err != nil {
 		return nil, err
 	}
@@ -476,6 +514,10 @@ func rollbackRevision(ctx *gin.Context, revisionID uint, reason, operator string
 	if err := json.Unmarshal([]byte(revision.BeforeJSON), &target); err != nil {
 		return nil, fmt.Errorf("修订 #%d 前置快照解析失败: %v", revisionID, err)
 	}
+	// V2 兼容：Phase 1 之前的旧快照没有类型化字段，反序列化后为零值，按默认口径补齐。
+	target.MemoryType = model.NormalizeMemoryType(target.MemoryType)
+	target.Confidence = model.NormalizeMemoryConfidence(target.Confidence)
+	target.Importance = model.NormalizeMemoryImportance(target.Importance)
 
 	currentVersion := 0
 	err = model.GetLLMDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -492,6 +534,9 @@ func rollbackRevision(ctx *gin.Context, revisionID uint, reason, operator string
 		before := item
 		updated, err := model.UpdateMemoryItemWithVersionWithDB(ctx, tx, item.ID, 0, map[string]interface{}{
 			"layer":       target.Layer,
+			"memory_type": target.MemoryType,
+			"confidence":  target.Confidence,
+			"importance":  target.Importance,
 			"title":       target.Title,
 			"content":     target.Content,
 			"description": target.Description,
@@ -520,10 +565,11 @@ func rollbackRevision(ctx *gin.Context, revisionID uint, reason, operator string
 		"itemId":     revision.ItemID,
 		"revisionId": revisionID,
 		"restored": map[string]interface{}{
-			"layer":   target.Layer,
-			"title":   target.Title,
-			"content": target.Content,
-			"state":   target.State,
+			"layer":      target.Layer,
+			"memoryType": target.MemoryType,
+			"title":      target.Title,
+			"content":    target.Content,
+			"state":      target.State,
 		},
 		"version": currentVersion + 1,
 		"reason":  reason,
@@ -593,7 +639,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// RefreshMetrics 重算记忆水位指标（条目数按 owner_type×layer、常驻字符按 owner_type）；
+// RefreshMetrics 重算记忆水位指标（条目数按 owner_type×layer 与 owner_type×memory_type、常驻字符按 owner_type）；
 // best-effort：失败仅记日志，不影响写路径。
 func RefreshMetrics(ctx *gin.Context) {
 	counts, err := model.CountActiveMemoryItemsGrouped(ctx)
@@ -604,6 +650,15 @@ func RefreshMetrics(ctx *gin.Context) {
 	metrics.MemoryItems.Reset()
 	for _, row := range counts {
 		metrics.MemoryItems.WithLabelValues(row.OwnerType, row.Layer).Set(float64(row.Count))
+	}
+	typeCounts, err := model.CountActiveMemoryItemsGroupedByType(ctx)
+	if err != nil {
+		zlog.Warnf(ctx, "[memory] 刷新记忆类型指标失败: %v", err)
+		return
+	}
+	metrics.MemoryItemsByType.Reset()
+	for _, row := range typeCounts {
+		metrics.MemoryItemsByType.WithLabelValues(row.OwnerType, row.MemoryType).Set(float64(row.Count))
 	}
 	chars, err := model.SumResidentCharsGroupedByOwnerType(ctx)
 	if err != nil {

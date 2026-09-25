@@ -63,6 +63,16 @@ llm:
         cooldown_minutes: 60        # 同一 session 两次整理的最小间隔
         max_writes_per_run: 20      # 单次整理写操作上限（create/update/delete 合计）
         transcript_char_limit: 16000  # 注入给整理任务的被压缩原文转录字符上限
+      # 自动沉淀（extractor，V2 Phase 2）：compact_end 后异步执行「LLM 抽取候选 → 预过滤 →
+      # LLM 批量冲突消解 → 统一写核心落库」流水线；与 reflection 互斥，开启后 reflection 不再触发。
+      extractor:
+        enabled: false
+        cooldown_minutes: 60        # 同一 session 两次沉淀的最小间隔
+        max_candidates_per_run: 8   # 单次抽取候选上限
+        max_writes_per_run: 10      # 单次沉淀落库写操作上限
+        transcript_char_limit: 16000  # 注入给抽取任务的被压缩原文转录字符上限
+        similar_top_k: 5            # 每个候选保留的相似存量条目上限
+        min_confidence: 0.50        # 候选可信度阈值，低于直接丢弃
     # 服务端代码工作区（P2-1）：线上服务代码 → bare mirror 缓存 → 每 run git worktree，
     # 并动态挂载只读检索工具（ws_<service>_ 前缀）；未配置默认关闭。
     workspace:

@@ -640,6 +640,9 @@ CREATE TABLE IF NOT EXISTS `tblLlmMemoryItem` (
     `owner_type`   VARCHAR(32)  NOT NULL COMMENT '记忆归属维度: caller/caller_user',
     `owner_key`    VARCHAR(128) NOT NULL COMMENT '记忆空间键: callerKey 或 callerKey|userName',
     `layer`        VARCHAR(16)  NOT NULL DEFAULT 'detached' COMMENT '层级: resident=常驻(全文注入)/detached=按需(目录索引)',
+    `memory_type`  VARCHAR(16)  NOT NULL DEFAULT 'fact' COMMENT '记忆类型: preference=用户偏好(优先注入)/fact=事实/event=事件/procedure=经验方法',
+    `confidence`   DECIMAL(4,3) NOT NULL DEFAULT 0.800 COMMENT '可信度0-1: 模型/管理面写入默认0.80, extractor按抽取置信度写入',
+    `importance`   TINYINT UNSIGNED NOT NULL DEFAULT 3 COMMENT '重要程度1-5: 注入排序用(高优先)',
     `title`        VARCHAR(128) NOT NULL DEFAULT '' COMMENT '短标题(目录索引展示,≤32字)',
     `content`      TEXT         NOT NULL COMMENT '记忆正文(一到三句原子事实,≤500字)',
     `description`  VARCHAR(512) NOT NULL DEFAULT '' COMMENT '检索描述: 什么场景需要想起这条记忆',
@@ -653,7 +656,8 @@ CREATE TABLE IF NOT EXISTS `tblLlmMemoryItem` (
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     UNIQUE KEY `uk_owner_item` (`owner_type`, `owner_key`, `item_key`),
-    INDEX `idx_owner_layer_state` (`owner_type`, `owner_key`, `layer`, `state`)
+    INDEX `idx_owner_layer_state` (`owner_type`, `owner_key`, `layer`, `state`),
+    INDEX `idx_owner_mtype_state` (`owner_type`, `owner_key`, `memory_type`, `state`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='长期记忆条目表';
 
 -- 长期记忆修订流水表（不可变只插不改；回滚=用旧快照反向提交新修订）

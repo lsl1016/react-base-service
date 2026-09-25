@@ -21,11 +21,12 @@ import (
 // 所有端点在 memory.enabled=false 时直接拒绝（表未建时避免裸 SQL 报错）。
 
 type memoryListRequest struct {
-	OwnerType string `json:"ownerType"`
-	OwnerKey  string `json:"ownerKey"`
-	Layer     string `json:"layer"`
-	Tag       string `json:"tag"`
-	Keyword   string `json:"keyword"`
+	OwnerType  string `json:"ownerType"`
+	OwnerKey   string `json:"ownerKey"`
+	Layer      string `json:"layer"`
+	MemoryType string `json:"memoryType"`
+	Tag        string `json:"tag"`
+	Keyword    string `json:"keyword"`
 	// IncludeDeleted 包含软删条目（审计视图）。
 	IncludeDeleted bool `json:"includeDeleted"`
 	Limit          int  `json:"limit"`
@@ -33,25 +34,31 @@ type memoryListRequest struct {
 }
 
 type memoryCreateRequest struct {
-	OwnerType   string `json:"ownerType"`
-	OwnerKey    string `json:"ownerKey"`
-	Layer       string `json:"layer"`
-	Title       string `json:"title"`
-	Content     string `json:"content"`
-	Description string `json:"retrievalHint"`
-	Tags        string `json:"tags"`
-	Reason      string `json:"reason"`
+	OwnerType   string  `json:"ownerType"`
+	OwnerKey    string  `json:"ownerKey"`
+	Layer       string  `json:"layer"`
+	Title       string  `json:"title"`
+	Content     string  `json:"content"`
+	Description string  `json:"retrievalHint"`
+	MemoryType  string  `json:"memoryType"`
+	Confidence  float64 `json:"confidence"`
+	Importance  int     `json:"importance"`
+	Tags        string  `json:"tags"`
+	Reason      string  `json:"reason"`
 }
 
 type memoryUpdateRequest struct {
-	ItemID      uint64 `json:"itemId"`
-	Version     int    `json:"version"`
-	Layer       string `json:"layer"`
-	Title       string `json:"title"`
-	Content     string `json:"content"`
-	Description string `json:"retrievalHint"`
-	Tags        string `json:"tags"`
-	Reason      string `json:"reason"`
+	ItemID      uint64  `json:"itemId"`
+	Version     int     `json:"version"`
+	Layer       string  `json:"layer"`
+	Title       string  `json:"title"`
+	Content     string  `json:"content"`
+	Description string  `json:"retrievalHint"`
+	MemoryType  string  `json:"memoryType"`
+	Confidence  float64 `json:"confidence"`
+	Importance  int     `json:"importance"`
+	Tags        string  `json:"tags"`
+	Reason      string  `json:"reason"`
 }
 
 type memoryDeleteRequest struct {
@@ -71,21 +78,24 @@ type memoryRollbackRequest struct {
 
 // memoryAdminItemView 是管理面列表/写入返回的条目视图（含正文与归属，供管理面板审计）。
 type memoryAdminItemView struct {
-	ItemID      uint   `json:"itemId"`
-	OwnerType   string `json:"ownerType"`
-	OwnerKey    string `json:"ownerKey"`
-	Layer       string `json:"layer"`
-	Title       string `json:"title"`
-	Content     string `json:"content"`
-	Description string `json:"description"`
-	Tags        string `json:"tags"`
-	Source      string `json:"source"`
-	State       string `json:"state"`
-	Version     int    `json:"version"`
-	LastReason  string `json:"lastReason"`
-	CreatedBy   string `json:"createdBy"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	ItemID      uint    `json:"itemId"`
+	OwnerType   string  `json:"ownerType"`
+	OwnerKey    string  `json:"ownerKey"`
+	Layer       string  `json:"layer"`
+	MemoryType  string  `json:"memoryType"`
+	Confidence  float64 `json:"confidence"`
+	Importance  int     `json:"importance"`
+	Title       string  `json:"title"`
+	Content     string  `json:"content"`
+	Description string  `json:"description"`
+	Tags        string  `json:"tags"`
+	Source      string  `json:"source"`
+	State       string  `json:"state"`
+	Version     int     `json:"version"`
+	LastReason  string  `json:"lastReason"`
+	CreatedBy   string  `json:"createdBy"`
+	CreatedAt   string  `json:"createdAt"`
+	UpdatedAt   string  `json:"updatedAt"`
 }
 
 type memoryRevisionView struct {
@@ -136,6 +146,9 @@ func memoryAdminItemToView(item model.MemoryItem) memoryAdminItemView {
 		OwnerType:   item.OwnerType,
 		OwnerKey:    item.OwnerKey,
 		Layer:       item.Layer,
+		MemoryType:  item.MemoryType,
+		Confidence:  item.Confidence,
+		Importance:  item.Importance,
 		Title:       item.Title,
 		Content:     item.Content,
 		Description: item.Description,
@@ -197,10 +210,16 @@ func ListMemories(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("layer 仅支持 resident/detached"))
 		return
 	}
+	memoryType := strings.TrimSpace(req.MemoryType)
+	if memoryType != "" && !model.IsValidMemoryType(memoryType) {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("memoryType 仅支持 preference/fact/event/procedure"))
+		return
+	}
 	items, total, err := model.FindMemoryItemsByFilter(ctx, model.MemoryItemFilter{
 		OwnerType:      strings.TrimSpace(req.OwnerType),
 		OwnerKey:       strings.TrimSpace(req.OwnerKey),
 		Layer:          layer,
+		MemoryType:     memoryType,
 		Tag:            strings.TrimSpace(req.Tag),
 		Keyword:        strings.TrimSpace(req.Keyword),
 		IncludeDeleted: req.IncludeDeleted,
@@ -247,6 +266,9 @@ func CreateMemory(ctx *gin.Context) {
 		Title:       req.Title,
 		Content:     req.Content,
 		Description: req.Description,
+		MemoryType:  strings.TrimSpace(req.MemoryType),
+		Confidence:  req.Confidence,
+		Importance:  req.Importance,
 		Tags:        req.Tags,
 		Reason:      req.Reason,
 		Owner:       owner,
@@ -290,6 +312,9 @@ func UpdateMemory(ctx *gin.Context) {
 		Title:       req.Title,
 		Content:     req.Content,
 		Description: req.Description,
+		MemoryType:  strings.TrimSpace(req.MemoryType),
+		Confidence:  req.Confidence,
+		Importance:  req.Importance,
 		Tags:        req.Tags,
 		Reason:      req.Reason,
 		Source:      model.MemorySourceAdmin,

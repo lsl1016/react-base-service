@@ -34,6 +34,7 @@ type memoryRuntime interface {
 	List(ctx *gin.Context, scope memoryService.RuntimeScope, options memoryService.RuntimeListOptions) ([]memoryService.RuntimeListItem, error)
 	Read(ctx *gin.Context, scope memoryService.RuntimeScope, itemIDs []uint64) ([]memoryService.RuntimeReadItem, error)
 	ApplyMutation(ctx *gin.Context, input memoryService.MutationInput) (map[string]interface{}, error)
+	ActiveItems(ctx *gin.Context, scope memoryService.RuntimeScope) ([]model.MemoryItem, error)
 }
 
 // runtimeServices 是 ReAct 核心对外部领域能力的依赖集合。
