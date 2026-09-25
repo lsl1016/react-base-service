@@ -219,7 +219,7 @@ func (g *GPTClient) ChatStream(ctx context.Context, messages []LLMMessage, model
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("gpt api error (status %d): %s", resp.StatusCode, string(body))
+		return nil, newAPIError("gpt", resp.StatusCode, ParseRetryAfter(resp.Header.Get("Retry-After")), string(body))
 	}
 
 	return g.streamChatCompletionResponse(ctx, resp.Body), nil
@@ -275,7 +275,7 @@ func (g *GPTClient) ChatStreamWithFilePayloads(
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("gpt api error (status %d): %s", resp.StatusCode, string(body))
+		return nil, newAPIError("gpt", resp.StatusCode, ParseRetryAfter(resp.Header.Get("Retry-After")), string(body))
 	}
 
 	return g.streamChatCompletionResponse(ctx, resp.Body), nil
@@ -599,7 +599,7 @@ func (g *GPTClient) ChatStreamWithTools(
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("gpt api error (status %d): %s", resp.StatusCode, string(body))
+		return nil, newAPIError("gpt", resp.StatusCode, ParseRetryAfter(resp.Header.Get("Retry-After")), string(body))
 	}
 
 	ch := make(chan StreamChunk, 64)
@@ -711,6 +711,9 @@ func (g *GPTClient) parseGPTToolStream(ctx context.Context, resp *http.Response,
 				})
 			}
 		}
+	} else if normalizeFinishReason(finishReason) == "length" {
+		// finish_reason=length 透传为 max_tokens：引擎据此自动续写，而不是把截断回答当最终答案。
+		stopReason = "max_tokens"
 	} else {
 		stopReason = "end_turn" // 统一为 end_turn
 	}

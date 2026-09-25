@@ -377,3 +377,55 @@ react:
 - 工具：`service/react/tool_dispatch.go`、`meta_tools.go`、`business_tool.go`、`service/tool/executor.go`、`service/tool/runtime.go`
 - 模型：`api/llm/client.go`、`api/llm/claude.go`、`service/react/model_failover.go`
 - 配置：`conf/config.go:30-31`、`conf/mount/custom.yaml`
+
+---
+
+## 11. 实施记录（2026-09-25，分支 feature/mcp-gateway）
+
+方案已在当前分支实现并通过 `go build ./...` 与全量 `go test ./...`。以下为落地清单与设计偏差。
+
+### 11.1 已落地
+
+**M1 模型调用韧性（Phase 2）**
+- `api/llm/failure.go`：`APIError{StatusCode, RetryAfter, Message}` 结构化错误；6 个非 200 点位（claude.go ×3、gpt.go ×3）全部改返回 `APIError` 并解析 `Retry-After` 头（秒数/HTTP 日期，≤5 分钟采纳）。
+- `service/react/model_retry.go`：失败分类器 `classifyModelFailure`（retryable / fatal / cancelled，含未知网络错误默认可重试）、指数退避 + ±30% 抖动（`modelRetryDelay`）、可取消退避等待。
+- `service/react/model_failover.go`：`callModelRoundWithEmitter` 加入同模型重试内环（`react.model_retry.max_attempts`，默认 3），预算耗尽才切互备；重试前发 `model_retry` 事件，半途已流式输出时附带 from==to 的 `model_fallback(reset)` 清屏（旧前端无感）。分类使用**未包装原始错误**（components 错误信封不保留 Unwrap 链）。
+- 新指标 `react_model_retries_total{reason}`。
+
+**M2 终止边界（Phase 1）**
+- 软着陆收尾（`service/react/boundaries.go` + `engine.go`）：步数（`maxSteps-soft_landing_steps` 起）、run 时间（>90%）、token 预算（>90%）三触发源 + rapid-refill 的 context_limit 触发；激活后注入 `<system-reminder>` 收尾提醒、工具限流到只读白名单（`softLandingAllowedTools`）、`soft_landing` 事件、`react_soft_landings_total{reason}` 指标。
+- maxSteps 语义降级：代码默认 8→200，custom.yaml 500→200；循环自然退出从 `ErrorReactRunFailed` 改为 `finishExhausted`（完成态 + 终止原因 `finish_exhausted`），并回填未执行 tool calls 的占位结果避免悬空 tool_use。
+- 外层 run token 预算：`payload.tokenBudget` > `react.loop.budget_tokens_per_run`（默认 0=不限）；90% 软着陆、100% 以 `finish_budget_exhausted` 完成态收尾；子 run 保持 agent 级 tokenBudget 独立语义。
+- run 级 wall-clock 超时：`runDeadlineScope`（`context.WithTimeoutCause`，cause=`ErrReactRunTimeout`），覆盖外层与子 run；取消/超时在全链路可区分（collectLLMStream / terminalModelContextError 已适配）。
+- 输出截断续写：`StopReason=max_tokens` 且无 tool calls 时注入一次性续写指令，上限 `output_continuation_max`（默认 2）；gpt.go 将 finish_reason=length 透传为 max_tokens。
+- 交互等待超时：`clientMessageHub.waitTimeout`（超时注销 waiter + 迟到消息进 pending 缓冲 + 竞态窗口消息优先）；ask_question / client tool（单/批量）/ 工具确认三条等待路径超时后以错误工具结果回灌继续循环，不终止 run；`react.loop.interaction_timeout_sec`（0=不限）。
+- 重复调用软守卫：`toolCallSignature`（参数 key 排序稳定化 SHA-256）、streak≥阈值注入收束提醒（每 run 上限 3 次，渲染幂等、轮末结算）、`anomaly_warning` 对应指标 `react_anomaly_warnings_total`。
+
+**M3 Context 治理（Phase 3）**
+- 真实窗口接入：`reactCompactThreshold(modelKey)` = 模型目录 `max_context_tokens` − max(output_reserve, `max_output_tokens`) − buffer；`compactConfigForModel` 替换压缩触发与入口预检阈值；全部 `MaxContextTokens` 事件展示口径（engine/history/model_failover/runtime）切换为模型感知值；未配置目录回退 `token_trigger` 旧语义。
+- 压缩器分片：`buildLLMCompactSummary` 超预算时按轮次边界分片逐段总结（每段 ≤2000 字）后归并，最多 3 层，超层数退化为截断（原行为）；`splitMessagesByRuneBudget` 保证不切开 tool_use/tool_result 配对（配对完整性优先于预算）。
+- compact 失败熔断：LLM 摘要连续失败 ≥`compact_failure_breaker`（默认 3）后本轮 run 直接走本地摘要。
+- rapid-refill 防抖：近 3 轮内压缩 ≥2 次仍超阈值 → 不再压缩，转软着陆（reason=context_limit）。
+- 微压缩：`service/react/microcompact.go`——token 达阈值 90% 时把较旧工具结果（保留最近 `microcompact_keep_recent`=5 组，跳过错误结果）替换为带回 resultRef 的占位文案；仅 run 内存生效、不落库不改回放；幂等；`microcompact_enabled` 未配置默认关闭。
+- prompt 缓存锚点：`api/llm/cache_anchor.go` + `applyClaudeCacheAnchor`——cache_control 落在最后一条**稳定**消息上（跳过尾部临时提醒数 `WithCacheAnchorSkip`），避免缓存断点每轮移动导致全量重写缓存。注：实测分析确认既有"尾部追加提醒"不破坏前缀缓存，方案 §6.4 的提醒去重不再需要。
+
+**M4 工具治理（Phase 4）**
+- 统一工具默认超时：`react.tool.default_timeout_ms`（默认 60s），替代 HTTP 10s / MCP 60s 两处硬编码；工具级 `config.timeout_ms` 仍最优先。
+- MCP stdio 泵化改造（`service/mcpclient/client.go`）：单一 pump goroutine 按 JSON-RPC id 分发响应（代数守卫防重启竞态），**单次请求超时不再杀子进程**（迟到响应丢弃不串包），连续 3 次超时才重启；EOF 由 pump 感知并失败全部在途请求，下次请求自动重启；`CallTool` 补齐自动重拉起。
+
+**M5 终态归一（Phase 5）**
+- 新增 run 终态 `timeout`（models/llm/react_run.go）；run() 超时收敛（`timeout` 事件 + `react_runs_total{status=timeout}`）；回放（history.go）补 timeout 终态事件；Cancel 拒绝对已超时 run 取消。
+- 权限拒绝 reason 透传：`confirmServerToolIfNeeded` 返回 (approved, rejectReason, err)，拒绝文案带用户原因、确认超时按未授权处理。
+
+**新增事件**：`model_retry`、`soft_landing`、`timeout`（payload 见 components/params/react.go；web SDK event-reducer 对未知事件有 default 分支，旧前端兼容）。
+
+### 11.2 与方案的偏差 / 未实现
+
+- §6.4 提醒去重：经缓存前缀分析确认为伪问题（尾部追加不动前缀），以缓存锚点 skip 方案替代（见上）。
+- §7.3 工具并发调度、§8 turn control（`stop_run_on_success`）：方案内标记为可选，本轮未实现。
+- Plan Runtime（external_runtime.go 独立循环）未套用本方案边界（后续按需对齐）。
+- 微压缩为 run 内存作用域（跨 run 由全量压缩的 compact_summary 收敛），未做 run 行游标持久化。
+
+### 11.3 灰度提示
+
+custom.yaml 已开启：`loop.soft_landing_steps=2`、`loop.interaction_timeout_sec=600`、`model_retry`、`tool.default_timeout_ms=60000`、`context_compact.output_reserve_tokens/buffer_tokens/microcompact_enabled/compact_failure_breaker`。`run_timeout_sec`、`budget_tokens_per_run` 保持 0（不限）待观测后开启。所有新行为经配置回退即恢复现网等效路径。

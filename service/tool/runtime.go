@@ -52,7 +52,8 @@ func (r *Runtime) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResul
 		}
 		timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
 		if timeout <= 0 {
-			timeout = 60 * time.Second
+			// 未配置时使用统一默认超时（react.tool.default_timeout_ms），与 HTTP 工具同口径。
+			timeout = time.Duration(defaultHTTPToolTimeoutMs()) * time.Millisecond
 		}
 		content, err := mcpclient.Call(cfg.MCPServer, cfg.MCPTool, req.Input, timeout)
 		if err != nil {

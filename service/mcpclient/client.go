@@ -6,6 +6,10 @@
 // 安全模型：可执行文件走代码内适配器白名单（kind → 字面量命令，按 GOOS 固定路径），
 // 配置只能选择 kind 与注入环境变量，不接收任意 command/args；子进程以参数列表启动，
 // 不经过 shell 解析。
+//
+// 超时语义（终止边界治理 Phase 4）：单次请求超时不再杀掉子进程——pump 按请求 id 分发
+// 响应，超时请求只放弃自己的 future，迟到响应被丢弃；仅当连续多次请求超时（判定子进程
+// 整体卡死）才重启。避免"慢工具反复拉起子进程 + 重新握手"的放大效应。
 package mcpclient
 
 import (
@@ -19,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"react-base-service/golib/zlog"
 )
 
 // ServerConfig 描述一个 MCP 服务器的拉起配置：kind=repo 走 stdio 适配器白名单，
@@ -79,8 +85,19 @@ func validateServerName(name string) error {
 	return nil
 }
 
-// Client 管理单个 MCP 服务器子进程的连接。请求串行化（互斥锁内 写请求+读响应），
-// 与 stdio 服务器的单线程处理模型一致。
+// stdioMaxConsecutiveTimeouts 是连续请求超时多少次后判定子进程整体卡死并重启；
+// 单次超时保留进程（pump 会丢弃迟到响应，不会串包）。
+const stdioMaxConsecutiveTimeouts = 3
+
+// stdioRPCResult 是一次 JSON-RPC 响应或读通道错误的投递载体。
+type stdioRPCResult struct {
+	resp rpcResponse
+	err  error
+}
+
+// Client 管理单个 MCP 服务器子进程的连接。
+// 请求仍串行化（mu 内 写请求+等待响应），与 stdio 服务器的单线程处理模型一致；
+// stdout 由唯一 pump goroutine 读取并按 JSON-RPC id 分发，杜绝多请求竞争读缓冲。
 type Client struct {
 	name string
 	kind string
@@ -89,8 +106,18 @@ type Client struct {
 	mu     sync.Mutex
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
-	stdout *bufio.Reader
+	stdout *bufio.Reader // 仅 pump goroutine 读取
 	nextID int
+
+	pendingMu sync.Mutex
+	pending   map[int]chan stdioRPCResult
+	// pumpGeneration 每次（重）启动 +1：旧 pump 退出时凭代数判断是否由自己清理状态，
+	// 防止重启后旧 pump 的 EOF 错误清掉新代请求。
+	pumpGeneration int
+	// readBroken 标记 pump 已因读错误退出：下一次请求 ensureStarted 会重启子进程。
+	readBroken bool
+	// consecutiveTimeouts 连续请求超时计数；达到 stdioMaxConsecutiveTimeouts 后重启子进程。
+	consecutiveTimeouts int
 }
 
 // NewClient 按配置构造客户端（未启动）。
@@ -102,7 +129,11 @@ func NewClient(cfg ServerConfig) (*Client, error) {
 	if _, err := spawnCommand(strings.TrimSpace(cfg.Kind)); err != nil {
 		return nil, fmt.Errorf("mcp server %q: %w", name, err)
 	}
-	c := &Client{name: name, kind: strings.TrimSpace(cfg.Kind)}
+	c := &Client{
+		name:    name,
+		kind:    strings.TrimSpace(cfg.Kind),
+		pending: make(map[int]chan stdioRPCResult),
+	}
 	for key, value := range cfg.Env {
 		c.env = append(c.env, key+"="+value)
 	}
@@ -167,6 +198,10 @@ func (c *Client) startLocked() error {
 	c.cmd = cmd
 	c.stdin = stdin
 	c.stdout = bufio.NewReaderSize(stdout, 2<<20)
+	c.readBroken = false
+	c.consecutiveTimeouts = 0
+	c.pumpGeneration++
+	go c.pump(c.pumpGeneration)
 
 	result, err := c.roundTripLocked("initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
@@ -208,12 +243,14 @@ func (c *Client) stopLocked() error {
 	c.cmd = nil
 	c.stdin = nil
 	c.stdout = nil
+	// 重启/停止前让所有在途请求立刻失败，等待者不会悬挂到超时。
+	c.failAllPending(fmt.Errorf("mcp server %s restarted or stopped", c.name))
 	return nil
 }
 
-// ensureStartedLocked 保证子进程与握手已完成。
+// ensureStartedLocked 保证子进程与握手已完成；pump 已断（readBroken）时同样重启。
 func (c *Client) ensureStartedLocked() error {
-	if c.cmd != nil {
+	if c.cmd != nil && !c.readBroken {
 		return nil
 	}
 	return c.startLocked()
@@ -258,11 +295,12 @@ func (c *Client) ListTools() ([]RegistryTool, error) {
 }
 
 // CallTool 调用服务器上的一个工具，返回 text 内容。
+// 单次超时只放弃本请求（子进程保留），连续超时才重启子进程。
 func (c *Client) CallTool(name string, arguments json.RawMessage, timeout time.Duration) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.cmd == nil {
-		return "", fmt.Errorf("mcp server %s is not running", c.name)
+	if err := c.ensureStartedLocked(); err != nil {
+		return "", err
 	}
 	var args any
 	if len(arguments) > 0 {
@@ -300,54 +338,126 @@ func (c *Client) roundTripLocked(method string, params any) (json.RawMessage, er
 	return c.roundTripLockedTimeout(method, params, 60*time.Second)
 }
 
+// roundTripLockedTimeout 注册 pending、写请求并等待 pump 按 id 投递的响应。
+// 调用方必须持有 c.mu（请求串行化）；pump 只依赖 pendingMu + channel 投递，不会死锁。
 func (c *Client) roundTripLockedTimeout(method string, params any, timeout time.Duration) (json.RawMessage, error) {
 	c.nextID++
 	id := c.nextID
+	ch := make(chan stdioRPCResult, 1)
+	c.pendingMu.Lock()
+	if c.readBroken {
+		c.pendingMu.Unlock()
+		return nil, fmt.Errorf("mcp %s connection broken, will restart on next request", c.name)
+	}
+	c.pending[id] = ch
+	c.pendingMu.Unlock()
+
 	if err := c.writeLocked(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
+		c.removePending(id)
 		return nil, err
 	}
 
-	type readResult struct {
-		resp rpcResponse
-		err  error
-	}
-	done := make(chan readResult, 1)
-	go func() {
-		for {
-			line, err := c.stdout.ReadString('\n')
-			if err != nil {
-				done <- readResult{err: err}
-				return
-			}
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				continue
-			}
-			var resp rpcResponse
-			if err := json.Unmarshal([]byte(trimmed), &resp); err != nil {
-				continue
-			}
-			if resp.ID != id {
-				continue
-			}
-			done <- readResult{resp: resp}
-			return
-		}
-	}()
-	// 超时后读协程可能仍阻塞在 ReadString 上，关闭连接使其退出。
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
-	case r := <-done:
-		if r.err != nil {
-			return nil, r.err
+	case result := <-ch:
+		return c.settleRoundTripResult(id, result)
+	case <-timer.C:
+		// 响应可能在超时判定瞬间已投递：先抢一次，抢不到才按超时收敛。
+		select {
+		case result := <-ch:
+			return c.settleRoundTripResult(id, result)
+		default:
 		}
-		if r.resp.Error != nil {
-			return nil, fmt.Errorf("jsonrpc error %d: %s", r.resp.Error.Code, r.resp.Error.Message)
+		c.removePending(id)
+		c.consecutiveTimeouts++
+		if c.consecutiveTimeouts >= stdioMaxConsecutiveTimeouts {
+			zlog.Warnf(nil, "[MCP.Stdio] 连续 %d 次请求超时，重启子进程: server=%s", c.consecutiveTimeouts, c.name)
+			_ = c.stopLocked()
 		}
-		return r.resp.Result, nil
-	case <-time.After(timeout):
-		_ = c.stopLocked()
 		return nil, fmt.Errorf("timeout after %s", timeout)
 	}
+}
+
+// settleRoundTripResult 结算一次成功投递的响应；成功即清零连续超时计数。
+func (c *Client) settleRoundTripResult(id int, result stdioRPCResult) (json.RawMessage, error) {
+	c.consecutiveTimeouts = 0
+	if result.err != nil {
+		return nil, result.err
+	}
+	if result.resp.Error != nil {
+		return nil, fmt.Errorf("jsonrpc error %d: %s", result.resp.Error.Code, result.resp.Error.Message)
+	}
+	return result.resp.Result, nil
+}
+
+// pump 是 stdout 的唯一读取者：按 JSON-RPC id 把响应分发给等待中的请求。
+// 通知（无 id）与迟到/未知 id 的响应直接丢弃；读到 EOF/错误时让全部在途请求失败
+// 并标记 readBroken，下一次请求经 ensureStarted 重启子进程。
+func (c *Client) pump(generation int) {
+	for {
+		line, err := c.stdout.ReadString('\n')
+		if err != nil {
+			c.pumpBroken(generation, err)
+			return
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		var resp rpcResponse
+		if err := json.Unmarshal([]byte(trimmed), &resp); err != nil {
+			continue
+		}
+		if resp.ID <= 0 {
+			continue // 通知（notifications/*）无 id：不等待响应
+		}
+		c.pendingMu.Lock()
+		ch, ok := c.pending[resp.ID]
+		if ok {
+			delete(c.pending, resp.ID)
+		}
+		c.pendingMu.Unlock()
+		if !ok {
+			continue // 请求方已超时离开或未知 id：丢弃迟到响应，避免串包
+		}
+		ch <- stdioRPCResult{resp: resp}
+	}
+}
+
+// pumpBroken 在 pump 读错误退出时清理状态；代数不匹配说明已有新 pump 接管，不操作。
+func (c *Client) pumpBroken(generation int, cause error) {
+	c.pendingMu.Lock()
+	if generation != c.pumpGeneration {
+		c.pendingMu.Unlock()
+		return
+	}
+	waiters := c.pending
+	c.pending = make(map[int]chan stdioRPCResult)
+	c.readBroken = true
+	c.pendingMu.Unlock()
+	zlog.Warnf(nil, "[MCP.Stdio] 子进程输出流中断: server=%s, err=%v", c.name, cause)
+	for _, ch := range waiters {
+		ch <- stdioRPCResult{err: fmt.Errorf("mcp %s output stream broken: %w", c.name, cause)}
+	}
+}
+
+// failAllPending 让全部在途请求立刻失败（stop/restart 路径使用，跨代生效）。
+func (c *Client) failAllPending(cause error) {
+	c.pendingMu.Lock()
+	waiters := c.pending
+	c.pending = make(map[int]chan stdioRPCResult)
+	c.pendingMu.Unlock()
+	for _, ch := range waiters {
+		ch <- stdioRPCResult{err: cause}
+	}
+}
+
+// removePending 注销一个未完成的 pending 请求。
+func (c *Client) removePending(id int) {
+	c.pendingMu.Lock()
+	delete(c.pending, id)
+	c.pendingMu.Unlock()
 }
 
 func (c *Client) writeLocked(req rpcRequest) error {

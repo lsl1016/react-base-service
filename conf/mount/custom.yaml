@@ -15,10 +15,27 @@ llm:
   react:
     # create_plan（计划确认）能力开关；未配置默认 true。
     allow_plan: false
-    # 请求未传 maxSteps 时的默认最大推理轮次。（letta-code 学习测试临时调大）
-    max_steps: 500
-    # 单次模型流连续未收到 chunk 的最大秒数；超时后尝试互备模型。
+    # 请求未传 maxSteps 时的默认最大推理轮次。maxSteps 只是防御性最后闸门：
+    # 正常终止由软着陆/预算/超时等明确边界承担（见 docs/plan/20260925_AgentLoop终止边界与循环治理优化方案.md）。
+    max_steps: 200
+    # 单次模型流连续未收到 chunk 的最大秒数；超时后先同模型重试，预算耗尽再尝试互备模型。
     stream_idle_timeout_sec: 120
+    # 主循环终止边界（0=不限）：
+    loop:
+      soft_landing_steps: 2          # 步数/预算临近耗尽时的收尾窗口轮数
+      budget_tokens_per_run: 0       # 外层 run 递归 token 预算
+      run_timeout_sec: 0             # 整 run wall-clock 上限（灰度建议先设 1800 观测）
+      interaction_timeout_sec: 600   # ask_question/client tool/工具确认等待回包超时
+      output_continuation_max: 2     # 输出被 max_tokens 截断时的自动续写上限
+      anomaly_repeat_threshold: 3    # 同参数工具调用连续重复的提醒阈值
+    # 模型调用同模型重试（预算耗尽后才切换互备模型）。
+    model_retry:
+      max_attempts: 3
+      base_delay_ms: 1000
+      max_delay_ms: 30000
+    # 服务端工具执行运行时级默认（工具 config.timeout_ms 优先）。
+    tool:
+      default_timeout_ms: 60000
     # ReAct 前端可选模型。开启互备后失败会尝试列表中的其他模型。
     models:
       default:
@@ -38,6 +55,11 @@ llm:
       timeout_sec: 120
       summary_limit: 12000
       fallback_message_preview_limit: 2000
+      output_reserve_tokens: 32768    # 有效窗口 = 模型目录 max_context_tokens - 输出预留 - buffer
+      buffer_tokens: 13000
+      microcompact_enabled: true      # 低压力微压缩：旧工具结果替换为 resultRef 占位
+      microcompact_keep_recent: 5
+      compact_failure_breaker: 3      # LLM 压缩连续失败熔断，熔断后直接走本地摘要
     # 工具结果回填：大结果落库并通过 resultRef 分片读取。
     tool_result:
       inline_limit_bytes: 262144

@@ -2,7 +2,7 @@
 llm:
   # LLM 网关 API Key（按服务分组）；通过 /apikey 接口注册的 caller 级 key 优先
   api_keys:
-    default: "115eb03f20e246f8a1b8c35f4bc59d19.p8JOqsWN0aoNLh5x"
+    default: "7bb5adc0434a4e1c9e35f798d75985ba.ZynoDz1MNKV7s8P5"
   endpoints:
     claude:
       api_url: "https://open.bigmodel.cn/api/anthropic"

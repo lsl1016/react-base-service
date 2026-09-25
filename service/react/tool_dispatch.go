@@ -139,6 +139,13 @@ func (s *reactEngineState) metricToolName(call llm.ToolCall) string {
 // 所有路径最终都归一为 llm.ToolResultContent，供下一轮模型统一消费。
 func (s *reactEngineState) executeToolCall(call llm.ToolCall, step int) (llm.ToolResultContent, error) {
 	s.logToolCallInput(call, step)
+	// 软着陆收尾窗口：只放行只读/记录类工具，写类/委派/沙箱工具以错误结果回灌，
+	// 引导模型立即总结收尾而不是继续开启多步工作。
+	if s.softLandingActive {
+		if blockedReason, blocked := softLandingToolBlocked(call.Name); blocked {
+			return llm.ToolResultContent{ToolUseID: call.ID, Content: blockedReason, IsError: true}, nil
+		}
+	}
 	if isInternalMetaTool(call.Name) {
 		if !s.profile.allowsInternalTool(call.Name) {
 			return llm.ToolResultContent{ToolUseID: call.ID, Content: fmt.Sprintf("internal tool %s is not allowed by execution profile", call.Name), IsError: true}, nil
@@ -174,12 +181,12 @@ func (s *reactEngineState) executeServerTool(call llm.ToolCall, tool model.Tool,
 	start := time.Now()
 
 	// 危险操作确认门（P2-3）：permission_mode 命中时先等人工允许；拒绝按 rejected 工具结果回填。
-	approved, confirmErr := s.confirmServerToolIfNeeded(call, tool, json.RawMessage(call.Input), step, start)
+	approved, rejectReason, confirmErr := s.confirmServerToolIfNeeded(call, tool, json.RawMessage(call.Input), step, start)
 	if confirmErr != nil {
 		return llm.ToolResultContent{}, confirmErr
 	}
 	if !approved {
-		content := renderToolRejectedResult(tool, "")
+		content := renderToolRejectedResult(tool, rejectReason)
 		_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: content, IsError: true, ExecutedBy: executedByServer, Status: toolExecutionStatusRejected, DurationMs: time.Since(start).Milliseconds()})
 		return llm.ToolResultContent{ToolUseID: call.ID, Content: content, IsError: true}, nil
 	}

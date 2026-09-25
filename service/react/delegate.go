@@ -249,7 +249,7 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	base.modelUserMessageRef = reactMessageRef{RunID: subRunID, MessageID: generateMessageID(), Seq: 1}
 
 	// 入口 token 前置检查：system + tools + task 是子 run 的不可压缩部分。
-	compactCfg := conf.GetReactRuntimeConfig().ContextCompact
+	compactCfg := compactConfigForModel(modelKey)
 	profile := executionProfileForRun(base)
 	initialTools := runtimeToolDefinitions(base, profile)
 	initialSystemContent := buildReactSystemContent(base.systemPrompt, renderToolIndexSummary(base.toolsIndexSnapshotJSON), renderSkillIndexSummary(base.skillsIndexSnapshotJSON), base.memoryContext, base.graphMemoryContext)

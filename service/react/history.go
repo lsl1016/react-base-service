@@ -311,7 +311,7 @@ func (b *historyEventBuilder) appendAssistantEvents(message model.ReactMessage) 
 			CacheReadTokens:   run.CacheReadTokens,
 			CacheCreateTokens: run.CacheCreateTokens,
 			ContextUsedTokens: b.contextUsedTokens(run),
-			MaxContextTokens:  conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger,
+			MaxContextTokens:  reactMaxContextTokens(run.ModelKey),
 		}, message.CreatedAt)
 	}
 	if content != "" {
@@ -324,7 +324,7 @@ func (b *historyEventBuilder) appendAssistantEvents(message model.ReactMessage) 
 			CacheReadTokens:   run.CacheReadTokens,
 			CacheCreateTokens: run.CacheCreateTokens,
 			ContextUsedTokens: b.contextUsedTokens(run),
-			MaxContextTokens:  conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger,
+			MaxContextTokens:  reactMaxContextTokens(run.ModelKey),
 		}, message.CreatedAt)
 	}
 	for _, part := range chatMessage.Parts {
@@ -535,14 +535,22 @@ func (b *historyEventBuilder) appendRunTerminal(runID string) {
 			CacheReadTokens:   run.CacheReadTokens,
 			CacheCreateTokens: run.CacheCreateTokens,
 			ContextUsedTokens: b.contextUsedTokens(run),
-			MaxContextTokens:  conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger,
+			MaxContextTokens:  reactMaxContextTokens(run.ModelKey),
 		}, run.UpdatedAt)
 	case model.ReactRunStateCancelled:
 		b.appendEvent(EventCancelled, runID, params.ReactCancelledPayload{
 			OK:                true,
 			Reason:            "本次运行已被用户取消",
 			ContextUsedTokens: b.contextUsedTokens(run),
-			MaxContextTokens:  conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger,
+			MaxContextTokens:  reactMaxContextTokens(run.ModelKey),
+		}, run.UpdatedAt)
+	case model.ReactRunStateTimeout:
+		// 超时终态回放：与实时事件（EventTimeout）保持同一 payload 语义。
+		b.appendEvent(EventTimeout, runID, params.ReactCancelledPayload{
+			OK:                false,
+			Reason:            "本次运行超出时间上限被终止",
+			ContextUsedTokens: b.contextUsedTokens(run),
+			MaxContextTokens:  reactMaxContextTokens(run.ModelKey),
 		}, run.UpdatedAt)
 	case model.ReactRunStateError, model.ReactRunStateExpired:
 		errMsg := strings.TrimSpace(run.ErrorMessage)
@@ -553,7 +561,7 @@ func (b *historyEventBuilder) appendRunTerminal(runID string) {
 			ErrNo:             components.ErrorReactRunFailed.ErrNo,
 			ErrMsg:            errMsg,
 			ContextUsedTokens: b.contextUsedTokens(run),
-			MaxContextTokens:  conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger,
+			MaxContextTokens:  reactMaxContextTokens(run.ModelKey),
 		}, run.UpdatedAt)
 	}
 }

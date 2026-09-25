@@ -30,14 +30,15 @@ func (r *RuntimeSetting) TableName() string {
 // GetRuntimeSettingByKey 按设置键取行；不存在返回 nil,nil（= 无覆盖，回落 yaml）。
 func GetRuntimeSettingByKey(ctx *gin.Context, settingKey string) (*RuntimeSetting, error) {
 	var setting RuntimeSetting
-	err := GetLLMDB().WithContext(ctx).
+	tx := GetLLMDB().WithContext(ctx).
 		Where("setting_key = ?", settingKey).
-		First(&setting).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+		Limit(1).
+		Find(&setting)
+	if tx.Error != nil {
+		return nil, components.ErrorDbSelect.Wrap(tx.Error)
 	}
-	if err != nil {
-		return nil, components.ErrorDbSelect.Wrap(err)
+	if tx.RowsAffected == 0 {
+		return nil, nil
 	}
 	return &setting, nil
 }

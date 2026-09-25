@@ -3,6 +3,7 @@ package react
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	llm "react-base-service/api/llm"
 	"react-base-service/components"
@@ -102,6 +103,42 @@ type reactEngineState struct {
 	reactEngineConversationState
 	reactEngineAsyncState
 	reactEngineUsageState
+	reactEngineBoundaryState
+}
+
+// reactEngineBoundaryState 是终止边界治理（软着陆/预算/异常守卫/输出续写/compact 熔断）的运行态。
+// 生命周期与当前 run 一致；字段全部是进程内存态，不持久化。
+type reactEngineBoundaryState struct {
+	// runTimeout/runDeadline 是 run 级 wall-clock 边界（0 值=不限）。
+	runTimeout  time.Duration
+	runDeadline time.Time
+
+	// 软着陆收尾：激活后 contextMessages 注入收尾提醒、工具执行限流到只读集合。
+	softLandingActive bool
+	softLandingReason string
+
+	// 重复工具调用软守卫：同签名连续 streak 达到阈值后注入收束提醒（只提醒不阻断）。
+	anomalyLastSignature string
+	anomalyStreak        int
+	anomalyLastTool      string
+	anomalyInjections    int
+	// anomalyReminderRendered 标记本轮渲染过提醒（幂等标记），轮末由 consumeAnomalyRender 结算。
+	anomalyReminderRendered bool
+
+	// 输出截断续写：pendingContinuation 待消费的续写标记；continuationCount 已续写次数。
+	pendingContinuation bool
+	continuationCount   int
+
+	// lastEphemeralTail 是 contextMessages 尾部临时消息数，供 prompt 缓存锚点跳过。
+	lastEphemeralTail int
+
+	// lastAssistantContent 记录最近一轮 assistant 正文，软着陆耗尽收尾时用作最终回答兜底。
+	lastAssistantContent string
+
+	// compactLLMFailures 是 LLM 压缩连续失败计数（达到熔断阈值后本轮 run 直接走本地摘要）。
+	compactLLMFailures int
+	// compactStepHistory 记录最近发生压缩的 step 序号，用于 rapid-refill 防抖判定。
+	compactStepHistory []int
 }
 
 type reactEngineModelState struct {

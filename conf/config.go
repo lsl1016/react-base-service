@@ -27,7 +27,7 @@ type ModelVersionLimit struct {
 }
 
 const (
-	defaultReactMaxSteps                    = 8
+	defaultReactMaxSteps                    = 200
 	defaultReactStreamIdleTimeoutSec        = 120
 	defaultReactCompactTokenTrigger         = 170000
 	defaultReactCompactTokenTarget          = 90000
@@ -63,6 +63,18 @@ const (
 	defaultReactWorkspaceRootDir            = "./data/workspaces"
 	defaultReactWorkspaceMirrorDir          = "./data/repo-cache"
 	defaultReactWorkspaceGitTimeoutSec      = 180
+	// 终止边界治理（docs/plan/20260925_AgentLoop终止边界与循环治理优化方案.md）新增默认值。
+	defaultReactLoopSoftLandingSteps       = 2
+	defaultReactLoopOutputContinuationMax  = 2
+	defaultReactLoopAnomalyRepeatThreshold = 3
+	defaultReactModelRetryMaxAttempts      = 3
+	defaultReactModelRetryBaseDelayMs      = 1000
+	defaultReactModelRetryMaxDelayMs       = 30000
+	defaultReactToolDefaultTimeoutMs       = 60000
+	defaultReactCompactOutputReserve       = 32768
+	defaultReactCompactBufferTokens        = 13000
+	defaultReactMicrocompactKeepRecent     = 5
+	defaultReactCompactFailureBreaker      = 3
 )
 
 // ReactRuntimeConfig ReAct 运行时配置，只承载线上需要按模型和成本调整的策略参数。
@@ -95,6 +107,50 @@ type ReactRuntimeConfig struct {
 	// Bundle 控制 Agent Bundle 插件包安装（P3）：agents/skills/mcp.json 打包展开写入
 	// 注册表，同名覆盖可回滚卸载；来源限白名单前缀（内部 git / 本地路径）。
 	Bundle ReactBundleConfig `yaml:"bundle"`
+	// Loop 控制主循环的终止边界与资源预算（终止边界治理）。
+	Loop ReactLoopConfig `yaml:"loop"`
+	// ModelRetry 控制模型调用的同模型重试策略（Provider Retry Limit）。
+	ModelRetry ReactModelRetryConfig `yaml:"model_retry"`
+	// Tool 控制服务端工具执行的运行时级默认策略。
+	Tool ReactToolConfig `yaml:"tool"`
+}
+
+// ReactLoopConfig 主循环终止边界配置。除 MaxSteps 外的边界都支持 0=不限的语义；
+// 新边界默认取"现网等效值"（关闭或放宽），通过 custom.yaml 逐项灰度开启。
+type ReactLoopConfig struct {
+	// SoftLandingSteps 是软着陆收尾窗口的轮数：步数/预算临近耗尽时先注入收尾提醒，
+	// 给模型最后 N 轮产出最终回答的机会，而不是直接报错（未配置默认 2）。
+	SoftLandingSteps int `yaml:"soft_landing_steps"`
+	// BudgetTokensPerRun 是外层 run 的递归 token 预算（本 run 输入+输出+委派孙代理），
+	// 达到 90% 触发软着陆、超过即以预算耗尽完成态收尾（0=不限）。
+	BudgetTokensPerRun int `yaml:"budget_tokens_per_run"`
+	// RunTimeoutSec 是整个 run 的 wall-clock 上限，到点后按 timeout 终态优雅收敛（0=不限）。
+	RunTimeoutSec int `yaml:"run_timeout_sec"`
+	// InteractionTimeoutSec 是 ask_question / client tool / 工具确认等待前端回包的超时，
+	// 超时后以错误工具结果回灌模型继续循环（0=不限，保持历史阻塞语义）。
+	InteractionTimeoutSec int `yaml:"interaction_timeout_sec"`
+	// OutputContinuationMax 是输出被 max_tokens 截断时自动续写的次数上限（未配置默认 2）。
+	OutputContinuationMax int `yaml:"output_continuation_max"`
+	// AnomalyRepeatThreshold 是同签名工具调用连续重复的提醒阈值，达到后向模型注入
+	// 收束提醒（只提醒不阻断；未配置默认 3）。
+	AnomalyRepeatThreshold int `yaml:"anomaly_repeat_threshold"`
+}
+
+// ReactModelRetryConfig 模型调用同模型重试配置（重试预算耗尽后才切换互备模型）。
+type ReactModelRetryConfig struct {
+	// MaxAttempts 是同一模型单轮内的最大尝试次数（含首次；1=不重试）。
+	MaxAttempts int `yaml:"max_attempts"`
+	// BaseDelayMs 是指数退避基础延迟。
+	BaseDelayMs int `yaml:"base_delay_ms"`
+	// MaxDelayMs 是单次重试延迟封顶（Retry-After 头 ≤5 分钟时优先于退避曲线）。
+	MaxDelayMs int `yaml:"max_delay_ms"`
+}
+
+// ReactToolConfig 服务端工具执行运行时级配置。
+type ReactToolConfig struct {
+	// DefaultTimeoutMs 是工具未配置 TimeoutMs 时的统一默认超时，替代原先分散硬编码的
+	// HTTP 10s / MCP 60s；工具级 config.timeout_ms > 该值 > 内置兜底。
+	DefaultTimeoutMs int `yaml:"default_timeout_ms"`
 }
 
 // ReactBundleConfig Agent Bundle 插件包安装配置。
@@ -367,6 +423,20 @@ type ReactContextCompactConfig struct {
 	SummaryLimit int `yaml:"summary_limit"`
 	// FallbackMessagePreviewLimit 是本地压缩回退时每条历史消息的预览字符数。
 	FallbackMessagePreviewLimit int `yaml:"fallback_message_preview_limit"`
+	// OutputReserveTokens 是从模型窗口中为输出预留的 token 数；有效窗口 = 模型目录
+	// max_context_tokens - 输出预留 - BufferTokens，压缩触发阈值随之推导。
+	// 模型目录未配置窗口时整体回退 TokenTrigger 旧语义。0=取默认 32768。
+	OutputReserveTokens int `yaml:"output_reserve_tokens"`
+	// BufferTokens 是压缩触发阈值相对有效窗口的安全缓冲。0=取默认 13000。
+	BufferTokens int `yaml:"buffer_tokens"`
+	// MicrocompactEnabled 控制低压力微压缩：把较旧的工具结果消息替换为 resultRef 占位
+	//（完整内容仍在 tblLlmReactToolResult，可 read_tool_result 续读）。未配置默认关闭。
+	MicrocompactEnabled *bool `yaml:"microcompact_enabled"`
+	// MicrocompactKeepRecent 是微压缩时保留不清理的最近工具结果消息组数。0=取默认 5。
+	MicrocompactKeepRecent int `yaml:"microcompact_keep_recent"`
+	// CompactFailureBreaker 是 LLM 压缩连续失败多少次后本轮 run 直接走本地摘要的熔断阈值。
+	// 0=取默认 3。
+	CompactFailureBreaker int `yaml:"compact_failure_breaker"`
 }
 
 // ReactToolResultConfig ReAct 工具结果上下文回填配置。
@@ -563,7 +633,50 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 	if compact.FallbackMessagePreviewLimit <= 0 {
 		compact.FallbackMessagePreviewLimit = defaultReactCompactFallbackPreviewLimit
 	}
+	if compact.OutputReserveTokens <= 0 {
+		compact.OutputReserveTokens = defaultReactCompactOutputReserve
+	}
+	if compact.BufferTokens <= 0 {
+		compact.BufferTokens = defaultReactCompactBufferTokens
+	}
+	if compact.MicrocompactKeepRecent <= 0 {
+		compact.MicrocompactKeepRecent = defaultReactMicrocompactKeepRecent
+	}
+	if compact.CompactFailureBreaker <= 0 {
+		compact.CompactFailureBreaker = defaultReactCompactFailureBreaker
+	}
 	cfg.ContextCompact = compact
+
+	loop := cfg.Loop
+	if loop.SoftLandingSteps <= 0 {
+		loop.SoftLandingSteps = defaultReactLoopSoftLandingSteps
+	}
+	if loop.OutputContinuationMax <= 0 {
+		loop.OutputContinuationMax = defaultReactLoopOutputContinuationMax
+	}
+	if loop.AnomalyRepeatThreshold <= 0 {
+		loop.AnomalyRepeatThreshold = defaultReactLoopAnomalyRepeatThreshold
+	}
+	cfg.Loop = loop
+
+	retry := cfg.ModelRetry
+	if retry.MaxAttempts <= 0 {
+		retry.MaxAttempts = defaultReactModelRetryMaxAttempts
+	}
+	if retry.BaseDelayMs <= 0 {
+		retry.BaseDelayMs = defaultReactModelRetryBaseDelayMs
+	}
+	if retry.MaxDelayMs <= 0 {
+		retry.MaxDelayMs = defaultReactModelRetryMaxDelayMs
+	}
+	if retry.MaxDelayMs < retry.BaseDelayMs {
+		retry.MaxDelayMs = retry.BaseDelayMs
+	}
+	cfg.ModelRetry = retry
+
+	if cfg.Tool.DefaultTimeoutMs <= 0 {
+		cfg.Tool.DefaultTimeoutMs = defaultReactToolDefaultTimeoutMs
+	}
 
 	toolResult := cfg.ToolResult
 	if toolResult.InlineLimitBytes <= 0 {

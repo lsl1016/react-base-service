@@ -29,6 +29,9 @@ const (
 	EventCompactEnd         = "compact_end"
 	EventTodoUpdate         = "todo_update"
 	EventModelFallback      = "model_fallback"
+	EventModelRetry         = "model_retry"
+	EventSoftLanding        = "soft_landing"
+	EventTimeout            = "timeout"
 
 	executedByServer   = "server"
 	executedByClient   = "client"
@@ -59,12 +62,18 @@ type collectLLMStreamResult struct {
 // executeReactLoop 是 ReAct Runtime 的核心状态机。
 //
 // 每一轮严格按以下顺序推进：
-//   1. 持久化 stepIndex，并在需要时压缩上下文；
+//   1. 判定软着陆边界（步数/预算/时间临近耗尽时进入收尾窗口），持久化 stepIndex，
+//      并在需要时做微压缩与全量压缩；
 //   2. 只向模型暴露稳定 Meta Tool，业务 Tool Schema 通过 get_tool 按需加载；
-//   3. 流式调用模型，收集正文/思考/tool_calls/usage；
+//   3. 流式调用模型（失败先同模型退避重试，预算耗尽再互备），收集正文/思考/tool_calls/usage；
 //   4. 持久化 assistant 消息；
-//   5. 无 tool_use 时收敛为最终回答；
-//   6. 有 tool_use 时执行工具、持久化 tool_result，并把结果追加到下一轮模型上下文。
+//   5. 无 tool_use 时收敛为最终回答（max_tokens 截断时先自动续写）；
+//   6. 有 tool_use 时执行工具（软着陆窗口内限流为只读）、持久化 tool_result，
+//      并把结果追加到下一轮模型上下文。
+//
+// 终止边界治理（docs/plan/20260925_AgentLoop终止边界与循环治理优化方案.md）：
+// maxSteps 只是防御性最后闸门；正常终止由用户取消、软着陆收尾、run 预算/超时、
+// 模型自然结束等明确边界承担。步数/预算耗尽不再报 error，而是以完成态+终止原因收尾。
 //
 // 关键不变量：落库消息顺序必须与送入下一轮模型的顺序一致；取消/断连时尽量保存已经收到的
 // assistant_partial，避免“前端看过内容但历史里完全不存在”。
@@ -76,12 +85,18 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 	}
 	prefixDebugKey := fmt.Sprintf("react:%s", sessionID)
 
+	// run 级 wall-clock 边界：到点后 runCtx cause=ErrReactRunTimeout，全链路按超时终态优雅收敛。
+	loopCtx, runDeadline, runTimeout, cancelDeadline := runDeadlineScope(runCtx)
+	defer cancelDeadline()
+
 	messages, err := buildInitialChatMessages(ctx, req, runID, sessionID)
 	if err != nil {
 		return err
 	}
 
-	state := newReactEngineState(ctx, runCtx, req, runID, sessionID, client, currentModel, failoverModels, emitter, readClient, messages)
+	state := newReactEngineState(ctx, loopCtx, req, runID, sessionID, client, currentModel, failoverModels, emitter, readClient, messages)
+	state.runTimeout = runTimeout
+	state.runDeadline = runDeadline
 	// 恢复上一个 run 已加载且定义未变化的 Business Tool，避免模型按历史上下文直接 execute_tool 时空转报错。
 	if err := state.restoreActiveToolsFromPreviousRun(); err != nil {
 		zlog.Warnf(ctx, "[React] 恢复历史已加载工具失败(忽略,模型可重新 get_tool): runId=%s, sessionId=%s, err=%v", runID, sessionID, err)
@@ -98,7 +113,13 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 
 	maxSteps := normalizeMaxSteps(req.payload.MaxSteps)
 	for step := 0; step < maxSteps; step++ {
+		// 软着陆判定：步数临近耗尽/时间超 90%/token 超 90% 时进入收尾窗口（先于本轮模型调用）。
+		state.maybeEnterSoftLanding(step, maxSteps)
 		if err := model.UpdateReactRunByRunID(ctx, runID, map[string]interface{}{"step_index": step}); err != nil {
+			return err
+		}
+		// 微压缩先于全量压缩：低压力时把旧工具结果替换为 resultRef 占位，推迟/避免全量压缩。
+		if err := state.maybeMicrocompactContext(); err != nil {
 			return err
 		}
 		if err := maybeCompactContext(state, step); err != nil {
@@ -126,9 +147,17 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 			}
 			return err
 		}
+		if IsReactRunTimeout(err) {
+			if persistErr := state.persistPartialAssistant(streamResult, roundResult.Model, step); persistErr != nil {
+				return persistErr
+			}
+			return ErrReactRunTimeout
+		}
 		if err != nil {
 			return err
 		}
+		// 本轮续写指令已随请求消费（重试内复用，成功后清除）。
+		state.pendingContinuation = false
 		if err := state.addTokenUsage(streamResult.InputTokens, streamResult.OutputTokens); err != nil {
 			return err
 		}
@@ -143,10 +172,28 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 		if err != nil {
 			return err
 		}
+		state.lastAssistantContent = streamResult.Content
 
 		if streamResult.StopReason != "tool_use" || len(streamResult.ToolCalls) == 0 {
+			// 输出截断续写（Output Token Limit 边界）：max_tokens 截断且无工具调用时，
+			// 注入一次性续写指令让模型从断点继续，而不是把截断内容当最终答案。
+			if state.shouldContinueAfterOutputTruncation(streamResult.StopReason, len(streamResult.ToolCalls), streamResult.Content) {
+				state.pendingContinuation = true
+				state.continuationCount++
+				state.messages = append(state.messages, assistantMsg)
+				state.messageRefs = append(state.messageRefs, []reactMessageRef{assistantRef})
+				zlog.Infof(ctx, "[React.Boundary] 输出截断自动续写: runId=%s, step=%d, continuation=%d/%d", runID, step, state.continuationCount, conf.GetReactRuntimeConfig().Loop.OutputContinuationMax)
+				continue
+			}
 			// 没有工具调用时说明本轮已经得到最终回答，直接收敛 run 状态并结束循环。
 			return state.finish(streamResult.Content, streamResult.TerminationReason)
+		}
+
+		// 外层 run token 预算（终止边界）：超过 100% 以预算耗尽完成态收尾；90%~100% 已由软着陆覆盖。
+		// 子 run 不套用全局预算，保持 agent 级 tokenBudget 的独立语义。
+		if state.checkLoopTokenBudget() {
+			state.persistBudgetExhaustedToolResults(streamResult.ToolCalls, step)
+			return state.finishExhausted(terminationReasonBudgetExceeded)
 		}
 
 		// 子代理预算（P3）：仅在还有后续工具轮次时检查——已产出最终回答的轮次保留完成态
@@ -159,6 +206,9 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 		if err != nil {
 			return err
 		}
+		state.recordToolAnomaly(streamResult.ToolCalls)
+		// 结算本轮重复调用提醒注入（渲染发生在本轮 contextMessages 中）。
+		state.consumeAnomalyRender()
 		_, userMsg := llm.BuildToolRoundMessagesWithReasoning(streamResult.Content, streamResult.ReasoningContent, streamResult.ReasoningSignature, streamResult.ToolCalls, results)
 		toolResultRef, err := persistToolResultMessage(ctx, req, runID, sessionID, results, step)
 		if err != nil {
@@ -168,7 +218,10 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 		state.messageRefs = append(state.messageRefs, []reactMessageRef{assistantRef}, []reactMessageRef{toolResultRef})
 	}
 
-	return components.ErrorReactRunFailed.Sprintf("exceed maxSteps")
+	// 防御性闸门：正常路径应先被软着陆收尾拦截；触达这里说明收尾窗口内也未能产出最终回答，
+	// 以完成态+终止原因收尾而不是报 error（已完成的工值得关注的内容仍在历史里）。
+	zlog.Warnf(ctx, "[React.Boundary] run 触达 maxSteps 防御闸门: runId=%s, maxSteps=%d, softLanding=%v", runID, maxSteps, state.softLandingActive)
+	return state.finishExhausted(terminationReasonExhausted)
 }
 
 // addTokenUsage 累加当前进程实际产生的模型 usage，并立即写回 ReactRun。
@@ -242,8 +295,20 @@ func (s *reactEngineState) persistPartialAssistant(result collectLLMStreamResult
 }
 
 // contextMessages 在发送给模型前按 ExecutionProfile 追加临时提醒；持久化消息不受影响。
+// 临时消息固定追加在尾部（稳定历史前缀不变，provider 可增量命中 prompt 缓存），
+// lastEphemeralTail 记录尾部临时消息数，供缓存锚点跳过（见 llm.WithCacheAnchorSkip）。
+// 本函数每轮会被上下文估算等多处调用，提醒渲染必须幂等（不产生计数副作用）。
 func (s *reactEngineState) contextMessages() []llm.ChatMessage {
-	reminders := make([]string, 0, 2)
+	reminders := make([]string, 0, 4)
+	if reminder := s.softLandingReminder(); reminder != "" {
+		reminders = append(reminders, reminder)
+	}
+	if reminder := s.anomalyReminder(); reminder != "" {
+		reminders = append(reminders, reminder)
+	}
+	if s.pendingContinuation {
+		reminders = append(reminders, continuationReminder())
+	}
 	if s.profile.InjectAsyncTaskReminder {
 		if reminder := renderReactAsyncTaskReminder(s.pendingAsyncTasks, s.pendingAsyncTasksHasMore); strings.TrimSpace(reminder) != "" {
 			reminders = append(reminders, reminder)
@@ -255,12 +320,54 @@ func (s *reactEngineState) contextMessages() []llm.ChatMessage {
 		}
 	}
 	if len(reminders) == 0 {
+		s.lastEphemeralTail = 0
 		return s.messages
 	}
 	messages := make([]llm.ChatMessage, 0, len(s.messages)+1)
 	messages = append(messages, s.messages...)
 	messages = append(messages, llm.ChatMessage{Role: "user", Content: strings.Join(reminders, "\n\n")})
+	s.lastEphemeralTail = 1
 	return messages
+}
+
+// shouldContinueAfterOutputTruncation 判定是否需要输出截断续写：max_tokens 截断、
+// 无工具调用、有实际内容且未超过续写次数上限。
+func (s *reactEngineState) shouldContinueAfterOutputTruncation(stopReason string, toolCallCount int, content string) bool {
+	if stopReason != "max_tokens" || toolCallCount > 0 || strings.TrimSpace(content) == "" {
+		return false
+	}
+	return stateContinuationLimit() > s.continuationCount
+}
+
+func stateContinuationLimit() int {
+	return conf.GetReactRuntimeConfig().Loop.OutputContinuationMax
+}
+
+// finishExhausted 是软着陆窗口未能收敛时的兜底收尾：run 以完成态 + 终止原因结束而非 error，
+// 已完成的内容（最近 assistant 正文或兜底文案）作为最终回答保留。
+func (s *reactEngineState) finishExhausted(terminationReason string) error {
+	content := strings.TrimSpace(s.lastAssistantContent)
+	if content == "" {
+		content = "执行预算已耗尽，本轮未能产出最终回答。已完成的工作见上方历史消息与 todo 状态。"
+	}
+	return s.finish(content, terminationReason)
+}
+
+// persistBudgetExhaustedToolResults 在预算耗尽提前收尾时为本轮未执行的 tool calls 回填
+// 配对结果，避免历史里留下悬空 tool_use（下个 run 重建上下文会被 provider 拒绝）。
+func (s *reactEngineState) persistBudgetExhaustedToolResults(calls []llm.ToolCall, step int) {
+	if len(calls) == 0 {
+		return
+	}
+	results := make([]llm.ToolResultContent, 0, len(calls))
+	for _, call := range calls {
+		normalized := normalizeToolResult(call.ID, "执行预算已耗尽，该工具未执行。", true, s.executedBy(call.Name))
+		normalized.Status = toolExecutionStatusCancelled
+		results = append(results, llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: true})
+	}
+	if _, err := persistToolResultMessage(s.ctx, s.req, s.runID, s.sessionID, results, step); err != nil {
+		s.logWarnf("[React.Boundary] 预算耗尽工具结果回填失败(忽略): runId=%s, err=%v", s.runID, err)
+	}
 }
 
 // buildToolDefinitions 按执行档案暴露工具：reflection 只暴露记忆三工具，其余暴露完整 Meta Tool 集；
@@ -361,7 +468,7 @@ func (s *reactEngineState) collectLLMStreamWithEmitter(stream <-chan llm.StreamC
 			CacheReadTokens:   s.cacheReadTokens,
 			CacheCreateTokens: s.cacheCreateTokens,
 			ContextUsedTokens: inputTokens + outputTokens,
-			MaxContextTokens:  conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger,
+			MaxContextTokens:  s.maxContextTokens(),
 		})
 	}
 
@@ -393,7 +500,7 @@ func (s *reactEngineState) collectLLMStreamWithEmitter(stream <-chan llm.StreamC
 			payload.CacheReadTokens = s.cacheReadTokens
 			payload.CacheCreateTokens = s.cacheCreateTokens
 			payload.ContextUsedTokens = inputTokens + outputTokens
-			payload.MaxContextTokens = conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger
+			payload.MaxContextTokens = s.maxContextTokens()
 		}
 		err := s.emitter.EmitStep(step, EventThoughtEnd, payload)
 		reasoningBlockContent.Reset()
@@ -429,6 +536,9 @@ consume:
 				cause := context.Cause(s.runCtx)
 				if errors.Is(cause, ErrReactRunCancelled) {
 					return result(), ErrReactRunCancelled
+				}
+				if errors.Is(cause, ErrReactRunTimeout) {
+					return result(), ErrReactRunTimeout
 				}
 				if errors.Is(cause, context.DeadlineExceeded) {
 					return result(), context.DeadlineExceeded
@@ -490,10 +600,13 @@ consume:
 			}
 		}
 	}
-	if errors.Is(s.runCtx.Err(), context.Canceled) {
+	if errors.Is(s.runCtx.Err(), context.Canceled) || errors.Is(s.runCtx.Err(), context.DeadlineExceeded) {
 		cause := context.Cause(s.runCtx)
 		if errors.Is(cause, ErrReactRunCancelled) {
 			return result(), ErrReactRunCancelled
+		}
+		if errors.Is(cause, ErrReactRunTimeout) {
+			return result(), ErrReactRunTimeout
 		}
 		if errors.Is(cause, context.DeadlineExceeded) {
 			return result(), context.DeadlineExceeded
@@ -543,7 +656,7 @@ func (s *reactEngineState) finish(content, terminationReason string) error {
 		CacheReadTokens:       s.cacheReadTokens,
 		CacheCreateTokens:     s.cacheCreateTokens,
 		ContextUsedTokens:     s.contextUsedTokens(content),
-		MaxContextTokens:      conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger,
+		MaxContextTokens:      s.maxContextTokens(),
 		TerminationReason:     terminationReason,
 		DelegatedInputTokens:  int(s.delegatedInputTokens.Load()),
 		DelegatedOutputTokens: int(s.delegatedOutputTokens.Load()),

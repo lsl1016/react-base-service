@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"react-base-service/components/params"
+	"react-base-service/conf"
 
 	"react-base-service/golib/zlog"
 )
@@ -71,6 +73,13 @@ func newClientMessageHub(readClient ClientMessageReader) *clientMessageHub {
 // wait 注册一个一次性 waiter，并等待第一条满足 match 的上行消息。
 // 注册前先扫描 pending 缓冲，解决“前端回包先到、等待者稍后才注册”的竞态；返回后 waiter 自动注销。
 func (h *clientMessageHub) wait(match func(params.ReactWSMessage) bool) (params.ReactWSMessage, error) {
+	return h.waitTimeout(match, 0)
+}
+
+// waitTimeout 是带超时的 wait：timeout<=0 表示不限（历史语义）。
+// 超时后注销 waiter 并返回 ErrInteractionTimeout；若消息在超时判定瞬间已投递，
+// 仍以消息优先（避免竞态丢消息）。注销后迟到的匹配消息进入 pending 缓冲，可被后续等待者认领。
+func (h *clientMessageHub) waitTimeout(match func(params.ReactWSMessage) bool, timeout time.Duration) (params.ReactWSMessage, error) {
 	if h == nil || h.readClient == nil {
 		return params.ReactWSMessage{}, errClientReaderRequired
 	}
@@ -96,8 +105,27 @@ func (h *clientMessageHub) wait(match func(params.ReactWSMessage) bool) (params.
 	if needStart {
 		go h.pump()
 	}
-	event := <-w.ch
-	return event.msg, event.err
+	if timeout <= 0 {
+		event := <-w.ch
+		return event.msg, event.err
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case event := <-w.ch:
+		return event.msg, event.err
+	case <-timer.C:
+		// 消息可能在超时判定瞬间已投递：先抢一次消息，抢不到才按超时收敛。
+		select {
+		case event := <-w.ch:
+			return event.msg, event.err
+		default:
+		}
+		h.mu.Lock()
+		delete(h.waiters, w)
+		h.mu.Unlock()
+		return params.ReactWSMessage{}, ErrInteractionTimeout
+	}
 }
 
 // pump 是唯一的 readClient 消费循环；断连/关闭时向全部等待者广播错误后退出。
@@ -203,7 +231,12 @@ func toolUseAnswerID(msg params.ReactWSMessage) string {
 }
 
 // waitClientMessage 是交互等待函数的统一入口：经 hub 注册匹配规则并阻塞等待。
+// 配置 react.loop.interaction_timeout_sec > 0 时启用交互等待超时：超时返回
+// ErrInteractionTimeout，由各交互工具以错误工具结果回灌模型继续循环（不终止 run）。
 func (s *reactEngineState) waitClientMessage(match func(params.ReactWSMessage) bool) (params.ReactWSMessage, error) {
+	if seconds := conf.GetReactRuntimeConfig().Loop.InteractionTimeoutSec; seconds > 0 {
+		return s.clientHub.waitTimeout(match, time.Duration(seconds)*time.Second)
+	}
 	return s.clientHub.wait(match)
 }
 

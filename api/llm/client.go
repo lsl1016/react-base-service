@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"react-base-service/conf"
@@ -157,6 +158,21 @@ func GetClient(platformType, modelKey string) (LLMClient, error) {
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrModelNotSupported, modelKey)
 	}
+}
+
+// MaxOutputTokensForVersion 在模型目录中按版本查找 max_output_tokens（含 default_version 命中）。
+// 未配置返回 0，由调用方回退内置默认值。用于 endpoint 未配置 max_tokens 时消除硬编码输出上限。
+func MaxOutputTokensForVersion(version string) int {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return 0
+	}
+	for _, catalog := range conf.CustomConf.LLM.Models {
+		if slices.Contains(catalog.Versions, version) || catalog.DefaultVersion == version {
+			return catalog.MaxOutputTokens
+		}
+	}
+	return 0
 }
 
 // GetClientWithKey 根据自定义 API Key 和模型 key 获取 LLM 客户端（Skill 管线使用）

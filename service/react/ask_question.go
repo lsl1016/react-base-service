@@ -8,6 +8,7 @@ import (
 
 	llm "react-base-service/api/llm"
 	"react-base-service/components/params"
+	"react-base-service/conf"
 	model "react-base-service/models/llm"
 )
 
@@ -201,6 +202,13 @@ func (s *reactEngineState) executeAskQuestion(call llm.ToolCall, step int) (llm.
 		_ = model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateRunning, "pending_tool_use_ids": "[]"})
 	}
 	if err != nil {
+		// 交互等待超时：以错误工具结果回灌模型继续循环（模型可换路径或稍后再问），不终止 run。
+		if IsErrInteractionTimeout(err) {
+			content := renderAskQuestionTimeoutResult()
+			normalized := normalizeToolResult(call.ID, content, true, executedByInternal)
+			_ = interactionEmitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, IsError: true, ExecutedBy: executedByInternal, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds()})
+			return llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: true}, nil
+		}
 		// 取消/断线时补一条「未作答」tool_result：历史可见、悬空 tool_use 有配对、实时卡片可收敛。
 		if IsReactRunCancelled(err) || IsReactClientDisconnected(err) {
 			s.persistAskQuestionCancelledResult(call, input, step, start, err)
@@ -227,7 +235,8 @@ func (s *reactEngineState) waitAskQuestionAnswer(toolUseID string) (askQuestionA
 		return toolUseAnswerID(m) == toolUseID
 	})
 	if err != nil {
-		if !IsReactClientDisconnected(err) {
+		// 交互超时不是断连：run 状态已由调用方恢复 running，不置 expired。
+		if !IsReactClientDisconnected(err) && !IsErrInteractionTimeout(err) {
 			_ = model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateExpired})
 		}
 		return askQuestionAnswer{}, err
@@ -312,6 +321,16 @@ func renderAskQuestionCancelledResult(input askQuestionInput, waitErr error) str
 		Skipped:   true,
 		Cancelled: true,
 		Note:      "用户取消了本次运行，问题未作答。",
+	})
+	return string(data)
+}
+
+// renderAskQuestionTimeoutResult 生成「等待作答超时」的错误结果内容。
+// 与取消不同：run 继续运行，模型可基于已有信息推进、稍后重新提问或直接向用户说明。
+func renderAskQuestionTimeoutResult() string {
+	seconds := conf.GetReactRuntimeConfig().Loop.InteractionTimeoutSec
+	data, _ := json.Marshal(map[string]any{
+		"error": fmt.Sprintf("用户未在限时内（%d 秒）作答，本次提问未获回答。请基于已有信息继续推进，或稍后用 ask_question 重新提问，不要臆造用户答案。", seconds),
 	})
 	return string(data)
 }

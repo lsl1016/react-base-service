@@ -38,6 +38,9 @@ type ReactRunPayload struct {
 	ModelVersion string          `json:"modelVersion"`
 	ModelHash    string          `json:"modelHash"`
 	MaxSteps     int             `json:"maxSteps"`
+	// TokenBudget 是本次 run 的递归 token 预算（输入+输出+委派孙代理）；
+	// 0 时回退 react.loop.budget_tokens_per_run，仍为 0 表示不限。
+	TokenBudget int `json:"tokenBudget,omitempty"`
 	// ExecutionMode 控制本轮执行范式；空值按 react 兼容旧客户端。
 	ExecutionMode ReactExecutionMode `json:"executionMode,omitempty"`
 }
@@ -60,6 +63,24 @@ type ReactModelFallbackPayload struct {
 	ToModelVersion     string `json:"toModelVersion"`
 	Reason             string `json:"reason"`
 	ResetCurrentOutput bool   `json:"resetCurrentOutput"`
+}
+
+// ReactModelRetryPayload 模型调用同模型重试事件（model_retry）。
+type ReactModelRetryPayload struct {
+	ModelKey           string `json:"modelKey"`
+	ModelVersion       string `json:"modelVersion"`
+	Attempt            int    `json:"attempt"`
+	MaxAttempts        int    `json:"maxAttempts"`
+	DelayMs            int64  `json:"delayMs"`
+	Reason             string `json:"reason"`
+	ResetCurrentOutput bool   `json:"resetCurrentOutput"`
+}
+
+// ReactSoftLandingPayload 软着陆收尾触发事件（soft_landing）。
+type ReactSoftLandingPayload struct {
+	Reason          string `json:"reason"`
+	RemainingSteps  int    `json:"remainingSteps"`
+	RemainingMillis int64  `json:"remainingMillis,omitempty"`
 }
 
 type ReactEvent struct {
@@ -116,14 +137,14 @@ type ReactToolUseStartPayload struct {
 }
 
 type ReactClientToolUseStartPayload struct {
-	ToolUseID    string          `json:"toolUseId"`
-	ToolName     string          `json:"toolName"`
-	ToolInput    json.RawMessage `json:"toolInput,omitempty" swaggertype:"object"`
-	Description  string          `json:"description,omitempty"`
-	FrontendHint string          `json:"frontendHint,omitempty"`
-	Status       string          `json:"status"`
-	PlanExecutionID string       `json:"planExecutionId,omitempty"`
-	StepAttemptID   string       `json:"stepAttemptId,omitempty"`
+	ToolUseID       string          `json:"toolUseId"`
+	ToolName        string          `json:"toolName"`
+	ToolInput       json.RawMessage `json:"toolInput,omitempty" swaggertype:"object"`
+	Description     string          `json:"description,omitempty"`
+	FrontendHint    string          `json:"frontendHint,omitempty"`
+	Status          string          `json:"status"`
+	PlanExecutionID string          `json:"planExecutionId,omitempty"`
+	StepAttemptID   string          `json:"stepAttemptId,omitempty"`
 }
 
 type ReactToolUseEndPayload struct {
@@ -319,7 +340,6 @@ type ReactSessionFeedbackResp struct {
 	Items []ReactRunFeedbackResp `json:"items"`
 }
 
-
 // PlanStepResultRef 是 Step Result 的公开引用，详情通过 plan_execution/events 等接口按需读取。
 type PlanStepResultRef struct {
 	PlanExecutionID string `json:"plan_execution_id,omitempty"`
@@ -358,16 +378,16 @@ type PlanPublicError struct {
 }
 
 type PlanPublicView struct {
-	PlanExecutionID string                `json:"plan_execution_id"`
-	Status          string                `json:"status"`
-	Summary         string                `json:"summary"`
-	Steps           []PlanStepPublicView  `json:"steps"`
-	CurrentStep     *PlanStepPublicView   `json:"current_step,omitempty"`
-	Result          map[string]any        `json:"result,omitempty"`
-	WaitRequest     *PlanWaitRequest      `json:"wait_request,omitempty"`
-	Error           *PlanPublicError      `json:"error,omitempty"`
-	CanResume       bool                  `json:"can_resume"`
-	UpdatedAt       string                `json:"updated_at"`
+	PlanExecutionID string               `json:"plan_execution_id"`
+	Status          string               `json:"status"`
+	Summary         string               `json:"summary"`
+	Steps           []PlanStepPublicView `json:"steps"`
+	CurrentStep     *PlanStepPublicView  `json:"current_step,omitempty"`
+	Result          map[string]any       `json:"result,omitempty"`
+	WaitRequest     *PlanWaitRequest     `json:"wait_request,omitempty"`
+	Error           *PlanPublicError     `json:"error,omitempty"`
+	CanResume       bool                 `json:"can_resume"`
+	UpdatedAt       string               `json:"updated_at"`
 }
 
 type PlanAttemptItem struct {
@@ -424,7 +444,6 @@ type ReactPlanStepEventPayload struct {
 	StepRunID       string     `json:"stepRunId"`
 	Event           ReactEvent `json:"event"`
 }
-
 
 type PlanResumeReq struct {
 	PlanExecutionID string         `json:"planExecutionId" binding:"required"`

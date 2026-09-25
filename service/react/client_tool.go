@@ -9,6 +9,7 @@ import (
 
 	llm "react-base-service/api/llm"
 	"react-base-service/components/params"
+	"react-base-service/conf"
 	model "react-base-service/models/llm"
 	toolService "react-base-service/service/tool"
 )
@@ -47,9 +48,13 @@ func (s *reactEngineState) executeClientToolCalls(calls []reactClientToolCall, s
 	}
 
 	outputs, _, err := s.waitClientToolOutputs(callByID)
-	if err != nil {
+	if err != nil && !IsErrInteractionTimeout(err) {
 		s.persistClientToolInterruptedResults(pendingToolCalls(calls), step, err)
 		return nil, err
+	}
+	if IsErrInteractionTimeout(err) {
+		// 交互等待超时：所有 pending 工具以超时错误结果回填，run 继续循环而不是终止。
+		outputs = timeoutClientToolOutputs(callByID)
 	}
 	if err := model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateRunning, "pending_tool_use_ids": "[]"}); err != nil {
 		return nil, err
@@ -97,9 +102,13 @@ func (s *reactEngineState) executeClientTool(call llm.ToolCall, tool model.Tool,
 	if !IsReactRunCancelled(err) {
 		_ = model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateRunning, "pending_tool_use_ids": "[]"})
 	}
-	if err != nil {
+	if err != nil && !IsErrInteractionTimeout(err) {
 		s.persistClientToolInterruptedResults([]llm.ToolCall{call}, step, err)
 		return llm.ToolResultContent{}, err
+	}
+	if IsErrInteractionTimeout(err) {
+		// 交互等待超时：以超时错误结果回灌模型继续循环，不终止 run。
+		output = timeoutClientToolOutput(call.ID)
 	}
 	meta, err := normalizeClientToolMeta(output.Meta)
 	if err != nil {
@@ -141,7 +150,8 @@ func (s *reactEngineState) waitClientToolOutput(toolUseID string) (clientToolOut
 		return m.Type == EventClientToolUseEnd && clientToolUseEndIDs(m)[toolUseID]
 	})
 	if err != nil {
-		if !IsReactClientDisconnected(err) {
+		// 交互超时不是断连：run 状态由调用方恢复 running，不置 expired。
+		if !IsReactClientDisconnected(err) && !IsErrInteractionTimeout(err) {
 			_ = model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateExpired})
 		}
 		return clientToolOutput{}, 0, err
@@ -188,7 +198,8 @@ func (s *reactEngineState) waitClientToolOutputs(callByID map[string]reactClient
 		return false
 	})
 	if err != nil {
-		if !IsReactClientDisconnected(err) {
+		// 交互超时不是断连：run 状态由调用方恢复 running，不置 expired。
+		if !IsReactClientDisconnected(err) && !IsErrInteractionTimeout(err) {
 			_ = model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateExpired})
 		}
 		return nil, 0, err
@@ -302,4 +313,28 @@ func clientToolFrontendHint(tool model.Tool) string {
 		return strings.TrimSpace(cfg.FrontendHint)
 	}
 	return tool.Name
+}
+
+// clientToolInteractionTimeoutSeconds 返回配置的交互等待超时秒数（0=不限）。
+func clientToolInteractionTimeoutSeconds() int {
+	return conf.GetReactRuntimeConfig().Loop.InteractionTimeoutSec
+}
+
+// timeoutClientToolOutput 生成单个 client tool 的超时错误回填结果。
+func timeoutClientToolOutput(toolUseID string) clientToolOutput {
+	seconds := clientToolInteractionTimeoutSeconds()
+	return clientToolOutput{
+		ToolUseID: toolUseID,
+		Content:   json.RawMessage(fmt.Sprintf(`{"error":"客户端工具未在限时内（%d 秒）回填结果。请基于已有信息继续推进，或向用户说明该工具未能完成。","timedOut":true}`, seconds)),
+		IsError:   true,
+	}
+}
+
+// timeoutClientToolOutputs 为全部 pending client tool 生成超时错误回填结果（批量路径用）。
+func timeoutClientToolOutputs(callByID map[string]reactClientToolCall) map[string]clientToolOutput {
+	outputs := make(map[string]clientToolOutput, len(callByID))
+	for toolUseID := range callByID {
+		outputs[toolUseID] = timeoutClientToolOutput(toolUseID)
+	}
+	return outputs
 }

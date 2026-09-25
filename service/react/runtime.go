@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -198,7 +199,7 @@ func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayloa
 	if err != nil {
 		return nil, err
 	}
-	compactCfg := conf.GetReactRuntimeConfig().ContextCompact
+	compactCfg := compactConfigForModel(req.resolvedModelKey)
 	initialTools := runtimeToolDefinitions(req, executionProfileForRun(req))
 	initialSystemContent := buildReactSystemContent(req.systemPrompt, renderToolIndexSummary(req.toolsIndexSnapshotJSON), renderSkillIndexSummary(req.skillsIndexSnapshotJSON), req.memoryContext, req.graphMemoryContext)
 	if err := checkEntryInputTokens(initialSystemContent, req.modelUserMessage, initialTools, compactCfg.TokenTrigger); err != nil {
@@ -240,6 +241,18 @@ func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayloa
 			_ = emitter.Emit(EventCancelled, params.ReactCancelledPayload{OK: true, Reason: "本次运行已被用户取消", ContextUsedTokens: usedTokens, MaxContextTokens: maxTokens})
 			return &RunResult{RunID: runID, SessionID: sessionID}, err
 		}
+		if IsReactRunTimeout(err) {
+			// run 级 wall-clock 边界：按 timeout 终态优雅收敛（不是 error，也不是 cancelled）。
+			metrics.RunsTotal.WithLabelValues("timeout").Inc()
+			_ = model.UpdateReactRunByRunID(ctx, runID, map[string]any{
+				"state":         model.ReactRunStateTimeout,
+				"error_message": fmt.Sprintf("run timeout: %ds", conf.GetReactRuntimeConfig().Loop.RunTimeoutSec),
+			})
+			timedOutRun, _ := model.GetReactRunByRunID(ctx, runID)
+			usedTokens, maxTokens := reactContextWindowFields(timedOutRun)
+			_ = emitter.Emit(EventTimeout, params.ReactCancelledPayload{OK: false, Reason: "本次运行超出时间上限被终止", ContextUsedTokens: usedTokens, MaxContextTokens: maxTokens})
+			return &RunResult{RunID: runID, SessionID: sessionID}, err
+		}
 
 		errorMessage := err.Error()
 		if IsReactClientDisconnected(err) {
@@ -266,13 +279,16 @@ func run(ctx *gin.Context, parent context.Context, payload params.ReactRunPayloa
 	return &RunResult{RunID: runID, SessionID: sessionID}, nil
 }
 
-// reactContextWindowFields 在 run 结束(含 error/cancelled)时计算上下文窗口与已用 token。
-// 终止路径拿不到本轮 LLM 的 token,但 maxContextTokens 来自配置、已用 token 来自上一轮成功调用写库的 last tokens,均可返回。
+// reactContextWindowFields 在 run 结束(含 error/cancelled/timeout)时计算上下文窗口与已用 token。
+// 终止路径拿不到本轮 LLM 的 token,但 maxContextTokens 按模型目录推导(未配置回退配置)、
+// 已用 token 来自上一轮成功调用写库的 last tokens,均可返回。
 func reactContextWindowFields(run *model.ReactRun) (usedTokens, maxTokens int) {
-	maxTokens = conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger
+	modelKey := ""
 	if run != nil {
+		modelKey = run.ModelKey
 		usedTokens = run.LastInputTokens + run.LastOutputTokens
 	}
+	maxTokens = reactMaxContextTokens(modelKey)
 	return usedTokens, maxTokens
 }
 
@@ -745,7 +761,7 @@ func Cancel(ctx *gin.Context, runID, sessionID string) error {
 		return components.ErrorParamInvalid.Sprintf("sessionId 与 run 不匹配")
 	}
 	switch run.State {
-	case model.ReactRunStateFinished, model.ReactRunStateCancelled, model.ReactRunStateError, model.ReactRunStateExpired:
+	case model.ReactRunStateFinished, model.ReactRunStateCancelled, model.ReactRunStateError, model.ReactRunStateExpired, model.ReactRunStateTimeout:
 		return components.ErrorParamInvalid.Sprintf("run 已结束，不能取消: state=%s", run.State)
 	}
 	cancel, ok := getActiveReactRunCancel(runID)

@@ -21,6 +21,9 @@ const (
 	ReactRunStateError                = "error"
 	ReactRunStateCancelled            = "cancelled"
 	ReactRunStateExpired              = "expired"
+	// ReactRunStateTimeout 是 run 触达 wall-clock 上限的终态（终止边界治理）：
+	// 区别于用户取消（cancelled）与内部错误（error），前端按超时语义渲染。
+	ReactRunStateTimeout = "timeout"
 )
 
 type ReactRun struct {

@@ -23,6 +23,7 @@ import (
 
 	llm "react-base-service/api/llm"
 	"react-base-service/components/params"
+	"react-base-service/conf"
 	model "react-base-service/models/llm"
 	toolService "react-base-service/service/tool"
 
@@ -119,11 +120,12 @@ func shouldConfirmServerTool(tool model.Tool, input json.RawMessage, agentMode s
 }
 
 // confirmServerToolIfNeeded 是服务端工具执行的确认门：需要确认时发 tool_confirm_request 并阻塞等待
-// 前端 tool_confirm_answer。返回 approved=false 表示用户拒绝（调用方回填拒绝结果），err 仅在中断时非 nil。
-func (s *reactEngineState) confirmServerToolIfNeeded(call llm.ToolCall, tool model.Tool, input json.RawMessage, step int, startedAt time.Time) (approved bool, err error) {
+// 前端 tool_confirm_answer。返回 approved=false 表示不执行（调用方回填拒绝/超时结果，rejectReason
+// 说明具体原因）；err 仅在取消/断连等中断时非 nil。
+func (s *reactEngineState) confirmServerToolIfNeeded(call llm.ToolCall, tool model.Tool, input json.RawMessage, step int, startedAt time.Time) (approved bool, rejectReason string, err error) {
 	decision := shouldConfirmServerTool(tool, input, s.agentPermissionMode)
 	if !decision.NeedConfirm {
-		return true, nil
+		return true, "", nil
 	}
 
 	_ = s.emitter.EmitStep(step, EventToolConfirmRequest, params.ReactToolConfirmRequestPayload{
@@ -135,7 +137,7 @@ func (s *reactEngineState) confirmServerToolIfNeeded(call llm.ToolCall, tool mod
 	})
 	pendingJSON, _ := json.Marshal([]string{call.ID})
 	if err := model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateWaitingClientMessage, "pending_tool_use_ids": string(pendingJSON)}); err != nil {
-		return false, err
+		return false, "", err
 	}
 
 	answer, waitErr := s.waitClientMessage(func(m params.ReactWSMessage) bool {
@@ -145,32 +147,37 @@ func (s *reactEngineState) confirmServerToolIfNeeded(call llm.ToolCall, tool mod
 		_ = model.UpdateReactRunByRunID(s.ctx, s.runID, map[string]interface{}{"state": model.ReactRunStateRunning, "pending_tool_use_ids": "[]"})
 	}
 	if waitErr != nil {
+		if IsErrInteractionTimeout(waitErr) {
+			// 交互等待超时按未授权处理：拒绝结果回灌模型继续循环，不终止 run。
+			seconds := conf.GetReactRuntimeConfig().Loop.InteractionTimeoutSec
+			return false, fmt.Sprintf("确认等待超时（%d 秒），用户未响应", seconds), nil
+		}
 		if IsReactRunCancelled(waitErr) || IsReactClientDisconnected(waitErr) {
 			// 等待确认被中断：补 rejected 终态与历史 tool_result，让卡片收敛、悬空 tool_use 有配对。
 			s.persistToolConfirmInterrupted(call, tool, step, startedAt, waitErr)
 		}
-		return false, waitErr
+		return false, "", waitErr
 	}
 	switch answer.Type {
 	case EventCancel:
 		s.persistToolConfirmInterrupted(call, tool, step, startedAt, ErrReactRunCancelled)
-		return false, ErrReactRunCancelled
+		return false, "", ErrReactRunCancelled
 	case EventToolConfirmAnswer:
 		var payload toolConfirmAnswerPayload
 		if err := json.Unmarshal(answer.Payload, &payload); err != nil {
-			return false, fmt.Errorf("tool_confirm_answer payload invalid: %w", err)
+			return false, "", fmt.Errorf("tool_confirm_answer payload invalid: %w", err)
 		}
 		if payload.ToolUseID != call.ID {
-			return false, fmt.Errorf("tool_confirm_answer missing: %s", call.ID)
+			return false, "", fmt.Errorf("tool_confirm_answer missing: %s", call.ID)
 		}
 		if payload.Approved {
 			zlog.Infof(s.ctx, "[React.ToolConfirm] 用户允许执行: runId=%s, tool=%s, toolUseId=%s", s.runID, tool.Name, call.ID)
-			return true, nil
+			return true, "", nil
 		}
 		zlog.Infof(s.ctx, "[React.ToolConfirm] 用户拒绝执行: runId=%s, tool=%s, toolUseId=%s, reason=%s", s.runID, tool.Name, call.ID, payload.Reason)
-		return false, nil
+		return false, payload.Reason, nil
 	default:
-		return false, fmt.Errorf("unexpected message while waiting tool_confirm_answer: %s", answer.Type)
+		return false, "", fmt.Errorf("unexpected message while waiting tool_confirm_answer: %s", answer.Type)
 	}
 }
 

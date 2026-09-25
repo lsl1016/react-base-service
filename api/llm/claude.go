@@ -121,6 +121,9 @@ func (c *ClaudeClient) ChatStream(ctx context.Context, messages []LLMMessage, mo
 	}
 	maxTokens := c.config.MaxTokens
 	if maxTokens <= 0 {
+		maxTokens = MaxOutputTokensForVersion(model)
+	}
+	if maxTokens <= 0 {
 		maxTokens = 4096
 	}
 	thinking := claudeThinkingSettingsForModel(ctx, model, maxTokens)
@@ -170,7 +173,7 @@ func (c *ClaudeClient) ChatStream(ctx context.Context, messages []LLMMessage, mo
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("claude api error (status %d): %s", resp.StatusCode, string(body))
+		return nil, newAPIError("claude", resp.StatusCode, ParseRetryAfter(resp.Header.Get("Retry-After")), string(body))
 	}
 
 	return c.streamMessageResponse(ctx, resp.Body), nil
@@ -239,7 +242,7 @@ func (c *ClaudeClient) ChatStreamWithFilePayloads(
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("claude api error (status %d): %s", resp.StatusCode, string(body))
+		return nil, newAPIError("claude", resp.StatusCode, ParseRetryAfter(resp.Header.Get("Retry-After")), string(body))
 	}
 
 	return c.streamMessageResponse(ctx, resp.Body), nil
@@ -566,6 +569,33 @@ type claudeContentPart struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   interface{}     `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	// CacheControl 是 prompt 缓存断点标记（ephemeral）；由 applyClaudeCacheAnchor 统一放置。
+	CacheControl *claudeCacheControl `json:"cache_control,omitempty"`
+}
+
+// applyClaudeCacheAnchor 把 prompt 缓存锚点放到最后一条稳定消息的最后一个内容块上。
+// 跳过 ctx 声明的尾部临时消息数（WithCacheAnchorSkip），避免锚点落在下一轮就消失的
+// 合成提醒上导致缓存断点每轮移动。thinking 块不承担锚点（部分 provider 禁止）。
+func applyClaudeCacheAnchor(ctx context.Context, messages []claudeAnyMsg) {
+	index := len(messages) - 1 - cacheAnchorSkipFromContext(ctx)
+	if index < 0 || index >= len(messages) {
+		return
+	}
+	message := &messages[index]
+	switch content := message.Content.(type) {
+	case []claudeContentPart:
+		for i := len(content) - 1; i >= 0; i-- {
+			if content[i].Type == "thinking" {
+				continue
+			}
+			content[i].CacheControl = &claudeCacheControl{Type: "ephemeral"}
+			return
+		}
+	case string:
+		if content != "" {
+			message.Content = []claudeContentPart{{Type: "text", Text: content, CacheControl: &claudeCacheControl{Type: "ephemeral"}}}
+		}
+	}
 }
 
 // claudeToolStreamEvent 扩展的流式事件（支持 content_block_start 等）
@@ -607,6 +637,9 @@ func (c *ClaudeClient) ChatStreamWithTools(
 	}
 	maxTokens := c.config.MaxTokens
 	if maxTokens <= 0 {
+		maxTokens = MaxOutputTokensForVersion(model)
+	}
+	if maxTokens <= 0 {
 		maxTokens = 4096
 	}
 
@@ -647,6 +680,9 @@ func (c *ClaudeClient) ChatStreamWithTools(
 			apiMessages = append(apiMessages, claudeAnyMsg{Role: msg.Role, Content: msg.Content})
 		}
 	}
+
+	// prompt 缓存锚点：放在最后一条稳定消息上（跳过尾部临时提醒），让下一轮请求增量命中缓存。
+	applyClaudeCacheAnchor(ctx, apiMessages)
 
 	reqBody := claudeToolRequest{
 		Model:     model,
@@ -692,7 +728,7 @@ func (c *ClaudeClient) ChatStreamWithTools(
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("claude api error (status %d): %s", resp.StatusCode, string(body))
+		return nil, newAPIError("claude", resp.StatusCode, ParseRetryAfter(resp.Header.Get("Retry-After")), string(body))
 	}
 
 	ch := make(chan StreamChunk, 64)

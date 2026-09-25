@@ -52,6 +52,24 @@ var (
 		Help: "Total react model failover switches.",
 	})
 
+	// ModelRetriesTotal 模型调用同模型重试次数（reason: http_429/stream_idle_timeout/unknown 等）。
+	ModelRetriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "react_model_retries_total",
+		Help: "Total react model same-model retries by failure reason.",
+	}, []string{"reason"})
+
+	// SoftLandingsTotal 软着陆收尾触发次数（reason: step_budget/token_budget/time_budget/context_limit）。
+	SoftLandingsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "react_soft_landings_total",
+		Help: "Total react soft-landing activations by reason.",
+	}, []string{"reason"})
+
+	// AnomalyWarningsTotal 重复工具调用异常提醒注入次数。
+	AnomalyWarningsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "react_anomaly_warnings_total",
+		Help: "Total repeated-tool-call anomaly warnings injected into model context.",
+	})
+
 	// ToolCallsTotal 工具调用计数（tool, status: success/error/cancelled）。
 	ToolCallsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "react_tool_calls_total",

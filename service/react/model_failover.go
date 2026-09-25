@@ -144,7 +144,7 @@ func (s *reactEngineState) emitCollectedModelResult(step int, result collectLLMS
 		if err := s.emitter.EmitStep(step, EventThoughtDelta, params.ReactThoughtDeltaPayload{ContentDelta: result.ReasoningContent}); err != nil {
 			return err
 		}
-		if err := s.emitter.EmitStep(step, EventThoughtEnd, params.ReactThoughtEndPayload{Content: result.ReasoningContent, InputTokens: s.inputTokens + result.InputTokens, OutputTokens: s.outputTokens + result.OutputTokens, CacheReadTokens: s.cacheReadTokens, CacheCreateTokens: s.cacheCreateTokens, ContextUsedTokens: result.InputTokens + result.OutputTokens, MaxContextTokens: conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger}); err != nil {
+		if err := s.emitter.EmitStep(step, EventThoughtEnd, params.ReactThoughtEndPayload{Content: result.ReasoningContent, InputTokens: s.inputTokens + result.InputTokens, OutputTokens: s.outputTokens + result.OutputTokens, CacheReadTokens: s.cacheReadTokens, CacheCreateTokens: s.cacheCreateTokens, ContextUsedTokens: result.InputTokens + result.OutputTokens, MaxContextTokens: s.maxContextTokens()}); err != nil {
 			return err
 		}
 	}
@@ -155,7 +155,7 @@ func (s *reactEngineState) emitCollectedModelResult(step int, result collectLLMS
 		if err := s.emitter.EmitStep(step, EventContentDelta, params.ReactContentDeltaPayload{ContentDelta: result.Content}); err != nil {
 			return err
 		}
-		if err := s.emitter.EmitStep(step, EventContentEnd, params.ReactContentEndPayload{Content: result.Content, InputTokens: s.inputTokens + result.InputTokens, OutputTokens: s.outputTokens + result.OutputTokens, CacheReadTokens: s.cacheReadTokens, CacheCreateTokens: s.cacheCreateTokens, ContextUsedTokens: result.InputTokens + result.OutputTokens, MaxContextTokens: conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger}); err != nil {
+		if err := s.emitter.EmitStep(step, EventContentEnd, params.ReactContentEndPayload{Content: result.Content, InputTokens: s.inputTokens + result.InputTokens, OutputTokens: s.outputTokens + result.OutputTokens, CacheReadTokens: s.cacheReadTokens, CacheCreateTokens: s.cacheCreateTokens, ContextUsedTokens: result.InputTokens + result.OutputTokens, MaxContextTokens: s.maxContextTokens()}); err != nil {
 			return err
 		}
 	}
@@ -170,18 +170,21 @@ func (s *reactEngineState) terminalModelContextError(err error) error {
 	if errors.Is(cause, ErrReactRunCancelled) {
 		return ErrReactRunCancelled
 	}
+	if errors.Is(cause, ErrReactRunTimeout) {
+		return ErrReactRunTimeout
+	}
 	if errors.Is(cause, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
 	return ErrReactClientDisconnected
 }
 
-// callModelRound 在同一个逻辑 ReAct Step 内完成模型互备。
+// callModelRound 在同一个逻辑 ReAct Step 内完成"同模型重试 + 模型互备"。
 //
-// 模型切换不会增加 stepIndex，也不会执行任何 Tool；只有某个模型完整返回本轮结果后，ReAct 才继续。
-// 成功的备选模型会提升为后续轮次的 currentModel，避免每一轮都重复撞击已故障的首选模型。
-//
-// 任一模型成功后会成为当前 Run 后续轮次的首选模型；同一轮每个模型最多尝试一次。
+// 失败处理顺序（终止边界治理 Phase 2）：可重试失败先在当前模型上指数退避重试
+//（react.model_retry.max_attempts 预算），预算耗尽后才切换互备模型；取消/断连/超时
+// 原样上抛绝不重试。模型切换不会增加 stepIndex，也不会执行任何 Tool；只有某个模型
+// 完整返回本轮结果后，ReAct 才继续。成功的备选模型会提升为后续轮次的 currentModel。
 func (s *reactEngineState) callModelRound(step int, prefixDebugKey string, tools []llm.ToolDefinition) (modelRoundResult, error) {
 	return s.callModelRoundWithEmitter(step, prefixDebugKey, tools, true)
 }
@@ -215,39 +218,68 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 			}
 		}
 
-		llmCtx := llm.WithReasoning(s.runCtx, llm.ReasoningOptions{Effort: "high"})
-		llmCtx = llm.WithPrefixDebugRun(llmCtx, prefixDebugKey, step, s.runID)
-		llmCtx, cancel := context.WithCancel(llmCtx)
-		stream, err := client.ChatStreamWithTools(llmCtx, messagesForReactModel(s.contextMessages(), target), target.ModelVersion, tools)
-		if err != nil {
-			cancel()
-			if terminal := s.terminalModelContextError(err); terminal != nil {
-				return modelRoundResult{Model: target}, terminal
-			}
-			lastResult = modelRoundResult{Model: target}
-			lastErr = components.ErrorLLMRequest.Sprintf(err.Error())
-		} else {
-			idleTimeout := time.Duration(conf.GetReactRuntimeConfig().StreamIdleTimeoutSec) * time.Second
-			streamResult, collectErr := s.collectLLMStreamWithEmitter(stream, step, cancel, idleTimeout, emitEvents && index == 0)
-			cancel()
-			lastResult = modelRoundResult{Stream: streamResult, Model: target}
-			if collectErr == nil {
-				if emitEvents && index > 0 {
-					if err := s.emitCollectedModelResult(step, streamResult); err != nil {
-						return lastResult, err
-					}
+		// 同模型重试内环：可重试失败退避后重试同一模型；不可重试或预算耗尽则跳出切互备。
+		var lastClass modelFailureClass
+		var lastReason string
+		for attempt := 1; ; attempt++ {
+			llmCtx := llm.WithReasoning(s.runCtx, llm.ReasoningOptions{Effort: "high"})
+			llmCtx = llm.WithPrefixDebugRun(llmCtx, prefixDebugKey, step, s.runID)
+			// 尾部临时提醒不作为 prompt 缓存锚点（详见 WithCacheAnchorSkip）。
+			llmCtx = llm.WithCacheAnchorSkip(llmCtx, s.lastEphemeralTail)
+			llmCtx, cancel := context.WithCancel(llmCtx)
+			stream, err := client.ChatStreamWithTools(llmCtx, messagesForReactModel(s.contextMessages(), target), target.ModelVersion, tools)
+			// classifyTarget 是分类依据：必须是未包装的原始错误（components 错误信封只做文本
+			// 拼接不保留 Unwrap 链，APIError 结构化字段只有原始错误才带）。
+			var classifyTarget error
+			if err != nil {
+				cancel()
+				if terminal := s.terminalModelContextError(err); terminal != nil {
+					return modelRoundResult{Model: target}, terminal
 				}
-				s.client = client
-				s.currentModel = target
-				return lastResult, nil
+				lastResult = modelRoundResult{Model: target}
+				lastErr = components.ErrorLLMRequest.Sprintf(err.Error())
+				classifyTarget = err
+			} else {
+				idleTimeout := time.Duration(conf.GetReactRuntimeConfig().StreamIdleTimeoutSec) * time.Second
+				streamResult, collectErr := s.collectLLMStreamWithEmitter(stream, step, cancel, idleTimeout, emitEvents && index == 0)
+				cancel()
+				lastResult = modelRoundResult{Stream: streamResult, Model: target}
+				if collectErr == nil {
+					if emitEvents && index > 0 {
+						if err := s.emitCollectedModelResult(step, streamResult); err != nil {
+							return lastResult, err
+						}
+					}
+					s.client = client
+					s.currentModel = target
+					return lastResult, nil
+				}
+				if IsReactRunCancelled(collectErr) || IsReactClientDisconnected(collectErr) || errors.Is(collectErr, context.DeadlineExceeded) {
+					return lastResult, collectErr
+				}
+				lastErr = collectErr
+				classifyTarget = collectErr
 			}
-			if IsReactRunCancelled(collectErr) || IsReactClientDisconnected(collectErr) || errors.Is(collectErr, context.DeadlineExceeded) {
-				return lastResult, collectErr
+
+			class, reason := classifyModelFailure(classifyTarget)
+			lastClass, lastReason = class, reason
+			if class != modelFailureRetryable {
+				break
 			}
-			if _, retryable := retryableModelErrorInfo(collectErr); !retryable {
-				return lastResult, collectErr
+			if attempt >= modelRetryMaxAttempts() {
+				break
 			}
-			lastErr = collectErr
+			delay := modelRetryDelay(attempt, lastErr)
+			recordModelRetry(reason)
+			// 半途失败且已向前端流式输出过部分内容时，重试前先发 reset（复用 model_fallback
+			// 事件的 ResetCurrentOutput 语义，旧前端可感知），避免重试成功后内容重复。
+			reset := emitEvents && index == 0 && (strings.TrimSpace(lastResult.Stream.Content) != "" || strings.TrimSpace(lastResult.Stream.ReasoningContent) != "" || len(lastResult.Stream.ToolCalls) > 0)
+			if err := s.emitModelRetry(step, target, attempt, delay, reason, reset); err != nil {
+				return lastResult, err
+			}
+			if waitErr := s.sleepModelRetryBackoff(delay); waitErr != nil {
+				return lastResult, waitErr
+			}
 		}
 
 		if index+1 >= len(attempts) {
@@ -259,8 +291,8 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 
 		next := attempts[index+1]
 		reason := "request_error"
-		if retryable, ok := retryableModelErrorInfo(lastErr); ok && strings.TrimSpace(retryable.reason) != "" {
-			reason = retryable.reason
+		if lastReason != "" && lastClass != modelFailureCancelled {
+			reason = lastReason
 		}
 		reset := strings.TrimSpace(lastResult.Stream.Content) != "" || strings.TrimSpace(lastResult.Stream.ReasoningContent) != "" || len(lastResult.Stream.ToolCalls) > 0
 		zlog.Warnf(s.ctx, "[react.callModelRound] 模型调用失败，切换互备模型: runId=%s, step=%d, from=%s/%s, to=%s/%s, reason=%s, err=%v", s.runID, step, target.ModelKey, target.ModelVersion, next.ModelKey, next.ModelVersion, reason, lastErr)
@@ -270,4 +302,27 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 	}
 
 	return lastResult, lastErr
+}
+
+// emitModelRetry 发送同模型重试事件；需要清空前端半途输出时附带 from==to 的
+// model_fallback（reset 语义），旧前端无需感知新事件类型即可正确清屏。
+func (s *reactEngineState) emitModelRetry(step int, target reactModelTarget, attempt int, delay time.Duration, reason string, reset bool) error {
+	zlog.Warnf(s.ctx, "[react.callModelRound] 模型调用失败，退避后重试同一模型: runId=%s, step=%d, model=%s/%s, attempt=%d, delay=%s, reason=%s", s.runID, step, target.ModelKey, target.ModelVersion, attempt, delay, reason)
+	if s.emitter == nil {
+		return nil
+	}
+	if reset {
+		if err := s.emitModelFallback(step, target, target, reason, true); err != nil {
+			return err
+		}
+	}
+	return s.emitter.EmitStep(step, EventModelRetry, params.ReactModelRetryPayload{
+		ModelKey:           target.ModelKey,
+		ModelVersion:       target.ModelVersion,
+		Attempt:            attempt,
+		MaxAttempts:        modelRetryMaxAttempts(),
+		DelayMs:            delay.Milliseconds(),
+		Reason:             reason,
+		ResetCurrentOutput: reset,
+	})
 }

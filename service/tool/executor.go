@@ -13,9 +13,19 @@ import (
 	"time"
 
 	"react-base-service/components"
+	"react-base-service/conf"
 
 	"react-base-service/golib/zlog"
 )
+
+// defaultHTTPToolTimeoutMs 返回 HTTP 工具未配置 timeout_ms 时的统一默认超时：
+// react.tool.default_timeout_ms > 内置兜底 10s（终止边界治理：替代分散硬编码）。
+func defaultHTTPToolTimeoutMs() int {
+	if ms := conf.GetReactRuntimeConfig().Tool.DefaultTimeoutMs; ms > 0 {
+		return ms
+	}
+	return 10000
+}
 
 // ToolConfig 是 tblLlmTool.config 的兼容配置结构，包含通用 schema 字段，以及 HTTP/client 等执行端可选字段。
 type ToolConfig struct {
@@ -103,7 +113,7 @@ func ExecuteHTTPTool(ctx context.Context, configJSON string, input interface{}, 
 		cfg.Method = http.MethodPost
 	}
 	if cfg.TimeoutMs <= 0 {
-		cfg.TimeoutMs = 10000
+		cfg.TimeoutMs = defaultHTTPToolTimeoutMs()
 	}
 
 	if cfg.Method == http.MethodGet {
