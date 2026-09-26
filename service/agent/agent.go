@@ -73,6 +73,10 @@ func CreateAgent(ctx *gin.Context, req *params.CreateAgentReq, createdBy string)
 	if err != nil {
 		return nil, err
 	}
+	readOnly, err := resolveAgentReadOnly(req.ReadOnly)
+	if err != nil {
+		return nil, err
+	}
 
 	agent := &model.Agent{
 		AgentID:         "agent_" + strings.ReplaceAll(uuid.New().String(), "-", ""),
@@ -88,6 +92,7 @@ func CreateAgent(ctx *gin.Context, req *params.CreateAgentReq, createdBy string)
 		SkillsJSON:      string(skillsJSON),
 		MaxSteps:        req.MaxSteps,
 		MaxTokensPerRun: req.MaxTokensPerRun,
+		ReadOnly:        readOnly,
 		PermissionMode:  normalizePermissionMode(req.PermissionMode),
 		Status:          status,
 		CreatedBy:       createdBy,
@@ -103,6 +108,7 @@ func CreateAgent(ctx *gin.Context, req *params.CreateAgentReq, createdBy string)
 // 不含 agent_id/caller_key（键位不可变）与 created_by（保留创建审计）。
 func agentDefinitionUpdates(req *params.CreateAgentReq, routeValues, toolsJSON, skillsJSON []byte, updatedBy string) map[string]interface{} {
 	status, _ := resolveAgentStatus(req.Status)
+	readOnly, _ := resolveAgentReadOnly(req.ReadOnly)
 	return map[string]interface{}{
 		"name":               req.Name,
 		"description":        req.Description,
@@ -114,6 +120,7 @@ func agentDefinitionUpdates(req *params.CreateAgentReq, routeValues, toolsJSON, 
 		"skills_json":        string(skillsJSON),
 		"max_steps":          req.MaxSteps,
 		"max_tokens_per_run": req.MaxTokensPerRun,
+		"read_only":          readOnly,
 		"permission_mode":    normalizePermissionMode(req.PermissionMode),
 		"status":             status,
 		"updated_by":         updatedBy,
@@ -203,6 +210,13 @@ func UpdateAgent(ctx *gin.Context, req *params.UpdateAgentReq) (*model.Agent, er
 	}
 	if req.MaxTokensPerRun != nil {
 		updates["max_tokens_per_run"] = *req.MaxTokensPerRun
+	}
+	if req.ReadOnly != nil {
+		readOnly, err := resolveAgentReadOnly(req.ReadOnly)
+		if err != nil {
+			return nil, err
+		}
+		updates["read_only"] = readOnly
 	}
 	if req.PermissionMode != nil {
 		if err := validatePermissionMode(*req.PermissionMode); err != nil {
@@ -500,6 +514,17 @@ func resolveAgentStatus(status *int) (int, error) {
 	return *status, nil
 }
 
+// resolveAgentReadOnly 归一只读执行域声明：nil=未指定按 0（否）；仅接受 0/1。
+func resolveAgentReadOnly(readOnly *int) (int, error) {
+	if readOnly == nil {
+		return 0, nil
+	}
+	if *readOnly != 0 && *readOnly != 1 {
+		return 0, components.ErrorParamInvalid.Sprintf("readOnly 仅支持 0 或 1")
+	}
+	return *readOnly, nil
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -542,6 +567,7 @@ func ToAgentResp(a *model.Agent) params.AgentResp {
 		Skills:         parseAgentReferenceJSON(a.SkillsJSON),
 		MaxSteps:       a.MaxSteps,
 		MaxTokensPerRun: a.MaxTokensPerRun,
+		ReadOnly:       a.ReadOnly,
 		PermissionMode: a.PermissionMode,
 		Status:         a.Status,
 		CreatedBy:      a.CreatedBy,

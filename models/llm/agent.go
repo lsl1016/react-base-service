@@ -39,7 +39,10 @@ type Agent struct {
 	MaxSteps       int                   `json:"maxSteps" gorm:"column:max_steps;not null;default:8"`
 	// MaxTokensPerRun 是子 run 递归 token 预算上限（P3：0=不限），
 	// 口径 = 本 run 输入+输出+委派孙代理的 delegated_*（OH max_budget_per_run 的 token 版）。
-	MaxTokensPerRun int                   `json:"maxTokensPerRun" gorm:"column:max_tokens_per_run;not null;default:0"`
+	MaxTokensPerRun int `json:"maxTokensPerRun" gorm:"column:max_tokens_per_run;not null;default:0"`
+	// ReadOnly 声明只读执行域（WP2 内置只读子代理同款语义）：子 run 内一切非 readOnly
+	// 业务工具（含 client 工具）被硬拦截。单调收紧——嵌套委派只能继承不能放宽。
+	ReadOnly        int                   `json:"readOnly" gorm:"column:read_only;not null;default:0"`
 	PermissionMode  string                `json:"permissionMode" gorm:"column:permission_mode;not null;default:'inherit'"`
 	Status         int                   `json:"status" gorm:"column:status;not null;default:1"`
 	CreatedBy      string                `json:"createdBy" gorm:"column:created_by;not null;default:''"`

@@ -14,6 +14,7 @@ type CreateAgentReq struct {
 	Skills          []string `json:"skills"`
 	MaxSteps        int      `json:"maxSteps"`
 	MaxTokensPerRun int      `json:"maxTokensPerRun"`
+	ReadOnly        *int     `json:"readOnly"`
 	PermissionMode  string   `json:"permissionMode"`
 	Status          *int     `json:"status" binding:"required"`
 }
@@ -32,6 +33,7 @@ type UpdateAgentReq struct {
 	Skills          []string `json:"skills"`
 	MaxSteps        *int     `json:"maxSteps"`
 	MaxTokensPerRun *int     `json:"maxTokensPerRun"`
+	ReadOnly        *int     `json:"readOnly"`
 	PermissionMode  *string  `json:"permissionMode"`
 	Status          *int     `json:"status" binding:"required"`
 }
@@ -77,6 +79,7 @@ type AgentResp struct {
 	Skills          []string `json:"skills"`
 	MaxSteps        int      `json:"maxSteps"`
 	MaxTokensPerRun int      `json:"maxTokensPerRun"`
+	ReadOnly        int      `json:"readOnly"`
 	PermissionMode  string   `json:"permissionMode"`
 	Status          int      `json:"status"`
 	CreatedBy       string   `json:"createdBy"`

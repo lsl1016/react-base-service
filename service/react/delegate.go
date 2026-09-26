@@ -74,10 +74,14 @@ func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 	sb.WriteString("需要多个子 Agent 配合时分别委派，不要把多个目标塞进一次调用。\n可用子 Agent：\n")
 	for _, agent := range agents {
 		agentKeys = append(agentKeys, agent.AgentKey)
-		sb.WriteString(fmt.Sprintf("- agent_key: %s\n  name: %s\n  description: %s\n", agent.AgentKey, agent.Name, strings.TrimSpace(agent.Description)))
+		builtinTag := ""
+		if agentService.IsBuiltinAgent(agent) {
+			builtinTag = " (built-in)"
+		}
+		sb.WriteString(fmt.Sprintf("- agent_key: %s\n  name: %s%s\n  description: %s\n", agent.AgentKey, agent.Name, builtinTag, strings.TrimSpace(agent.Description)))
 		policy := agentService.DefaultRuntime().Policy(agent)
-		if len(policy.ToolRefs) > 0 {
-			sb.WriteString(fmt.Sprintf("  tools: %s\n", strings.Join(policy.ToolRefs, ", ")))
+		if toolRefs := renderAgentToolRefs(policy.ToolRefs); len(toolRefs) > 0 {
+			sb.WriteString(fmt.Sprintf("  tools: %s\n", strings.Join(toolRefs, ", ")))
 		}
 	}
 	return llm.ToolDefinition{
@@ -103,6 +107,23 @@ func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 			"additionalProperties": false,
 		},
 	}
+}
+
+// renderAgentToolRefs 把 agent 工具白名单渲染为面向模型的描述：约定 token 翻译为可读语义
+//（@readonly→只读业务工具，@none→无业务工具），普通工具名原样保留。
+func renderAgentToolRefs(toolRefs []string) []string {
+	rendered := make([]string, 0, len(toolRefs))
+	for _, ref := range toolRefs {
+		switch ref {
+		case agentService.AgentToolRefNone:
+			rendered = append(rendered, "（无业务工具）")
+		case agentService.AgentToolRefReadOnly:
+			rendered = append(rendered, "（仅只读业务工具）")
+		default:
+			rendered = append(rendered, ref)
+		}
+	}
+	return rendered
 }
 
 // executeDelegateAgent 执行 delegate_agent：解析目标 agent → 组装隔离子 run → 复用引擎执行 →
@@ -407,7 +428,7 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	// tblLlmAgent 扩展列接入，当前先保证父子 run 思考口径一致。
 	base.reasoning = s.req.reasoning
 	base.systemPrompt = agent.SystemPrompt
-	base.toolsIndexSnapshotJSON = policy.FilterToolIndexSnapshot(base.toolsIndexSnapshotJSON)
+	base.toolsIndexSnapshotJSON = policy.FilterToolIndexSnapshot(base.toolsIndexSnapshotJSON, base.visibleTools)
 	base.skillsIndexSnapshotJSON = policy.FilterSkillIndexSnapshot(base.skillsIndexSnapshotJSON)
 	base.memoryContext = ""
 	base.graphMemoryContext = ""
@@ -422,6 +443,15 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	// agent 级工具确认收紧（P2-3）：inherit/空 = 不收紧，confirm/confirm_risky 作为子 run
 	// 内全部服务端工具的权限下限（与工具级取更严者）。
 	base.agentPermissionMode = policy.PermissionMode
+	// 只读执行域单调收紧（WP2）：父 run 已开启或本 agent 定义声明只读时，子 run 强制只读；
+	// 嵌套委派只能继承不能放宽（即使子 agent 定义 ReadOnly=0）。
+	base.enforceReadOnlyTools = s.req.enforceReadOnlyTools || policy.ReadOnly
+	// 业务工具白名单（WP2）：agent 未声明白名单（nil=继承全部）时继承父 run 的限制，单调收紧；
+	// get_tool 激活路径按此硬检查（agentToolRefAllows），索引快照过滤只是展示层。
+	base.agentToolRefs = policy.ToolRefs
+	if len(base.agentToolRefs) == 0 {
+		base.agentToolRefs = s.req.agentToolRefs
+	}
 	// 子代理预算（P3）：agent 定义的递归 token 上限，engine 每轮模型调用后检查，超限终止子 run
 	// 并经软错误通道回填父循环（OH max_budget_per_run 的 token 口径版）。
 	base.tokenBudget = policy.MaxTokensPerRun

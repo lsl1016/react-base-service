@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmAgent` (
     `skills_json`     VARCHAR(1024) NOT NULL DEFAULT '[]' COMMENT 'Skill名白名单(JSON数组,空=不注入skill索引)',
     `max_steps`       INT          NOT NULL DEFAULT 8 COMMENT '子run步数上限(默认小于主run)',
     `max_tokens_per_run` INT      NOT NULL DEFAULT 0 COMMENT '子run递归token预算上限(0=不限,含委派孙代理)',
+    `read_only`       TINYINT      NOT NULL DEFAULT 0 COMMENT '只读执行域: 0=否 1=是(非readOnly业务工具被硬拦截,嵌套委派只紧不松)',
     `permission_mode` VARCHAR(16)   NOT NULL DEFAULT 'inherit' COMMENT '权限模式: inherit/auto/confirm/confirm_risky(P2生效)',
     `status`          TINYINT       NOT NULL DEFAULT 1 COMMENT '状态: 0=禁用 1=启用',
     `created_by`      VARCHAR(64)   NOT NULL DEFAULT '' COMMENT '创建人',
@@ -150,6 +151,9 @@ CREATE TABLE IF NOT EXISTS `tblLlmAgent` (
 -- 存量环境增量迁移（新环境由上方建表语句直接包含；P3 子代理预算）：
 -- ALTER TABLE `tblLlmAgent`
 --     ADD COLUMN `max_tokens_per_run` INT NOT NULL DEFAULT 0 COMMENT '子run递归token预算上限(0=不限,含委派孙代理)' AFTER `max_steps`;
+-- 存量环境增量迁移（新环境由上方建表语句直接包含；WP2 只读执行域）：
+-- ALTER TABLE `tblLlmAgent`
+--     ADD COLUMN `read_only` TINYINT NOT NULL DEFAULT 0 COMMENT '只读执行域: 0=否 1=是' AFTER `max_tokens_per_run`;
 
 -- Agent Bundle 安装记录（P3：插件包安装展开写入 agent/skill/mcp 注册表，可回滚卸载）
 CREATE TABLE IF NOT EXISTS `tblLlmBundle` (

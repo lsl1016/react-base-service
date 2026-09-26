@@ -38,16 +38,37 @@ func TestRuntimePolicyEffectiveMaxStepsFallback(t *testing.T) {
 
 func TestRuntimePolicyFiltersToolSnapshot(t *testing.T) {
 	snapshot := `[{"toolId":"tool_a","name":"query_log","description":"log"},{"toolId":"tool_b","name":"query_schema","description":"schema"}]`
-	if got := (RuntimePolicy{}).FilterToolIndexSnapshot(snapshot); got != snapshot {
+	if got := (RuntimePolicy{}).FilterToolIndexSnapshot(snapshot, nil); got != snapshot {
 		t.Fatalf("empty tool refs should inherit snapshot: %s", got)
 	}
-	got := (RuntimePolicy{ToolRefs: []string{"tool_b"}}).FilterToolIndexSnapshot(snapshot)
+	got := (RuntimePolicy{ToolRefs: []string{"tool_b"}}).FilterToolIndexSnapshot(snapshot, nil)
 	var items []map[string]any
 	if err := json.Unmarshal([]byte(got), &items); err != nil {
 		t.Fatalf("invalid filtered json: %v", err)
 	}
 	if len(items) != 1 || items[0]["name"] != "query_schema" {
 		t.Fatalf("unexpected filtered tools: %s", got)
+	}
+}
+
+func TestRuntimePolicyFiltersToolSnapshotReadOnlyToken(t *testing.T) {
+	snapshot := `[{"toolId":"tool_a","name":"query_log","description":"log"},{"toolId":"tool_b","name":"update_row","description":"write"}]`
+	tools := []model.Tool{
+		{ToolID: "tool_a", Name: "query_log", Config: `{"readOnly":true}`},
+		{ToolID: "tool_b", Name: "update_row", Config: `{}`},
+	}
+	// @none：显式不继承任何业务工具
+	if got := (RuntimePolicy{ToolRefs: []string{AgentToolRefNone}}).FilterToolIndexSnapshot(snapshot, tools); got != "[]" {
+		t.Fatalf("@none should return empty index: %s", got)
+	}
+	// @readonly：只保留声明 readOnly 的工具
+	got := (RuntimePolicy{ToolRefs: []string{AgentToolRefReadOnly}}).FilterToolIndexSnapshot(snapshot, tools)
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(got), &items); err != nil {
+		t.Fatalf("invalid filtered json: %v", err)
+	}
+	if len(items) != 1 || items[0]["name"] != "query_log" {
+		t.Fatalf("@readonly should keep only readOnly tools: %s", got)
 	}
 }
 

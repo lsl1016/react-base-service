@@ -53,11 +53,11 @@ func TestFilterToolIndexSnapshot(t *testing.T) {
 	snapshot := `[{"toolId":"tool_a","name":"query_log","description":"查日志"},{"toolId":"tool_b","name":"query_schema","description":"查表结构"},{"toolId":"tool_c","name":"explain_sql","description":"执行计划"}]`
 
 	// 空白名单 = 继承全部可见工具
-	if got := (agentService.RuntimePolicy{}).FilterToolIndexSnapshot(snapshot); got != snapshot {
+	if got := (agentService.RuntimePolicy{}).FilterToolIndexSnapshot(snapshot, nil); got != snapshot {
 		t.Fatalf("空白名单应继承全部工具: %q", got)
 	}
 	// 按 name 过滤
-	got := (agentService.RuntimePolicy{ToolRefs: []string{"query_schema", "explain_sql"}}).FilterToolIndexSnapshot(snapshot)
+	got := (agentService.RuntimePolicy{ToolRefs: []string{"query_schema", "explain_sql"}}).FilterToolIndexSnapshot(snapshot, nil)
 	var items []reactToolIndexItem
 	if err := json.Unmarshal([]byte(got), &items); err != nil {
 		t.Fatalf("过滤结果非法 JSON: %v", err)
@@ -66,12 +66,12 @@ func TestFilterToolIndexSnapshot(t *testing.T) {
 		t.Fatalf("过滤结果不符合预期: %s", got)
 	}
 	// 按 toolId 过滤同样生效
-	got = (agentService.RuntimePolicy{ToolRefs: []string{"tool_c"}}).FilterToolIndexSnapshot(snapshot)
+	got = (agentService.RuntimePolicy{ToolRefs: []string{"tool_c"}}).FilterToolIndexSnapshot(snapshot, nil)
 	if !strings.Contains(got, "explain_sql") {
 		t.Fatalf("按 toolId 过滤未生效: %s", got)
 	}
 	// 未知名自然丢弃
-	got = (agentService.RuntimePolicy{ToolRefs: []string{"not_exist"}}).FilterToolIndexSnapshot(snapshot)
+	got = (agentService.RuntimePolicy{ToolRefs: []string{"not_exist"}}).FilterToolIndexSnapshot(snapshot, nil)
 	if got != "[]" {
 		t.Fatalf("未知名应全部丢弃: %s", got)
 	}

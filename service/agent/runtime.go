@@ -6,6 +6,7 @@ import (
 
 	"react-base-service/components/route"
 	model "react-base-service/models/llm"
+	toolService "react-base-service/service/tool"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,6 +28,9 @@ type RuntimePolicy struct {
 	PermissionMode  string
 	MaxSteps        int
 	MaxTokensPerRun int
+	// ReadOnly 是只读执行域声明（WP2）：子 run 内非 readOnly 业务工具被硬拦截。
+	// 单调收紧由调用方保证（父 run 开关 || 本定义声明），Policy 本身只透传定义值。
+	ReadOnly bool
 }
 
 // EffectiveMaxSteps 返回子 Run 最终步数上限；Agent 未配置时使用 Runtime 默认值。
@@ -37,12 +41,17 @@ func (p RuntimePolicy) EffectiveMaxSteps(defaultMaxSteps int) int {
 	return defaultMaxSteps
 }
 
-// FindVisible 返回指定 caller/路由下当前可见的 Agent 定义。
+// FindVisible 返回指定 caller/路由下当前可见的 Agent 定义（DB 行 + 未被同名遮蔽的内置 profile）。
+// DB 行在前、内置在后；同 agent_key 的 DB 行整体覆盖内置（同名即 fork）。
 func (r *Runtime) FindVisible(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Agent, error) {
-	return model.FindAgentsByCallerAndRoutes(ctx, callerKey, route.BuildRoutePrefixes(routeValues))
+	dbAgents, err := model.FindAgentsByCallerAndRoutes(ctx, callerKey, route.BuildRoutePrefixes(routeValues))
+	if err != nil {
+		return nil, err
+	}
+	return mergeBuiltinAgents(dbAgents), nil
 }
 
-// Resolve 实时解析一个可见 Agent；nil,nil 表示当前作用域下不存在该 agentKey。
+// Resolve 实时解析一个可见 Agent（DB > 内置同名覆盖）；nil,nil 表示当前作用域下不存在该 agentKey。
 func (r *Runtime) Resolve(ctx *gin.Context, callerKey string, routeValues []string, agentKey string) (*model.Agent, error) {
 	agentKey = strings.TrimSpace(agentKey)
 	if agentKey == "" {
@@ -70,6 +79,7 @@ func (r *Runtime) Policy(agent model.Agent) RuntimePolicy {
 		PermissionMode:  normalizePermissionMode(agent.PermissionMode),
 		MaxSteps:        agent.MaxSteps,
 		MaxTokensPerRun: agent.MaxTokensPerRun,
+		ReadOnly:        agent.ReadOnly == 1,
 	}
 }
 
@@ -84,10 +94,28 @@ type runtimeSkillIndexItem struct {
 }
 
 // FilterToolIndexSnapshot 按 Agent 工具白名单过滤 run 工具索引。
-// 白名单为空保持原快照，表示继承 caller 全部可见工具；非空按 name/toolId 匹配。
-func (p RuntimePolicy) FilterToolIndexSnapshot(snapshotJSON string) string {
+// 白名单为空保持原快照，表示继承 caller 全部可见工具；非空按 name/toolId 匹配，
+// 并支持两个约定 token（builtin.go）：
+//   - @none：显式不继承任何业务工具（返回空索引）；
+//   - @readonly：只保留声明了 readOnly 的业务工具（只读子代理用；tools 提供全量工具定义）。
+//
+// tools 为 nil 时 @readonly 退化为「token 被忽略、按其余显式名单匹配」——调用方应始终传入全量可见工具。
+func (p RuntimePolicy) FilterToolIndexSnapshot(snapshotJSON string, tools []model.Tool) string {
 	if len(p.ToolRefs) == 0 {
 		return snapshotJSON
+	}
+	if runtimeReferenceSet(p.ToolRefs)[AgentToolRefNone] {
+		return "[]"
+	}
+	readonlyMode := runtimeReferenceSet(p.ToolRefs)[AgentToolRefReadOnly]
+	var readonlyToolIDs map[string]bool
+	if readonlyMode {
+		readonlyToolIDs = make(map[string]bool, len(tools))
+		for _, tool := range tools {
+			if toolConfigReadOnly(tool) {
+				readonlyToolIDs[tool.ToolID] = true
+			}
+		}
 	}
 	var items []runtimeToolIndexItem
 	if err := json.Unmarshal([]byte(snapshotJSON), &items); err != nil {
@@ -98,10 +126,23 @@ func (p RuntimePolicy) FilterToolIndexSnapshot(snapshotJSON string) string {
 	for _, item := range items {
 		if allowed[item.Name] || allowed[item.ToolID] {
 			filtered = append(filtered, item)
+			continue
+		}
+		if readonlyMode && readonlyToolIDs[item.ToolID] {
+			filtered = append(filtered, item)
 		}
 	}
 	data, _ := json.Marshal(filtered)
 	return string(data)
+}
+
+// toolConfigReadOnly 解析业务工具 config 的 readOnly 声明；解析失败按可写处理（保守）。
+func toolConfigReadOnly(tool model.Tool) bool {
+	cfg, err := toolService.ParseToolConfig(tool.Config)
+	if err != nil {
+		return false
+	}
+	return cfg.ReadOnly
 }
 
 // FilterSkillIndexSnapshot 按 Agent Skill 白名单过滤 run Skill 索引。
