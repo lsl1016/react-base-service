@@ -6,9 +6,12 @@ import (
 
 	"react-base-service/components"
 	model "react-base-service/models/llm"
+	skillService "react-base-service/service/skill"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"react-base-service/golib/zlog"
 )
 
 func RegisterCaller(ctx *gin.Context, callerKey, name, description, platform string, createdBy string) (*model.Caller, error) {
@@ -36,10 +39,12 @@ func RegisterCaller(ctx *gin.Context, callerKey, name, description, platform str
 		return nil, err
 	}
 
-	// 自动创建 caller 级兜底 skill
-	//if err := createDefaultSkill(ctx, callerKey, createdBy); err != nil {
-	//	return nil, components.ErrorSkillCreateFailed.Sprintf("创建兜底skill失败: " + err.Error())
-	//}
+	// 内置技能包幂等导入（WP3）：新 caller 立即获得官方基线技能；单条失败不阻断 caller 创建。
+	if created, err := skillService.EnsureBundledSkillsForCaller(ctx, callerKey, createdBy); err != nil {
+		zlog.Warnf(ctx, "[Caller] 内置技能导入部分失败(忽略): caller=%s, err=%v", callerKey, err)
+	} else if created > 0 {
+		zlog.Infof(ctx, "[Caller] 内置技能已导入: caller=%s, count=%d", callerKey, created)
+	}
 
 	return caller, nil
 }

@@ -14,6 +14,7 @@ import (
 	"react-base-service/helpers"
 	"react-base-service/models/llm"
 	"react-base-service/router"
+	skillService "react-base-service/service/skill"
 
 	"react-base-service/golib"
 	"react-base-service/golib/base"
@@ -65,6 +66,9 @@ func httpServer(engine *gin.Engine) {
 	} else if n > 0 {
 		zlog.Infof(nil, "[startup] 已清理 %d 个陈旧活跃 run（state→expired，超过 30 分钟未更新）", n)
 	}
+
+	// 内置技能包幂等补种（WP3）：版本升级后为存量 caller 补齐新增技能；同名行跳过，不回写用户覆盖
+	go skillService.SeedBundledSkillsForAllCallers()
 
 	// 初始化http服务路由
 	router.Http(engine)

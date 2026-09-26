@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "description": "随服务分发的内置技能包（WP3，引擎+数据分离）：caller 创建与启动时幂等导入，DB 同名行优先（用户覆盖后不再更新）。",
+  "skills": [
+    {
+      "name": "委派任务写作",
+      "file": "delegate-task-writing/SKILL.md",
+      "triggerCondition": "需要调用 delegate_agent 把子任务委派给子代理时",
+      "executionSteps": "按自包含五要素改写 task 后再委派",
+      "businessContext": "子代理看不到当前对话历史，task 质量直接决定委派成败",
+      "triggers": ["委派", "子代理", "delegate_agent", "派给"]
+    },
+    {
+      "name": "大数据结果处理",
+      "file": "large-tool-results/SKILL.md",
+      "triggerCondition": "工具结果被截断或需要读取 resultRef 指向的大结果时",
+      "executionSteps": "先用回填预览判断结构，再用 read_tool_result/inspect_data 按需取数",
+      "businessContext": "大结果经 resultRef 外置，直接分页读原文会浪费上下文",
+      "triggers": ["resultRef", "截断", "truncated", "hasMore", "大结果"]
+    },
+    {
+      "name": "业务工具两段式调用",
+      "file": "business-tool-protocol/SKILL.md",
+      "triggerCondition": "需要使用业务工具（Business Tool）时",
+      "executionSteps": "先 get_tool 加载 schema，再 execute_tool 执行",
+      "businessContext": "业务工具不直接暴露 schema，必须经两段式协议按需加载",
+      "triggers": ["get_tool", "execute_tool", "业务工具"]
+    },
+    {
+      "name": "Python 数据分析",
+      "file": "python-data-analysis/SKILL.md",
+      "triggerCondition": "需要对工具结果或上传附件做统计、聚合、清洗、可视化时",
+      "executionSteps": "数据经 inputs 引用传入沙箱，产出走 artifacts",
+      "businessContext": "python_exec 是白名单沙箱，数据经 stdin 注入，禁止文件/网络操作",
+      "triggers": ["python_exec", "数据分析", "统计", "画图", "图表"]
+    },
+    {
+      "name": "代码工作区调查",
+      "file": "workspace-code-investigation/SKILL.md",
+      "triggerCondition": "需要定位报错代码、核对线上逻辑、解释实现或梳理调用链时",
+      "executionSteps": "load_runtime_code 建工作区 → get_repo_map 建立全局认知 → 符号级检索 → read_file 精读",
+      "businessContext": "代码经只读工作区按 commit 锁定，检索走 go/ast 符号感知工具，全部只读",
+      "triggers": ["代码", "源码", "线上逻辑", "定位报错", "调用链", "load_runtime_code", "代码工作区"]
+    }
+  ]
+}
