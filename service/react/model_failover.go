@@ -202,8 +202,14 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 	for index, target := range attempts {
 		client := s.client
 		if client == nil || !sameReactModel(target, s.currentModel) {
+			// 用户模型自带端点/输出上限只对其声明的 modelKey 生效；互备到其他厂商时走全局端点。
+			endpointURL, maxOutput := "", 0
+			if target.ModelKey == s.req.resolvedModelKey {
+				endpointURL = s.req.userModelApiURL
+				maxOutput = s.req.userModelMaxOutputTokens
+			}
 			var err error
-			client, err = llm.GetClientWithUserModel(s.req.apiKey, target.ModelKey)
+			client, err = llm.GetClientWithUserModelEndpoint(s.req.apiKey, target.ModelKey, endpointURL, maxOutput)
 			if err != nil {
 				lastResult = modelRoundResult{Model: target}
 				lastErr = components.ErrorLLMRequest.Sprintf(err.Error())
@@ -222,7 +228,9 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 		var lastClass modelFailureClass
 		var lastReason string
 		for attempt := 1; ; attempt++ {
-			llmCtx := llm.WithReasoning(s.runCtx, llm.ReasoningOptions{Effort: "high"})
+			// 思考程度三态随 run 注入（off/auto/custom）；各协议 client 自行翻译为
+			// reasoning_effort / thinking.budget_tokens。off 时表现为不请求思考块。
+			llmCtx := llm.WithReasoning(s.runCtx, s.req.reasoning)
 			llmCtx = llm.WithPrefixDebugRun(llmCtx, prefixDebugKey, step, s.runID)
 			// 尾部临时提醒不作为 prompt 缓存锚点（详见 WithCacheAnchorSkip）。
 			llmCtx = llm.WithCacheAnchorSkip(llmCtx, s.lastEphemeralTail)

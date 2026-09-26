@@ -242,16 +242,31 @@ func (s *reactEngineState) executedBy(toolName string) string {
 // 有效窗口 = 模型目录 max_context_tokens - 输出预留（取配置预留与目录 max_output_tokens 的较大者）- buffer。
 // 模型目录未配置窗口时返回 0，调用方回退 TokenTrigger 旧语义。
 func reactCompactThreshold(modelKey string) int {
+	return reactCompactThresholdWithOverride(modelKey, 0, 0)
+}
+
+// reactCompactThresholdWithOverride 在 reactCompactThreshold 基础上支持用户模型自带配置覆盖：
+// contextOverride/maxOutputOverride（>0）优先于模型目录，来自模型配置面板「模型与参数」。
+func reactCompactThresholdWithOverride(modelKey string, contextOverride, maxOutputOverride int) int {
 	cfg := conf.GetReactRuntimeConfig().ContextCompact
-	catalog := conf.GetModelCatalog(modelKey)
-	if catalog == nil || catalog.MaxContextTokens <= 0 {
+	maxContext, maxOutput := 0, 0
+	if catalog := conf.GetModelCatalog(modelKey); catalog != nil {
+		maxContext, maxOutput = catalog.MaxContextTokens, catalog.MaxOutputTokens
+	}
+	if contextOverride > 0 {
+		maxContext = contextOverride
+	}
+	if maxOutputOverride > 0 {
+		maxOutput = maxOutputOverride
+	}
+	if maxContext <= 0 {
 		return 0
 	}
 	reserve := cfg.OutputReserveTokens
-	if catalog.MaxOutputTokens > reserve {
-		reserve = catalog.MaxOutputTokens
+	if maxOutput > reserve {
+		reserve = maxOutput
 	}
-	window := catalog.MaxContextTokens - reserve - cfg.BufferTokens
+	window := maxContext - reserve - cfg.BufferTokens
 	if window <= 0 {
 		return 0
 	}
@@ -261,17 +276,34 @@ func reactCompactThreshold(modelKey string) int {
 // compactConfigForModel 返回按模型窗口推导触发阈值后的压缩配置。
 // 阈值推导只覆盖 TokenTrigger（触发水位/展示口径），TokenTarget 等仍走全局配置。
 func compactConfigForModel(modelKey string) conf.ReactContextCompactConfig {
+	return compactConfigForModelWithOverrides(modelKey, 0, 0)
+}
+
+// compactConfigForModelWithOverrides 是 compactConfigForModel 的用户模型覆盖版（引擎消费）。
+func compactConfigForModelWithOverrides(modelKey string, contextOverride, maxOutputOverride int) conf.ReactContextCompactConfig {
 	cfg := conf.GetReactRuntimeConfig().ContextCompact
-	if threshold := reactCompactThreshold(modelKey); threshold > 0 {
+	if threshold := reactCompactThresholdWithOverride(modelKey, contextOverride, maxOutputOverride); threshold > 0 {
 		cfg.TokenTrigger = threshold
 	}
 	return cfg
 }
 
+// userModelCapacityOverrides 返回用户模型容量覆盖（req 为 nil 的测试/回放态返回零值兜底）。
+func (s *reactEngineState) userModelCapacityOverrides() (contextTokens, maxOutputTokens int) {
+	if s.req == nil {
+		return 0, 0
+	}
+	return s.req.userModelContextTokens, s.req.userModelMaxOutputTokens
+}
+
 // maxContextTokens 返回当前模型的有效上下文窗口（事件展示口径）：
-// 按模型目录推导；未配置目录时回退 token_trigger 旧语义。
+// 优先用户模型自带上下文容量，其次按模型目录推导；未配置目录时回退 token_trigger 旧语义。
 func (s *reactEngineState) maxContextTokens() int {
-	return reactMaxContextTokens(s.currentModel.ModelKey)
+	contextOverride, maxOutputOverride := s.userModelCapacityOverrides()
+	if threshold := reactCompactThresholdWithOverride(s.currentModel.ModelKey, contextOverride, maxOutputOverride); threshold > 0 {
+		return threshold
+	}
+	return conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger
 }
 
 // reactMaxContextTokens 是 maxContextTokens 的独立函数版，供回放（history.go）与
@@ -291,7 +323,8 @@ func reactMaxContextTokens(modelKey string) int {
 //     继续压缩只会形成"压缩→立即满→再压缩"的抖动循环，此时转入软着陆收尾；
 //   - 压缩器输入分片：超长历史分段总结后归并，不再静默截断（见 buildLLMCompactSummary）。
 func maybeCompactContext(s *reactEngineState, step int) error {
-	compactCfg := compactConfigForModel(s.currentModel.ModelKey)
+	contextOverride, maxOutputOverride := s.userModelCapacityOverrides()
+	compactCfg := compactConfigForModelWithOverrides(s.currentModel.ModelKey, contextOverride, maxOutputOverride)
 	beforeCount := len(s.messages)
 	beforeSize := estimateMessagesSize(s.messages)
 

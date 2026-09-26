@@ -154,6 +154,8 @@ describe('AgentPanel UI events', () => {
       attachments: undefined,
       executionMode: 'react',
       inputOrigin,
+      modelHash: undefined,
+      reasoning: { mode: 'auto' },
     });
     expect(onAfterSend).toHaveBeenCalledWith('生成 SQL', { inputOrigin });
     expect(onUIEvent.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);
@@ -521,6 +523,8 @@ describe('AgentPanel UI events', () => {
       attachments: undefined,
       executionMode: 'react',
       inputOrigin: { type: 'manual' },
+      modelHash: undefined,
+      reasoning: { mode: 'auto' },
     });
     expect(onAfterSend).toHaveBeenCalledWith('直接发送', {
       inputOrigin: { type: 'manual' },
@@ -528,19 +532,24 @@ describe('AgentPanel UI events', () => {
 
     currentState = { ...initialState, status: 'running' };
     stateListener?.(currentState);
-    await expect(command!.fillInput('运行中仅预填', { submit: true })).resolves.toEqual({
-      status: 'filled',
+    // 运行中 submit 走 Steering 准入照常提交（排队/引导由后端决定），不再降级为仅预填。
+    await expect(command!.fillInput('运行中提交', { submit: true })).resolves.toEqual({
+      status: 'submitted',
     });
-    await vi.waitFor(() => {
-      expect(host.querySelector('[role="textbox"]')?.textContent).toBe('运行中仅预填');
+    expect(run).toHaveBeenCalledWith('运行中提交', {
+      displayParts: [{ type: 'text', text: '运行中提交' }],
+      attachments: undefined,
+      executionMode: 'react',
+      inputOrigin: { type: 'manual' },
+      modelHash: undefined,
+      reasoning: { mode: 'auto' },
     });
+    expect(run).toHaveBeenCalledTimes(2);
     await expect(command!.fillInput('', { submit: true })).resolves.toEqual({
-      status: 'filled',
+      status: 'rejected',
+      reason: 'empty',
     });
-    await vi.waitFor(() => {
-      expect(host.querySelector('[role="textbox"]')?.textContent).toBe('');
-    });
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(2);
 
     currentState = { ...initialState, status: 'idle', connected: false };
     stateListener?.(currentState);
@@ -555,7 +564,7 @@ describe('AgentPanel UI events', () => {
       status: 'rejected',
       reason: 'empty',
     });
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(2);
 
     dispose();
   });

@@ -194,7 +194,7 @@ func (g *GPTClient) ChatStream(ctx context.Context, messages []LLMMessage, model
 		StreamOptions:       &gptStreamOptions{IncludeUsage: true},
 	}
 	if reasoning := reasoningOptionsFromContext(ctx); reasoning.Enabled {
-		reqBody.ReasoningEffort = reasoning.Effort
+		reqBody.ReasoningEffort = ReasoningEffortForGPT(reasoning)
 	}
 
 	bodyBytes, err := marshalRequestBodyGuard(ctx, reqBody)
@@ -573,7 +573,7 @@ func (g *GPTClient) ChatStreamWithTools(
 		ToolChoice:          toolChoiceFromContext(ctx),
 	}
 	if reasoning := reasoningOptionsFromContext(ctx); reasoning.Enabled {
-		reqBody.ReasoningEffort = reasoning.Effort
+		reqBody.ReasoningEffort = ReasoningEffortForGPT(reasoning)
 	}
 
 	bodyBytes, err := marshalRequestBodyGuard(ctx, reqBody)

@@ -44,6 +44,12 @@ type runtimeRequestModel struct {
 	apiKey               string
 	resolvedModelKey     string
 	resolvedModelVersion string
+	// reasoning 是本次 run 的思考程度三态快照（off/auto/custom），随每轮模型调用注入。
+	reasoning llm.ReasoningOptions
+	// 以下三项来自用户模型（modelHash 路径）的自带配置；0 值=回退全局端点/模型目录。
+	userModelApiURL          string
+	userModelMaxOutputTokens int
+	userModelContextTokens   int
 }
 
 // runtimeRequestCapabilities 是 Run 初始化阶段解析出的能力快照。

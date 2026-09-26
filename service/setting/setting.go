@@ -259,13 +259,20 @@ func toConfOverride(override *subAgentOverrideJSON) *conf.SubAgentSettingOverrid
 	}
 }
 
-// refreshOverrideFromDB 读 DB 覆盖并注入 conf 内存快照。
+// refreshOverrideFromDB 读 DB 覆盖并注入 conf 内存快照（subagent + context 两组）。
 func refreshOverrideFromDB(ctx *gin.Context) error {
-	override, _, _, err := loadSubAgentOverride(ctx)
+	subOverride, _, _, err := loadSubAgentOverride(ctx)
 	if err != nil {
 		return err
 	}
-	snapshot := conf.RuntimeSettingOverride{SubAgent: toConfOverride(override)}
+	contextOverride, _, _, err := loadContextCompactOverride(ctx)
+	if err != nil {
+		return err
+	}
+	snapshot := conf.RuntimeSettingOverride{
+		SubAgent:       toConfOverride(subOverride),
+		ContextCompact: toConfContextCompactOverride(contextOverride),
+	}
 	conf.SetRuntimeSettingOverride(snapshot)
 	return nil
 }

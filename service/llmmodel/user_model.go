@@ -20,12 +20,18 @@ import (
 
 // CheckConnectivity 连通性检测：构建 LLM 客户端并发送测试消息验证 API Key + 模型可用性
 func CheckConnectivity(ctx *gin.Context, modelKey, modelVersion, apiKey string) error {
+	return CheckConnectivityWithEndpoint(ctx, modelKey, modelVersion, apiKey, "")
+}
+
+// CheckConnectivityWithEndpoint 在 CheckConnectivity 基础上支持自定义接入面
+//（模型配置面板「厂商与密钥」填写的 base url 优先于 api.yaml 全局端点）。
+func CheckConnectivityWithEndpoint(ctx *gin.Context, modelKey, modelVersion, apiKey, apiURL string) error {
 	// 校验 modelKey 合法性
 	if !llm.IsValidModelKey(modelKey) {
 		return components.ErrorUserModelCategoryNotSupported.Sprintf(modelKey)
 	}
 
-	client, err := llm.GetClientWithUserModel(apiKey, modelKey)
+	client, err := llm.GetClientWithUserModelEndpoint(apiKey, modelKey, apiURL, 0)
 	if err != nil {
 		zlog.Errorf(ctx, "[user_model.CheckConnectivity] 构建客户端失败: modelKey=%s, err=%v", modelKey, err)
 		return components.ErrorUserModelConnectivityFailed.Sprintf(fmt.Sprintf("构建客户端失败"))
@@ -97,8 +103,15 @@ func CreateUserModel(ctx *gin.Context, userName string, req params.CreateUserMod
 		return nil, components.ErrorUserModelDuplicate.Sprintf(req.ModelName)
 	}
 
+	if err := validateModelCapacity(req.ContextTokens, req.MaxOutputTokens); err != nil {
+		return nil, err
+	}
+	if err := validateCapabilityFlags(req.SupportThinking, req.SupportTools, req.SupportVision); err != nil {
+		return nil, err
+	}
+
 	// 连通性检测
-	if err := CheckConnectivity(ctx, req.ModelKey, req.ModelVersion, req.ApiKey); err != nil {
+	if err := CheckConnectivityWithEndpoint(ctx, req.ModelKey, req.ModelVersion, req.ApiKey, req.ApiURL); err != nil {
 		return nil, err
 	}
 
@@ -111,6 +124,12 @@ func CreateUserModel(ctx *gin.Context, userName string, req params.CreateUserMod
 		ModelVersion:      req.ModelVersion,
 		ApiKey:            req.ApiKey,
 		BizScenes:         string(bizScenesJSON),
+		ApiURL:            strings.TrimSpace(req.ApiURL),
+		ContextTokens:     req.ContextTokens,
+		MaxOutputTokens:   req.MaxOutputTokens,
+		SupportThinking:   req.SupportThinking,
+		SupportTools:      req.SupportTools,
+		SupportVision:     req.SupportVision,
 		IsPlatformDefault: req.IsPlatformDefault,
 	}
 
@@ -167,8 +186,27 @@ func UpdateUserModel(ctx *gin.Context, userName string, req params.UpdateUserMod
 		needConnCheck = true
 	}
 	if req.ApiKey != record.ApiKey {
-		updates["api_key"] = req.ApiKey
+		updates["api_key"] = model.EncryptAPIKey(req.ApiKey)
 		needConnCheck = true
+	}
+	if req.ApiURL != record.ApiURL {
+		updates["api_url"] = strings.TrimSpace(req.ApiURL)
+		needConnCheck = true
+	}
+	if req.ContextTokens != record.ContextTokens {
+		updates["context_tokens"] = req.ContextTokens
+	}
+	if req.MaxOutputTokens != record.MaxOutputTokens {
+		updates["max_output_tokens"] = req.MaxOutputTokens
+	}
+	if req.SupportThinking != record.SupportThinking {
+		updates["support_thinking"] = req.SupportThinking
+	}
+	if req.SupportTools != record.SupportTools {
+		updates["support_tools"] = req.SupportTools
+	}
+	if req.SupportVision != record.SupportVision {
+		updates["support_vision"] = req.SupportVision
 	}
 	bizScenesJSON, _ := json.Marshal(req.BizScenes)
 	if string(bizScenesJSON) != record.BizScenes {
@@ -213,7 +251,7 @@ func UpdateUserModel(ctx *gin.Context, userName string, req params.UpdateUserMod
 		return nil
 	}
 
-	// 如果涉及 apiKey/modelKey/modelVersion 变更，重新做连通性检测
+	// 如果涉及 apiKey/modelKey/modelVersion/apiURL 变更，重新做连通性检测
 	if needConnCheck {
 		checkKey := record.ModelKey
 		if _, ok := updates["model_key"]; ok {
@@ -227,7 +265,11 @@ func UpdateUserModel(ctx *gin.Context, userName string, req params.UpdateUserMod
 		if _, ok := updates["api_key"]; ok {
 			checkApiKey = req.ApiKey
 		}
-		if err := CheckConnectivity(ctx, checkKey, checkVersion, checkApiKey); err != nil {
+		checkApiURL := record.ApiURL
+		if _, ok := updates["api_url"]; ok {
+			checkApiURL = req.ApiURL
+		}
+		if err := CheckConnectivityWithEndpoint(ctx, checkKey, checkVersion, checkApiKey, checkApiURL); err != nil {
 			return err
 		}
 	}
@@ -291,6 +333,12 @@ func GetUserModelDetail(ctx *gin.Context, userName string, id uint) (*params.Use
 		ModelVersion:      record.ModelVersion,
 		ApiKey:            record.ApiKey, // 不脱敏
 		BizScenes:         bizScenes,
+		ApiURL:            record.ApiURL,
+		ContextTokens:     record.ContextTokens,
+		MaxOutputTokens:   record.MaxOutputTokens,
+		SupportThinking:   record.SupportThinking,
+		SupportTools:      record.SupportTools,
+		SupportVision:     record.SupportVision,
 		IsPlatformDefault: record.IsPlatformDefault,
 		CreatedAt:         record.CreatedAt.Format("2006-01-02 15:04:05"),
 		UpdatedAt:         record.UpdatedAt.Format("2006-01-02 15:04:05"),
@@ -349,6 +397,12 @@ func ListUserModels(ctx *gin.Context, userName string, req params.ListUserModels
 			ModelVersion:      m.ModelVersion,
 			ApiKey:            maskApiKey(m.ApiKey),
 			BizScenes:         bizScenes,
+			ApiURL:            m.ApiURL,
+			ContextTokens:     m.ContextTokens,
+			MaxOutputTokens:   m.MaxOutputTokens,
+			SupportThinking:   m.SupportThinking,
+			SupportTools:      m.SupportTools,
+			SupportVision:     m.SupportVision,
 			IsPlatformDefault: m.IsPlatformDefault,
 			CreatedAt:         m.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt:         m.UpdatedAt.Format("2006-01-02 15:04:05"),
@@ -403,6 +457,33 @@ func validateUpdateReq(req params.UpdateUserModelReq) error {
 	}
 	if req.IsPlatformDefault != 0 && req.IsPlatformDefault != 1 {
 		return components.ErrorParamInvalid.Sprintf("isPlatformDefault 值只能为 0 或 1")
+	}
+	if err := validateModelCapacity(req.ContextTokens, req.MaxOutputTokens); err != nil {
+		return err
+	}
+	if err := validateCapabilityFlags(req.SupportThinking, req.SupportTools, req.SupportVision); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateModelCapacity 校验上下文容量/最大输出（模型配置面板「模型与参数」范围口径）。
+func validateModelCapacity(contextTokens, maxOutputTokens int) error {
+	if contextTokens < 0 || contextTokens > maxModelContextTokensLimit {
+		return components.ErrorParamInvalid.Sprintf("contextTokens 取值范围 0-%d", maxModelContextTokensLimit)
+	}
+	if maxOutputTokens < 0 || maxOutputTokens > maxModelOutputTokensLimit {
+		return components.ErrorParamInvalid.Sprintf("maxOutputTokens 取值范围 0-%d", maxModelOutputTokensLimit)
+	}
+	return nil
+}
+
+// validateCapabilityFlags 校验能力开关取值（0/1）。
+func validateCapabilityFlags(flags ...int) error {
+	for _, flag := range flags {
+		if flag != 0 && flag != 1 {
+			return components.ErrorParamInvalid.Sprintf("能力开关取值只能为 0 或 1")
+		}
 	}
 	return nil
 }

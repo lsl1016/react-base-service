@@ -14,17 +14,27 @@ import (
 
 // UserModel 用户自定义模型 / 平台默认模型注册表
 type UserModel struct {
-	ID                uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
-	ModelHash         string                `json:"modelHash" gorm:"column:model_hash;not null"`
-	UserName          string                `json:"userName" gorm:"column:user_name;not null;default:''"`
-	ModelName         string                `json:"modelName" gorm:"column:model_name;not null"`
-	ModelKey          string                `json:"modelKey" gorm:"column:model_key;not null"`
-	ModelVersion      string                `json:"modelVersion" gorm:"column:model_version;not null"`
-	ApiKey            string                `json:"-" gorm:"column:api_key;not null;default:''"`
-	BizScenes         string                `json:"bizScenes" gorm:"column:biz_scenes;not null"`
-	IsPlatformDefault int                   `json:"isPlatformDefault" gorm:"column:is_platform_default;not null;default:0"`
-	CreatedAt         time.Time             `json:"createdAt" gorm:"column:created_at"`
-	UpdatedAt         time.Time             `json:"updatedAt" gorm:"column:updated_at"`
+	ID           uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	ModelHash    string                `json:"modelHash" gorm:"column:model_hash;not null"`
+	UserName     string                `json:"userName" gorm:"column:user_name;not null;default:''"`
+	ModelName    string                `json:"modelName" gorm:"column:model_name;not null"`
+	ModelKey     string                `json:"modelKey" gorm:"column:model_key;not null"`
+	ModelVersion string                `json:"modelVersion" gorm:"column:model_version;not null"`
+	ApiKey       string                `json:"-" gorm:"column:api_key;not null;default:''"`
+	BizScenes    string                `json:"bizScenes" gorm:"column:biz_scenes;not null"`
+	// ApiURL 是模型配置面板「厂商与密钥」填写的自定义接入面（base url）；空=走 api.yaml 全局端点。
+	ApiURL string `json:"apiUrl" gorm:"column:api_url;not null;default:''"`
+	// ContextTokens 是前端配置的上下文容量（token）；0=回退模型目录/全局压缩阈值。
+	ContextTokens int `json:"contextTokens" gorm:"column:context_tokens;not null;default:0"`
+	// MaxOutputTokens 是前端配置的单次最大输出 token；0=回退端点/目录/内置默认。
+	MaxOutputTokens int `json:"maxOutputTokens" gorm:"column:max_output_tokens;not null;default:0"`
+	// 能力开关（1=支持）：决定 thinking 参数是否随请求下发、前端是否透出对应选项。
+	SupportThinking int `json:"supportThinking" gorm:"column:support_thinking;not null;default:0"`
+	SupportTools    int `json:"supportTools" gorm:"column:support_tools;not null;default:0"`
+	SupportVision   int `json:"supportVision" gorm:"column:support_vision;not null;default:0"`
+	IsPlatformDefault int                 `json:"isPlatformDefault" gorm:"column:is_platform_default;not null;default:0"`
+	CreatedAt         time.Time           `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt         time.Time           `json:"updatedAt" gorm:"column:updated_at"`
 	DeletedAt         soft_delete.DeletedAt `json:"-" gorm:"column:deleted_at;not null;default:0"`
 }
 
@@ -32,7 +42,15 @@ func (m *UserModel) TableName() string {
 	return "tblLlmUserModel"
 }
 
+// decryptUserModelApiKey 原地解密 api_key（enc:v1: 前缀密文 → 明文；存量明文原样）。
+func decryptUserModelApiKey(m *UserModel) {
+	if m != nil {
+		m.ApiKey = DecryptAPIKey(m.ApiKey)
+	}
+}
+
 func CreateUserModel(ctx *gin.Context, m *UserModel) error {
+	m.ApiKey = EncryptAPIKey(m.ApiKey)
 	err := helpers.MysqlClientLLM.Model(&UserModel{}).WithContext(ctx).Create(m).Error
 	if err != nil {
 		return components.ErrorDbInsert.Wrap(err)
@@ -50,6 +68,7 @@ func GetUserModelByID(ctx *gin.Context, id uint) (*UserModel, error) {
 		}
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
+	decryptUserModelApiKey(&m)
 	return &m, nil
 }
 
@@ -63,6 +82,7 @@ func GetUserModelByHash(ctx *gin.Context, modelHash string) (*UserModel, error) 
 		}
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
+	decryptUserModelApiKey(&m)
 	return &m, nil
 }
 

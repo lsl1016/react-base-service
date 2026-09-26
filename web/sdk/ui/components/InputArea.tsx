@@ -2,7 +2,7 @@ import { createMemo, createSignal, Show } from "solid-js";
 import IconIconoirAttachment from "~icons/iconoir/attachment";
 import IconOuiSortUp from "~icons/oui/sort-up";
 import IconOuiStopFilled from "~icons/oui/stop-filled";
-import type { ChatFileUpload, ExecutionMode, ReactAttachmentRef, ReactModelInfo, RunStats } from "../../protocol/types";
+import type { ChatFileUpload, ExecutionMode, ReactAttachmentRef, ReactModelInfo, ReactReasoningOptions, RunStats } from "../../protocol/types";
 import { RichInputEditor } from "../editor/RichInputEditor";
 import type { AgentInputPart, AgentInputSerializer, AgentQuickInsertItem, AgentQuickInsertShortcutItem } from "../editor/types";
 import { serializeAgentInputParts } from "../editor/types";
@@ -14,9 +14,20 @@ export const MAX_SINGLE_ATTACHMENT_SIZE = 50 * 1024 * 1024;
 export const MAX_TOTAL_ATTACHMENT_SIZE = 50 * 1024 * 1024;
 export const SUPPORTED_ATTACHMENT_EXTENSIONS = ["csv", "md", "txt"] as const;
 
+/** 思考预算合法范围（与服务端 schema reasoning.budgetTokens 一致） */
+export const REASONING_BUDGET_MIN = 1024;
+export const REASONING_BUDGET_MAX = 131072;
+
 function isSupportedAttachment(file: File): boolean {
   const extension = file.name.split(".").pop()?.toLowerCase();
   return SUPPORTED_ATTACHMENT_EXTENSIONS.some((supported) => supported === extension);
+}
+
+/** 模型选项值：平台模型 key\0version；用户模型带 modelHash 以区分同版本的自带 Key 条目。 */
+function modelOptionValue(model: ReactModelInfo): string {
+  return model.modelHash
+    ? `${model.modelKey}\u0000${model.modelVersion}\u0000${model.modelHash}`
+    : `${model.modelKey}\u0000${model.modelVersion}`;
 }
 
 export interface InputAreaProps {
@@ -34,6 +45,10 @@ export interface InputAreaProps {
   selectedModel?: ReactModelInfo | null;
   /** 切换模型 */
   onModelChange?: (model: ReactModelInfo) => void;
+  /** 当前思考程度三态 */
+  reasoning?: ReactReasoningOptions;
+  /** 切换思考程度 */
+  onReasoningChange?: (reasoning: ReactReasoningOptions) => void;
   /** 用户取消时的回调 */
   onCancel: () => void;
   /** 上传附件并返回可用于 ReAct run 的文件元信息 */
@@ -75,7 +90,9 @@ export function InputArea(props: InputAreaProps) {
   let fileInput: HTMLInputElement | undefined;
   let nextAttachmentId = 0;
 
-  const placeholder = () => props.placeholder ?? "输入消息，按 Enter 发送...";
+  const placeholder = () => props.isRunning
+    ? "继续输入以排队后续修改..."
+    : props.placeholder ?? "输入消息，按 Enter 发送...";
   const serialize = () => props.serializeInput ?? serializeAgentInputParts;
   const content = createMemo(() => serialize()(parts()));
   const hasPendingAttachments = createMemo(() => attachments().some((item) => item.status !== "uploaded"));
@@ -85,9 +102,25 @@ export function InputArea(props: InputAreaProps) {
     return !!stats && stats.maxContextTokens > 0;
   });
 
+  const reasoning = () => props.reasoning ?? { mode: "auto" as const };
+  const reasoningMode = () => reasoning().mode;
+  const reasoningBudget = () =>
+    Math.min(REASONING_BUDGET_MAX, Math.max(REASONING_BUDGET_MIN, reasoning().budgetTokens ?? 8192));
+
+  const emitReasoning = (mode: ReactReasoningOptions["mode"], budgetTokens?: number) => {
+    props.onReasoningChange?.(mode === "custom"
+      ? { mode, budgetTokens: Math.min(REASONING_BUDGET_MAX, Math.max(REASONING_BUDGET_MIN, budgetTokens ?? reasoningBudget())) }
+      : { mode });
+  };
+
+  const clampBudgetInput = (value: number) => {
+    emitReasoning("custom", value);
+  };
+
   const handleSend = () => {
     const text = content().trim();
-    if (text && !props.isRunning && !props.disabled && !hasPendingAttachments()) {
+    // 运行中允许发送：消息走后端 Steering 准入（引导/排队/明确拒绝），不在此拦截。
+    if (text && !props.disabled && !hasPendingAttachments()) {
       const attachmentRefs = attachments()
         .filter((item): item is InputAttachment & { uploaded: ChatFileUpload } => item.status === "uploaded" && !!item.uploaded)
         .map((item) => ({ fileId: item.uploaded.fileId, fileName: item.uploaded.fileName }));
@@ -157,14 +190,6 @@ export function InputArea(props: InputAreaProps) {
 
   const removeAttachment = (id: number) => {
     setAttachments((current) => current.filter((item) => item.id !== id));
-  };
-
-  const handleAction = () => {
-    if (props.isRunning) {
-      props.onCancel();
-    } else {
-      handleSend();
-    }
   };
 
   return (
@@ -250,20 +275,48 @@ export function InputArea(props: InputAreaProps) {
               <label class="agent-ui-model-selector" title="选择模型">
                 <span class="agent-ui-model-selector-label">模型</span>
                 <select
-                  value={`${selected().modelKey}\u0000${selected().modelVersion}`}
+                  value={modelOptionValue(selected())}
                   disabled={props.disabled || props.isRunning}
                   aria-label="选择模型"
                   onChange={(event) => {
-                    const next = props.models?.find((item) => `${item.modelKey}\u0000${item.modelVersion}` === event.currentTarget.value);
+                    const next = props.models?.find((item) => modelOptionValue(item) === event.currentTarget.value);
                     if (next) props.onModelChange?.(next);
                   }}
                 >
                   {props.models?.map((item) => (
-                    <option value={`${item.modelKey}\u0000${item.modelVersion}`}>{item.displayName}</option>
+                    <option value={modelOptionValue(item)}>{item.displayName}</option>
                   ))}
                 </select>
               </label>
             )}
+          </Show>
+          <Show when={props.onReasoningChange}>
+            <label class="agent-ui-reasoning-selector" title="思考程度：关闭不请求思考块；自动按协议自适应；自定义按预算显式指定">
+              <span class="agent-ui-model-selector-label">思考</span>
+              <select
+                value={reasoningMode()}
+                disabled={props.disabled || props.isRunning}
+                aria-label="选择思考程度"
+                onChange={(event) => emitReasoning(event.currentTarget.value as ReactReasoningOptions["mode"])}
+              >
+                <option value="off">关闭</option>
+                <option value="auto">自动</option>
+                <option value="custom">自定义</option>
+              </select>
+              <Show when={reasoningMode() === "custom"}>
+                <input
+                  class="agent-ui-reasoning-budget"
+                  type="number"
+                  min={REASONING_BUDGET_MIN}
+                  max={REASONING_BUDGET_MAX}
+                  step={1024}
+                  value={reasoningBudget()}
+                  disabled={props.disabled || props.isRunning}
+                  aria-label="思考预算（tokens）"
+                  onChange={(event) => clampBudgetInput(event.currentTarget.valueAsNumber)}
+                />
+              </Show>
+            </label>
           </Show>
           <Show when={showUsageRing()}>
             <UsageRing
@@ -273,20 +326,26 @@ export function InputArea(props: InputAreaProps) {
               inputTokens={props.stats!.inputTokens}
             />
           </Show>
-          <button
-            class="agent-ui-input-button"
-            classList={{
-              "agent-ui-button-send": !props.isRunning,
-              "agent-ui-button-cancel": props.isRunning,
-            }}
-            onClick={handleAction}
-            disabled={props.disabled || (!props.isRunning && (isInputEmpty() || !content().trim() || hasPendingAttachments()))}
-            title={props.isRunning ? "停止" : hasPendingAttachments() ? "请等待附件上传完成" : "发送"}
-            aria-label={props.isRunning ? "停止" : "发送"}
-          >
-            <Show when={props.isRunning} fallback={<IconOuiSortUp width="22" height="22" />}>
+          <Show when={props.isRunning}>
+            <button
+              type="button"
+              class="agent-ui-input-button agent-ui-button-cancel"
+              onClick={() => props.onCancel()}
+              title="停止"
+              aria-label="停止"
+            >
               <IconOuiStopFilled width="15" height="15" />
-            </Show>
+            </button>
+          </Show>
+          <button
+            type="button"
+            class="agent-ui-input-button agent-ui-button-send"
+            onClick={handleSend}
+            disabled={props.disabled || isInputEmpty() || !content().trim() || hasPendingAttachments()}
+            title={hasPendingAttachments() ? "请等待附件上传完成" : props.isRunning ? "发送（运行中将加入对话队列）" : "发送"}
+            aria-label={props.isRunning ? "发送（运行中将加入对话队列）" : "发送"}
+          >
+            <IconOuiSortUp width="22" height="22" />
           </button>
         </div>
       </div>

@@ -5,6 +5,8 @@ llm:
     claude:
       default_version: "glm-4.6"
       max_context_tokens: 1000000
+      # GLM 的 Anthropic 兼容面支持 thinking 参数；显式声明后思考程度三态才会真正下发。
+      supports_thinking: true
     deepseek:
       versions: ["deepseek-flash", "deepseek-v4-pro"]
       default_version: "deepseek-flash"

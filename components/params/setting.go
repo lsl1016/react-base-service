@@ -40,3 +40,47 @@ type SubAgentSettingResp struct {
 	UpdatedBy string `json:"updatedBy"`
 	UpdatedAt string `json:"updatedAt"`
 }
+
+// UpdateContextCompactSettingReq 上下文压缩策略更新请求（/setting/context/update）。
+// 字段级覆盖语义与 subagent 一致：指针为 nil = 不修改；清除覆盖走 ClearFields。
+type UpdateContextCompactSettingReq struct {
+	Enabled                *bool `json:"enabled"`
+	TokenTrigger           *int  `json:"tokenTrigger"`
+	TokenTarget            *int  `json:"tokenTarget"`
+	SummaryLimit           *int  `json:"summaryLimit"`
+	OutputReserveTokens    *int  `json:"outputReserveTokens"`
+	BufferTokens           *int  `json:"bufferTokens"`
+	MicrocompactEnabled    *bool `json:"microcompactEnabled"`
+	MicrocompactKeepRecent *int  `json:"microcompactKeepRecent"`
+	// ClearFields 是要清除覆盖、回落 yaml/默认值的字段名列表。
+	ClearFields []string `json:"clearFields"`
+}
+
+// ContextCompactSettingResp 上下文压缩策略响应：effective 是合并后的生效值
+//（与引擎实际消费口径一致），override 是 DB 当前覆盖字段（null=未覆盖）。
+type ContextCompactSettingResp struct {
+	Effective struct {
+		Enabled                bool `json:"enabled"`
+		TokenTrigger           int  `json:"tokenTrigger"`
+		TokenTarget            int  `json:"tokenTarget"`
+		SummaryLimit           int  `json:"summaryLimit"`
+		OutputReserveTokens    int  `json:"outputReserveTokens"`
+		BufferTokens           int  `json:"bufferTokens"`
+		MicrocompactEnabled    bool `json:"microcompactEnabled"`
+		MicrocompactKeepRecent int  `json:"microcompactKeepRecent"`
+	} `json:"effective"`
+	// Sources 逐字段标识取值来源（override=DB 覆盖 / yaml=custom.yaml / default=内置默认）。
+	Sources map[string]SubAgentSettingFieldResp `json:"sources"`
+	Override *struct {
+		Enabled                *bool `json:"enabled"`
+		TokenTrigger           *int  `json:"tokenTrigger"`
+		TokenTarget            *int  `json:"tokenTarget"`
+		SummaryLimit           *int  `json:"summaryLimit"`
+		OutputReserveTokens    *int  `json:"outputReserveTokens"`
+		BufferTokens           *int  `json:"bufferTokens"`
+		MicrocompactEnabled    *bool `json:"microcompactEnabled"`
+		MicrocompactKeepRecent *int  `json:"microcompactKeepRecent"`
+	} `json:"override"`
+	UpdatedBy string `json:"updatedBy"`
+	UpdatedAt string `json:"updatedAt"`
+}

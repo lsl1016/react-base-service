@@ -1,8 +1,10 @@
 # 外部 API 连接配置
 llm:
-  # LLM 网关 API Key（按服务分组）；通过 /apikey 接口注册的 caller 级 key 优先
+  # LLM 网关 API Key（按服务分组）；通过 /apikey 接口注册的 caller 级 key 优先。
+  # 凭据安全：一律经环境变量注入（支持 ${VAR} 与 ${VAR:-默认值} 两种引用），仓库内不落明文 Key。
+  # 本地开发需 export ZHIPU_API_KEY=<你的智谱 Key>；未设置时该端点不可用（报 api key not configured）。
   api_keys:
-    default: "7bb5adc0434a4e1c9e35f798d75985ba.ZynoDz1MNKV7s8P5"
+    default: "${ZHIPU_API_KEY}"
   endpoints:
     claude:
       api_url: "https://open.bigmodel.cn/api/anthropic"

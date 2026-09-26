@@ -12,10 +12,11 @@ import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, type 
 import IconAntDesignDisconnectOutlined from "~icons/ant-design/disconnect-outlined";
 import IconMaterialSymbolsWifiSharp from "~icons/material-symbols/wifi-sharp";
 import IconMdiClose from "~icons/mdi/close";
+import IconMdiCog from "~icons/mdi/cog";
 import IconMdiHistory from "~icons/mdi/history";
 import IconMdiPlus from "~icons/mdi/plus";
 import type { AgentClient } from "../../runtime/agent-client";
-import type { AskQuestionAnswerContent, ExecutionMode, ReactAttachmentRef, ReactModelInfo, UserInputOrigin } from "../../protocol/types";
+import type { AskQuestionAnswerContent, ExecutionMode, ReactAttachmentRef, ReactModelInfo, ReactReasoningOptions, UserInputOrigin, UserModelItem } from "../../protocol/types";
 import type { RunFeedbackPayload, RunFeedbackState } from "../../runtime/types";
 import type { AsyncTaskItem } from "../../session/types";
 import type { SessionMeta } from "../../storage/event-ledger";
@@ -24,13 +25,16 @@ import { parseAgentInputText, serializeAgentInputParts } from "../editor/types";
 import type { AgentInputCommand, AgentInputValue, FillInputOptions, FillInputResult } from "../input-api";
 import type { AgentUIEvent, AgentUIEventHandler, NextButtonAction } from "../events";
 import { createAgentStore } from "../store";
+import type { QueueItem } from "../../session/types";
 import { AgentLaneView } from "./AgentLaneView";
 import { AsyncTaskResults, type AsyncTaskNotice } from "./AsyncTaskResults";
 import { FeedbackArea } from "./FeedbackArea";
 import { InputArea } from "./InputArea";
 import { MessageList } from "./MessageList";
 import { PanelMessage } from "./PanelMessage";
+import { QueueStrip } from "./QueueStrip";
 import { SessionList } from "./SessionList";
+import { SettingsDrawer } from "./SettingsDrawer";
 import { groupStepsByAgentLane } from "./lanes";
 
 export type AgentStartBlockMessage =
@@ -161,8 +165,16 @@ export function AgentPanel(props: AgentPanelProps) {
   const [models, setModels] = createSignal<ReactModelInfo[]>([]);
   const configuredModel = () => props.client.getConfiguredModel?.() ?? null;
   const [selectedModel, setSelectedModel] = createSignal<ReactModelInfo | null>(configuredModel());
+  // 思考程度三态（off/auto/custom）；默认 auto 与历史行为一致。
+  const [reasoning, setReasoning] = createSignal<ReactReasoningOptions>({ mode: 'auto' });
+  // 模型配置面板（SettingsDrawer）开关与用户模型刷新触发器。
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [userModelsVersion, setUserModelsVersion] = createSignal(0);
   // 用户主动选择 Plan 才进入 Plan Runtime；默认继续保持现有 ReAct 行为。
   const [executionMode, setExecutionMode] = createSignal<ExecutionMode>('react');
+  // S3 队列管理：当前会话的排队输入与 steering 自动续跑配置回显
+  const [queueItems, setQueueItems] = createSignal<QueueItem[]>([]);
+  const [queueAutoDrain, setQueueAutoDrain] = createSignal(true);
   let panelMessageTimer: ReturnType<typeof setTimeout> | undefined;
   let asyncTaskNoticeTimer: ReturnType<typeof setTimeout> | undefined;
   let toolHighlightTimer: ReturnType<typeof setTimeout> | undefined;
@@ -250,6 +262,67 @@ export function AgentPanel(props: AgentPanelProps) {
 
   const isRunning = () => store.state.status === "running" || store.state.status === "waiting_client_tool" || store.state.status === "compacting" || store.state.status === "recovering";
   const isRecovering = () => store.state.status === "recovering";
+
+  // ─── S3 队列管理 ─────────────────────────────────────────
+  const refreshQueue = async () => {
+    if (props.readOnly || typeof props.client.listQueue !== "function") return;
+    if (!store.state.sessionId) {
+      setQueueItems([]);
+      return;
+    }
+    try {
+      const resp = await props.client.listQueue();
+      setQueueItems(resp.items ?? []);
+      setQueueAutoDrain(resp.autoDrain !== false);
+    } catch (error) {
+      console.warn("[AgentUI] queue list failed:", error);
+    }
+  };
+
+  // 队列变化感知：steer 回执（排队/引导/作废）、run 状态翻转（自动续跑消费队首）、
+  // 会话切换三类时机各触发一次刷新；刷新幂等且廉价，不做节流。
+  createEffect(() => {
+    void store.state.sessionId;
+    void store.state.steerState;
+    void isRunning();
+    void refreshQueue();
+  });
+
+  const handleQueueEdit = async (id: number, content: string): Promise<boolean> => {
+    try {
+      const resp = await props.client.updateQueueItem(id, content);
+      await refreshQueue();
+      return resp.claimed;
+    } catch (error) {
+      console.warn("[AgentUI] queue update failed:", error);
+      return false;
+    }
+  };
+
+  const handleQueueDelete = async (id: number): Promise<boolean> => {
+    try {
+      const resp = await props.client.deleteQueueItem(id);
+      await refreshQueue();
+      return resp.claimed;
+    } catch (error) {
+      console.warn("[AgentUI] queue delete failed:", error);
+      return false;
+    }
+  };
+
+  const handleQueueReorder = (idList: number[]) => {
+    props.client.reorderQueue(idList)
+      .then(() => refreshQueue())
+      .catch((error) => {
+        console.warn("[AgentUI] queue reorder failed:", error);
+        void refreshQueue();
+      });
+  };
+
+  const handleQueueSend = (pendingInputId: string) => {
+    props.client.sendQueuedMessage(pendingInputId);
+  };
+
   // plans 空值保护（D7）：宿主手工构造的 AgentState 可能没有 plans 字段，不能因派生 memo 抛错。
   const hasBlockingPlanWait = createMemo(() => Object.values(store.state.plans ?? {}).some((plan) => (
     plan.view.status === 'WAIT_USER_INPUT'
@@ -385,6 +458,43 @@ export function AgentPanel(props: AgentPanelProps) {
     }
   });
 
+  const userModelToModelInfo = (item: UserModelItem): ReactModelInfo => ({
+    modelKey: item.modelKey,
+    modelVersion: item.modelVersion,
+    displayName: item.modelName,
+    contextTokens: item.contextTokens || undefined,
+    maxOutputTokens: item.maxOutputTokens || undefined,
+    supportThinking: (item.supportThinking ?? 0) === 1,
+    modelHash: item.modelHash,
+    isUserModel: true,
+  });
+
+  // 合并用户/平台自建模型（携带 modelHash，run 走自带 Key/端点）；保留平台模型列表在前。
+  const mergeUserModels = (platformModels: ReactModelInfo[], userModels: UserModelItem[]): ReactModelInfo[] => {
+    const merged = [...platformModels];
+    const seen = new Set(merged.map((item) => `${item.modelKey}\u0000${item.modelVersion}`));
+    for (const item of userModels) {
+      const key = `${item.modelKey}\u0000${item.modelVersion}`;
+      if (seen.has(key)) continue;
+      merged.push(userModelToModelInfo(item));
+    }
+    return merged;
+  };
+
+  const loadUserModels = async (platformModels: ReactModelInfo[]) => {
+    if (typeof props.client.listUserModels !== 'function') {
+      setModels(platformModels);
+      return;
+    }
+    try {
+      const userModels = await props.client.listUserModels();
+      setModels(mergeUserModels(platformModels, userModels ?? []));
+    } catch (error) {
+      console.warn('[AgentPanel] 加载用户模型列表失败，仅使用平台模型:', error);
+      setModels(platformModels);
+    }
+  };
+
   onMount(() => {
     if (typeof props.client.listModels !== 'function') {
       const configured = configuredModel();
@@ -392,21 +502,36 @@ export function AgentPanel(props: AgentPanelProps) {
       setSelectedModel(configured);
       return;
     }
-    void props.client.listModels().then((response) => {
-      setModels(response.models ?? []);
+    void props.client.listModels().then(async (response) => {
+      const platformModels = response.models ?? [];
       const configured = configuredModel();
-      const initial = response.models.find((item) => configured
+      const initial = platformModels.find((item) => configured
         && item.modelKey === configured.modelKey
         && item.modelVersion === configured.modelVersion)
         ?? response.defaultModel
-        ?? response.models[0]
+        ?? platformModels[0]
         ?? configured;
       setSelectedModel(initial ?? null);
+      await loadUserModels(platformModels);
     }).catch((error) => {
       console.warn('[AgentPanel] 加载模型列表失败，使用宿主默认模型:', error);
       const configured = configuredModel();
       setModels(configured ? [configured] : []);
       setSelectedModel(configured);
+    });
+  });
+
+  // 模型配置面板保存后刷新合并列表（userModelsVersion 变化触发）。
+  createEffect(() => {
+    if (userModelsVersion() === 0) return;
+    if (typeof props.client.listUserModels !== 'function') return;
+    void props.client.listUserModels().then((userModels) => {
+      setModels((current) => {
+        const platformModels = current.filter((item) => !item.isUserModel);
+        return mergeUserModels(platformModels, userModels ?? []);
+      });
+    }).catch((error) => {
+      console.warn('[AgentPanel] 刷新用户模型列表失败:', error);
     });
   });
 
@@ -437,7 +562,9 @@ export function AgentPanel(props: AgentPanelProps) {
       inputOrigin,
       modelKey: effectiveModel?.modelKey,
       modelVersion: effectiveModel?.modelVersion,
+      modelHash: effectiveModel?.modelHash,
       executionMode: executionMode(),
+      reasoning: reasoning(),
     });
     props.onAfterSend?.(content, { inputOrigin });
     return result;
@@ -523,7 +650,8 @@ export function AgentPanel(props: AgentPanelProps) {
     options: FillInputOptions = {},
   ): Promise<FillInputResult> => {
     const parts = normalizeInputParts(input);
-    if (!options.submit || isRunning()) {
+    // 运行中 submit 不再降级填充：消息走 Steering 准入（排队/引导/拒绝）。
+    if (!options.submit) {
       setInputDraft((draft) => ({
         key: (draft?.key ?? 0) + 1,
         parts,
@@ -594,6 +722,15 @@ export function AgentPanel(props: AgentPanelProps) {
   return (
     <div class="agent-ui-panel">
       <PanelMessage message={panelMessage()} />
+      {/* 模型配置面板（厂商与密钥/模型与参数/上下文与压缩/高级） */}
+      <Show when={!props.readOnly}>
+        <SettingsDrawer
+          open={settingsOpen()}
+          onClose={() => setSettingsOpen(false)}
+          client={props.client}
+          onModelsChanged={() => setUserModelsVersion((version) => version + 1)}
+        />
+      </Show>
       {/* 头部 */}
       <div class="agent-ui-panel-header">
         <div class="agent-ui-panel-title">
@@ -628,6 +765,14 @@ export function AgentPanel(props: AgentPanelProps) {
               onClick={handleToggleSessionHistory}
             >
               <IconMdiHistory width="18" height="18" />
+            </button>
+            <button
+              class="agent-ui-header-icon-btn"
+              classList={{ "agent-ui-header-icon-btn-active": settingsOpen() }}
+              title="模型配置"
+              onClick={() => setSettingsOpen((visible) => !visible)}
+            >
+              <IconMdiCog width="18" height="18" />
             </button>
           </Show>
           <Show when={!props.readOnly}>
@@ -789,6 +934,16 @@ export function AgentPanel(props: AgentPanelProps) {
       {/* 输入区域 */}
       <Show when={!props.readOnly}>
         <div class="agent-ui-panel-footer">
+          <QueueStrip
+            items={queueItems()}
+            isRunning={isRunning()}
+            connected={store.state.connected}
+            autoDrain={queueAutoDrain()}
+            onEdit={handleQueueEdit}
+            onDelete={handleQueueDelete}
+            onReorder={handleQueueReorder}
+            onSend={handleQueueSend}
+          />
           <InputArea
           isRunning={isRunning()}
           executionMode={executionMode()}
@@ -797,6 +952,8 @@ export function AgentPanel(props: AgentPanelProps) {
           models={models()}
           selectedModel={selectedModel()}
           onModelChange={setSelectedModel}
+          reasoning={reasoning()}
+          onReasoningChange={setReasoning}
           onCancel={handleCancel}
           attachmentUpload={props.attachmentUpload}
           onUploadAttachment={props.attachmentUpload === false ? undefined : (file) => props.client.uploadAttachment(file)}

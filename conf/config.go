@@ -521,6 +521,9 @@ type ModelCatalog struct {
 	DefaultVersion   string   `yaml:"default_version"`
 	MaxContextTokens int      `yaml:"max_context_tokens"`
 	MaxOutputTokens  int      `yaml:"max_output_tokens"`
+	// SupportsThinking 声明该模型是否支持思考模式（Anthropic 系 thinking / GPT 系
+	// reasoning）。nil=未配置，回退按模型名启发式（claude.go 旧逻辑）；显式配置优先生效。
+	SupportsThinking *bool `yaml:"supports_thinking"`
 }
 
 // TCustom 对应 custom.yaml（LLM 业务配置）
@@ -666,7 +669,9 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 		cfg.StreamIdleTimeoutSec = defaultReactStreamIdleTimeoutSec
 	}
 
-	compact := cfg.ContextCompact
+	// context_compact 策略统一经 applyContextCompactOverride 合并管理面板「运行时配置」
+	// 的 DB 覆盖（覆盖 > yaml > 内置默认），与 /setting/context 面板响应口径一致。
+	compact := applyContextCompactOverride(cfg.ContextCompact, GetRuntimeSettingOverride().ContextCompact)
 	if compact.TokenTrigger <= 0 {
 		compact.TokenTrigger = defaultReactCompactTokenTrigger
 	}

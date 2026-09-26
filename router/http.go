@@ -80,6 +80,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 	{
 		reactGroup.GET("/ws", react.WS)
 		reactGroup.GET("/models", react.GetModels)
+		// 模型配置面板参数 schema（声明式 min/max/step/default，前端据此渲染数值控件）
+		reactGroup.GET("/config/schema", react.GetConfigSchema)
 		reactGroup.POST("/session/list", react.ListSessions)
 		reactGroup.POST("/session/events", react.GetSessionEvents)
 		reactGroup.POST("/async_task/list", react.ListAsyncTasks)
@@ -192,6 +194,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 	{
 		settingGroup.POST("/subagent/get", setting.GetSubAgentSetting)
 		settingGroup.POST("/subagent/update", setting.UpdateSubAgentSetting)
+		settingGroup.POST("/context/get", setting.GetContextCompactSetting)
+		settingGroup.POST("/context/update", setting.UpdateContextCompactSetting)
 	}
 
 	// Tool 管理接口

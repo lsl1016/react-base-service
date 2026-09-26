@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -90,26 +91,68 @@ type claudeUsage struct {
 	CacheReadInputTokens   int `json:"cache_read_input_tokens"`
 }
 
+// modelCatalogSupportsThinking 按模型版本查目录思考能力开关：
+// 目录显式配置 supports_thinking 时以其为准；未配置回退旧启发式（模型名含 claude+4）。
+func modelCatalogSupportsThinking(model string) bool {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		for _, catalog := range conf.CustomConf.LLM.Models {
+			if slices.Contains(catalog.Versions, model) || catalog.DefaultVersion == model {
+				if catalog.SupportsThinking != nil {
+					return *catalog.SupportsThinking
+				}
+			}
+		}
+	}
+	normalized := strings.ToLower(model)
+	return strings.Contains(normalized, "claude") && strings.Contains(normalized, "4")
+}
+
+// EffortToThinkingBudget 把 effort 档位折算为 Anthropic thinking 预算；
+// 空档位（auto 自适应）按 maxTokens/4 推导。返回值上限由调用方按 maxTokens 收口。
+func EffortToThinkingBudget(effort string, maxTokens int) int {
+	switch effort {
+	case "minimal":
+		return 1024
+	case "low":
+		return 4096
+	case "medium":
+		return 10240
+	case "high":
+		return 16384
+	}
+	// auto：四分之一窗口作为自适应默认，兼顾思考深度与输出空间。
+	if maxTokens >= 4096 {
+		return maxTokens / 4
+	}
+	return 1024
+}
+
+// claudeThinkingSettingsForModel 把 ReasoningOptions 翻译为 Anthropic thinking 参数：
+// off → 不请求；auto/custom → 按档位或显式预算推导 budget_tokens。
+// Anthropic 协议约束：1024 <= budget_tokens < max_tokens；越界时向下收口，收口后仍不合法则关闭。
 func claudeThinkingSettingsForModel(ctx context.Context, model string, maxTokens int) *claudeThinkingSettings {
 	opts := reasoningOptionsFromContext(ctx)
-	if !opts.Enabled {
+	if !opts.Enabled || opts.Mode == ReasoningModeOff {
 		return nil
 	}
-	model = strings.ToLower(strings.TrimSpace(model))
-	if !strings.Contains(model, "claude") || !strings.Contains(model, "4") || maxTokens <= 2048 {
+	if maxTokens <= 1024 {
+		return nil
+	}
+	if !modelCatalogSupportsThinking(model) {
 		return nil
 	}
 	budget := opts.BudgetTokens
 	if budget <= 0 {
-		budget = maxTokens / 4
+		budget = EffortToThinkingBudget(opts.Effort, maxTokens)
 	}
 	if budget < 1024 {
 		budget = 1024
 	}
-	if budget > 4096 {
-		budget = 4096
+	if budget > maxTokens-1024 {
+		budget = maxTokens - 1024
 	}
-	if budget >= maxTokens {
+	if budget < 1024 {
 		return nil
 	}
 	return &claudeThinkingSettings{Type: "enabled", BudgetTokens: budget}
@@ -598,6 +641,56 @@ func applyClaudeCacheAnchor(ctx context.Context, messages []claudeAnyMsg) {
 	}
 }
 
+// toClaudeAnyMessages 将统一 ChatMessage 转换为 claude 协议消息，system 消息抽出为 system prompt。
+// 空 thinking 块（历史落库的 signature-only 残留）出站必须跳过：omitempty 会丢掉 thinking 字段，
+// 严格反序列化的 provider 会以 missing field `thinking` 422 拒收整次请求；过滤后不再有内容块的
+// 消息整体丢弃，避免发出 content 为空数组的非法消息。
+func toClaudeAnyMessages(messages []ChatMessage) (string, []claudeAnyMsg) {
+	var systemPrompt string
+	apiMessages := make([]claudeAnyMsg, 0, len(messages))
+
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			systemPrompt = msg.Content
+			continue
+		}
+
+		if len(msg.Parts) > 0 {
+			parts := make([]claudeContentPart, 0, len(msg.Parts))
+			for _, p := range msg.Parts {
+				if p.Type == "thinking" && strings.TrimSpace(p.Thinking) == "" {
+					continue
+				}
+				cp := claudeContentPart{Type: p.Type}
+				switch p.Type {
+				case "text":
+					cp.Text = p.Text
+				case "thinking":
+					cp.Thinking = p.Thinking
+					cp.Signature = p.Signature
+				case "tool_use":
+					cp.ID = p.ID
+					cp.Name = p.Name
+					cp.Input = normalizeClaudeToolInput(p.Input)
+				case "tool_result":
+					cp.ToolUseID = p.ToolUseID
+					cp.Content = p.Content
+					cp.IsError = p.IsError
+				}
+				parts = append(parts, cp)
+			}
+			if len(parts) == 0 {
+				continue
+			}
+			apiMessages = append(apiMessages, claudeAnyMsg{Role: msg.Role, Content: parts})
+		} else {
+			apiMessages = append(apiMessages, claudeAnyMsg{Role: msg.Role, Content: msg.Content})
+		}
+	}
+
+	return systemPrompt, apiMessages
+}
+
 // claudeToolStreamEvent 扩展的流式事件（支持 content_block_start 等）
 type claudeToolStreamEvent struct {
 	Type         string                  `json:"type"`
@@ -645,41 +738,7 @@ func (c *ClaudeClient) ChatStreamWithTools(
 
 	thinking := claudeThinkingSettingsForModel(ctx, model, maxTokens)
 
-	var systemPrompt string
-	apiMessages := make([]claudeAnyMsg, 0, len(messages))
-
-	for _, msg := range messages {
-		if msg.Role == "system" {
-			systemPrompt = msg.Content
-			continue
-		}
-
-		if len(msg.Parts) > 0 {
-			parts := make([]claudeContentPart, 0, len(msg.Parts))
-			for _, p := range msg.Parts {
-				cp := claudeContentPart{Type: p.Type}
-				switch p.Type {
-				case "text":
-					cp.Text = p.Text
-				case "thinking":
-					cp.Thinking = p.Thinking
-					cp.Signature = p.Signature
-				case "tool_use":
-					cp.ID = p.ID
-					cp.Name = p.Name
-					cp.Input = normalizeClaudeToolInput(p.Input)
-				case "tool_result":
-					cp.ToolUseID = p.ToolUseID
-					cp.Content = p.Content
-					cp.IsError = p.IsError
-				}
-				parts = append(parts, cp)
-			}
-			apiMessages = append(apiMessages, claudeAnyMsg{Role: msg.Role, Content: parts})
-		} else {
-			apiMessages = append(apiMessages, claudeAnyMsg{Role: msg.Role, Content: msg.Content})
-		}
-	}
+	systemPrompt, apiMessages := toClaudeAnyMessages(messages)
 
 	// prompt 缓存锚点：放在最后一条稳定消息上（跳过尾部临时提醒），让下一轮请求增量命中缓存。
 	applyClaudeCacheAnchor(ctx, apiMessages)

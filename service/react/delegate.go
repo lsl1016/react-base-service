@@ -403,6 +403,9 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	base.historyMessages = nil
 	base.historyMessageRefs = nil
 	base.attachments = nil
+	// 思考程度随父 run 继承（off/auto/custom）；agent 定义级的独立覆盖（P1-5）后续经
+	// tblLlmAgent 扩展列接入，当前先保证父子 run 思考口径一致。
+	base.reasoning = s.req.reasoning
 	base.systemPrompt = agent.SystemPrompt
 	base.toolsIndexSnapshotJSON = policy.FilterToolIndexSnapshot(base.toolsIndexSnapshotJSON)
 	base.skillsIndexSnapshotJSON = policy.FilterSkillIndexSnapshot(base.skillsIndexSnapshotJSON)

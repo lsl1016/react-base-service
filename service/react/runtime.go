@@ -222,7 +222,7 @@ func runSingle(ctx *gin.Context, parent context.Context, payload params.ReactRun
 	}
 	// Steering S2：自动续跑时待晋升的排队输入 ID（由 run 循环写入 payload）。
 	req.promotePendingInputID = payload.PromotePendingInputID
-	compactCfg := compactConfigForModel(req.resolvedModelKey)
+	compactCfg := compactConfigForModelWithOverrides(req.resolvedModelKey, req.userModelContextTokens, req.userModelMaxOutputTokens)
 	initialTools := runtimeToolDefinitions(req, executionProfileForRun(req))
 	initialSystemContent := buildReactSystemContent(req.systemPrompt, renderToolIndexSummary(req.toolsIndexSnapshotJSON), renderSkillIndexSummary(req.skillsIndexSnapshotJSON), req.memoryContext, req.graphMemoryContext)
 	if err := checkEntryInputTokens(initialSystemContent, req.modelUserMessage, initialTools, compactCfg.TokenTrigger); err != nil {
@@ -510,6 +510,8 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	routeValuesBytes, _ := json.Marshal(routeValues)
 
 	var apiKey, modelKey, modelVersion string
+	var userModelApiURL string
+	var userModelMaxOutputTokens, userModelContextTokens int
 	if payload.ModelHash != "" {
 		userModel, err := model.GetUserModelByHash(ctx, payload.ModelHash)
 		if err != nil {
@@ -521,6 +523,9 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 		apiKey = userModel.ApiKey
 		modelKey = userModel.ModelKey
 		modelVersion = userModel.ModelVersion
+		userModelApiURL = userModel.ApiURL
+		userModelMaxOutputTokens = userModel.MaxOutputTokens
+		userModelContextTokens = userModel.ContextTokens
 	} else {
 		if payload.ModelKey == "" {
 			return nil, components.ErrorParamInvalid.Sprintf("modelKey 不能为空")
@@ -598,6 +603,10 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 		userContent = userContent + "\n\n" + skillTriggerHint
 	}
 	modelUserMessage := llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: userContent}
+	reasoning, err := parseReasoningOptions(payload.Reasoning)
+	if err != nil {
+		return nil, err
+	}
 	return &runtimeRequest{
 		payload:  payload,
 		services: services,
@@ -608,9 +617,13 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 			callerRuntimeContext: callerRuntimeCtx,
 		},
 		runtimeRequestModel: runtimeRequestModel{
-			apiKey:               apiKey,
-			resolvedModelKey:     modelKey,
-			resolvedModelVersion: modelVersion,
+			apiKey:                   apiKey,
+			resolvedModelKey:         modelKey,
+			resolvedModelVersion:     modelVersion,
+			reasoning:                reasoning,
+			userModelApiURL:          userModelApiURL,
+			userModelMaxOutputTokens: userModelMaxOutputTokens,
+			userModelContextTokens:   userModelContextTokens,
 		},
 		runtimeRequestCapabilities: runtimeRequestCapabilities{
 			systemPrompt:            systemPrompt,

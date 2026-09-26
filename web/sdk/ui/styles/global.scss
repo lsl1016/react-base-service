@@ -22,6 +22,8 @@
 @use 'client-tool-editor';
 @use 'display-files';
 @use 'lanes';
+@use 'queue-strip';
+@use 'settings-drawer';
 
 // Agent UI 容器基础样式
 .agent-ui {

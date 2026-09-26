@@ -36,6 +36,8 @@ export { PanelMessage } from './components/PanelMessage';
 export { PlanRuntimeCard } from './components/PlanRuntimeCard';
 export { ScrollArea } from './components/ScrollArea';
 export { SessionList } from './components/SessionList';
+export { SettingsDrawer } from './components/SettingsDrawer';
+export type { SettingsDrawerProps } from './components/SettingsDrawer';
 export { SmartScroll } from './components/SmartScroll';
 export { ThoughtBlock } from './components/ThoughtBlock';
 export { TodoCreateBlock } from './components/TodoCreateBlock';

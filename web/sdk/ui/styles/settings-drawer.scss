@@ -1,0 +1,410 @@
+@use 'variables' as *;
+@use 'mixins' as *;
+
+// 模型配置面板（SettingsDrawer）：右侧抽屉 + 四 Tab（厂商与密钥/模型与参数/上下文与压缩/高级）
+
+.agent-ui-settings-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  background: rgba(14, 16, 23, 0.4);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.agent-ui-settings-drawer {
+  width: min(460px, 92%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: $agent-ui-bg-primary;
+  border-left: 1px solid $agent-ui-border-color-light;
+  box-shadow: $agent-ui-shadow-lg;
+  animation: agent-ui-settings-slide-in 160ms ease-out;
+}
+
+@keyframes agent-ui-settings-slide-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.agent-ui-settings-header {
+  @include agent-ui-flex-between;
+  padding: $agent-ui-spacing-md $agent-ui-spacing-lg;
+  border-bottom: 1px solid $agent-ui-border-color-light;
+}
+
+.agent-ui-settings-title {
+  font-size: $agent-ui-font-size-base;
+  font-weight: $agent-ui-font-weight-medium;
+  color: $agent-ui-text-primary;
+}
+
+.agent-ui-settings-close {
+  @include agent-ui-button-reset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: $agent-ui-radius-sm;
+  color: $agent-ui-text-secondary;
+  @include agent-ui-transition(background-color);
+
+  &:hover {
+    background: $agent-ui-bg-secondary;
+    color: $agent-ui-text-primary;
+  }
+}
+
+.agent-ui-settings-tabs {
+  display: flex;
+  gap: $agent-ui-spacing-xs;
+  padding: $agent-ui-spacing-sm $agent-ui-spacing-lg 0;
+  border-bottom: 1px solid $agent-ui-border-color-light;
+  overflow-x: auto;
+}
+
+.agent-ui-settings-tabs [role='tab'] {
+  @include agent-ui-button-reset;
+  padding: $agent-ui-spacing-xs $agent-ui-spacing-sm;
+  border-radius: $agent-ui-radius-sm $agent-ui-radius-sm 0 0;
+  color: $agent-ui-text-secondary;
+  font-size: $agent-ui-font-size-xs;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  @include agent-ui-transition(color);
+
+  &:hover {
+    color: $agent-ui-text-primary;
+  }
+}
+
+.agent-ui-settings-tabs .agent-ui-settings-tab-active {
+  color: $agent-ui-primary;
+  border-bottom-color: $agent-ui-primary;
+  font-weight: $agent-ui-font-weight-medium;
+}
+
+.agent-ui-settings-feedback {
+  margin: $agent-ui-spacing-sm $agent-ui-spacing-lg 0;
+  padding: $agent-ui-spacing-xs $agent-ui-spacing-sm;
+  border-radius: $agent-ui-radius-sm;
+  font-size: $agent-ui-font-size-xs;
+
+  &-ok {
+    background: rgba(0, 127, 22, 0.12);
+    color: $agent-ui-success;
+  }
+
+  &-error {
+    background: rgba(255, 77, 79, 0.12);
+    color: $agent-ui-danger;
+  }
+
+  &-info {
+    background: $agent-ui-bg-secondary;
+    color: $agent-ui-text-secondary;
+  }
+}
+
+.agent-ui-settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: $agent-ui-spacing-md $agent-ui-spacing-lg $agent-ui-spacing-lg;
+}
+
+.agent-ui-settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: $agent-ui-spacing-md;
+}
+
+.agent-ui-settings-hint {
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-tertiary;
+  line-height: 1.6;
+}
+
+.agent-ui-settings-empty {
+  padding: $agent-ui-spacing-lg;
+  text-align: center;
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-tertiary;
+}
+
+.agent-ui-settings-card {
+  border: 1px solid $agent-ui-border-color-light;
+  border-radius: $agent-ui-radius-md;
+  background: $agent-ui-bg-primary;
+  padding: $agent-ui-spacing-sm $agent-ui-spacing-md;
+}
+
+.agent-ui-settings-card-head {
+  @include agent-ui-flex-between;
+  gap: $agent-ui-spacing-sm;
+  padding: $agent-ui-spacing-xs 0;
+}
+
+.agent-ui-settings-card-title {
+  font-size: $agent-ui-font-size-sm;
+  font-weight: $agent-ui-font-weight-medium;
+  color: $agent-ui-text-primary;
+  display: flex;
+  align-items: baseline;
+  gap: $agent-ui-spacing-xs;
+}
+
+.agent-ui-settings-card-sub {
+  font-size: $agent-ui-font-size-xs;
+  font-weight: $agent-ui-font-weight-normal;
+  color: $agent-ui-text-tertiary;
+}
+
+.agent-ui-settings-row {
+  border-top: 1px dashed $agent-ui-border-color-light;
+  padding: $agent-ui-spacing-xs 0;
+}
+
+.agent-ui-settings-row-head {
+  @include agent-ui-flex-between;
+  gap: $agent-ui-spacing-sm;
+}
+
+.agent-ui-settings-row-title {
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-primary;
+  display: flex;
+  align-items: baseline;
+  gap: $agent-ui-spacing-xs;
+  min-width: 0;
+}
+
+.agent-ui-settings-row-sub {
+  color: $agent-ui-text-tertiary;
+}
+
+.agent-ui-settings-row-actions,
+.agent-ui-settings-form-actions {
+  display: flex;
+  align-items: center;
+  gap: $agent-ui-spacing-xs;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.agent-ui-settings-btn {
+  @include agent-ui-button-reset;
+  padding: 3px 10px;
+  border: 1px solid $agent-ui-border-color-light;
+  border-radius: $agent-ui-radius-sm;
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-secondary;
+  background: $agent-ui-bg-primary;
+  @include agent-ui-transition(all);
+
+  &:hover:not(:disabled) {
+    color: $agent-ui-text-primary;
+    border-color: $agent-ui-border-color;
+    background: $agent-ui-bg-secondary;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+.agent-ui-settings-btn-primary {
+  color: #ffffff;
+  background: $agent-ui-primary;
+  border-color: $agent-ui-primary;
+
+  &:hover:not(:disabled) {
+    color: #ffffff;
+    background: $agent-ui-primary-active;
+  }
+}
+
+.agent-ui-settings-btn-danger {
+  color: $agent-ui-danger;
+
+  &:hover:not(:disabled) {
+    border-color: $agent-ui-danger;
+  }
+}
+
+.agent-ui-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: $agent-ui-spacing-sm;
+  padding: $agent-ui-spacing-sm 0;
+}
+
+.agent-ui-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: $agent-ui-spacing-sm;
+  padding: $agent-ui-spacing-xs 0;
+}
+
+.agent-ui-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-secondary;
+  min-width: 0;
+
+  > span {
+    display: inline-flex;
+    align-items: center;
+    gap: $agent-ui-spacing-xs;
+  }
+
+  input,
+  select {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid $agent-ui-border-color-light;
+    border-radius: $agent-ui-radius-sm;
+    background: $agent-ui-bg-primary;
+    color: $agent-ui-text-primary;
+    font-size: $agent-ui-font-size-xs;
+    outline: none;
+    @include agent-ui-transition(border-color);
+
+    &:focus {
+      border-color: $agent-ui-primary;
+    }
+  }
+}
+
+.agent-ui-settings-field-desc {
+  font-style: normal;
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-tertiary;
+  line-height: 1.5;
+}
+
+.agent-ui-settings-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $agent-ui-spacing-md;
+  padding: $agent-ui-spacing-xs 0;
+}
+
+.agent-ui-settings-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-secondary;
+  cursor: pointer;
+
+  input[type='checkbox'] {
+    accent-color: $agent-ui-primary;
+  }
+}
+
+.agent-ui-settings-source {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 16px;
+
+  &-override {
+    background: $agent-ui-primary-light;
+    color: $agent-ui-primary;
+  }
+
+  &-yaml {
+    background: $agent-ui-bg-secondary;
+    color: $agent-ui-text-tertiary;
+  }
+
+  &-default {
+    background: transparent;
+    color: $agent-ui-text-tertiary;
+  }
+}
+
+.agent-ui-settings-inline-ok {
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-success;
+}
+
+.agent-ui-settings-inline-error {
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-danger;
+}
+
+.agent-ui-settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: $agent-ui-font-size-xs;
+
+  th,
+  td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid $agent-ui-border-color-light;
+    vertical-align: top;
+  }
+
+  th {
+    color: $agent-ui-text-tertiary;
+    font-weight: $agent-ui-font-weight-medium;
+  }
+
+  td {
+    color: $agent-ui-text-secondary;
+  }
+
+  code {
+    font-size: $agent-ui-font-size-xs;
+    color: $agent-ui-primary;
+  }
+}
+
+.agent-ui-settings-add-row {
+  border-top: 1px dashed $agent-ui-border-color-light;
+  padding-top: $agent-ui-spacing-xs;
+}
+
+// 思考档位选择器（InputArea 内）
+
+.agent-ui-reasoning-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+
+  .agent-ui-model-selector-label {
+    flex-shrink: 0;
+  }
+
+  select {
+    max-width: 64px;
+  }
+
+  .agent-ui-reasoning-budget {
+    width: 84px;
+    padding: 2px 4px;
+    border: 1px solid $agent-ui-border-color-light;
+    border-radius: $agent-ui-radius-sm;
+    background: $agent-ui-bg-primary;
+    color: $agent-ui-text-primary;
+    font-size: $agent-ui-font-size-xs;
+    outline: none;
+
+    &:focus {
+      border-color: $agent-ui-primary;
+    }
+  }
+}

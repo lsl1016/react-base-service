@@ -47,6 +47,8 @@ export type { ScrollAreaHandle, ScrollAreaProps, ScrollAreaSize } from './ui/com
 export { SmartScroll } from './ui/components/SmartScroll';
 export type { SmartScrollHandle, SmartScrollProps, SmartScrollState } from './ui/components/SmartScroll';
 export { mountAgentUI } from './ui/mount';
+export { SettingsDrawer } from './ui/components/SettingsDrawer';
+export type { SettingsDrawerProps } from './ui/components/SettingsDrawer';
 export type {
     AgentAfterSendMeta,
     AgentInputValue,

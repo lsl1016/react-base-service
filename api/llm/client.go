@@ -46,11 +46,78 @@ type StreamChunk struct {
 	ToolCalls          []ToolCall // StopReason="tool_use" 时携带工具调用列表
 }
 
-// ReasoningOptions 控制单次 LLM 请求是否请求供应商暴露真实 reasoning/thinking 增量。
+// ReasoningMode 思考程度三态：off 关闭 / auto 自适应默认 / custom 按档位或预算显式指定。
+type ReasoningMode string
+
+const (
+	ReasoningModeOff    ReasoningMode = "off"
+	ReasoningModeAuto   ReasoningMode = "auto"
+	ReasoningModeCustom ReasoningMode = "custom"
+)
+
+// 合法 effort 档位（OpenAI 系 reasoning_effort；Anthropic 系按 EffortToThinkingBudget 折算预算）。
+var validReasoningEfforts = []string{"minimal", "low", "medium", "high"}
+
+// IsValidReasoningEffort 校验 effort 档位是否合法。
+func IsValidReasoningEffort(effort string) bool {
+	for _, valid := range validReasoningEfforts {
+		if effort == valid {
+			return true
+		}
+	}
+	return false
+}
+
+// ReasoningOptions 控制单次 LLM 请求是否请求供应商暴露真实 reasoning/thinking 增量，
+// 以及思考程度（三态）。由 WithReasoning 注入 context，各协议 client 自行翻译：
+// GPT 系 → reasoning_effort 档位；Anthropic 系 → thinking.budget_tokens 预算。
 type ReasoningOptions struct {
 	Enabled      bool
-	Effort       string // GPT: low / medium / high
-	BudgetTokens int    // Claude thinking budget
+	Mode         ReasoningMode // off / auto / custom；空值按 auto 处理
+	Effort       string        // minimal / low / medium / high（custom 档位）
+	BudgetTokens int           // Anthropic 系 thinking budget（custom 显式预算）
+}
+
+// NormalizeReasoningOptions 归一化 ReasoningOptions：补齐 Mode、按 Mode 推导 Enabled。
+func NormalizeReasoningOptions(opts ReasoningOptions) ReasoningOptions {
+	if opts.Mode == "" {
+		opts.Mode = ReasoningModeAuto
+	}
+	if opts.Mode != ReasoningModeOff && opts.Mode != ReasoningModeCustom {
+		opts.Mode = ReasoningModeAuto
+	}
+	opts.Enabled = opts.Mode != ReasoningModeOff
+	return opts
+}
+
+// BudgetToReasoningEffort 按思考预算折算 GPT 系 effort 档位（前端只传预算时的协议回退）。
+func BudgetToReasoningEffort(budget int) string {
+	switch {
+	case budget <= 0:
+		return ""
+	case budget <= 2048:
+		return "low"
+	case budget <= 12288:
+		return "medium"
+	default:
+		return "high"
+	}
+}
+
+// ReasoningEffortForGPT 把三态 ReasoningOptions 翻译为 OpenAI 系 reasoning_effort：
+// off → 空（不发）；auto/未指定档位 → high（保持历史默认档）；custom 档位直接用；
+// custom 仅预算时按预算折算档位。
+func ReasoningEffortForGPT(opts ReasoningOptions) string {
+	if !opts.Enabled || opts.Mode == ReasoningModeOff {
+		return ""
+	}
+	if IsValidReasoningEffort(opts.Effort) {
+		return opts.Effort
+	}
+	if opts.BudgetTokens > 0 {
+		return BudgetToReasoningEffort(opts.BudgetTokens)
+	}
+	return "high"
 }
 
 // ToolChoice 控制单次模型请求是否允许生成工具调用。
@@ -83,11 +150,11 @@ func toolChoiceFromContext(ctx context.Context) ToolChoice {
 }
 
 // WithReasoning 只用于需要展示真实思考过程的调用路径，例如 ReAct Runtime。
+// 三态语义：off = 不向供应商请求 thinking（同时前端不展示思考流）；
+// auto = 按协议自适应默认（GPT 系 high 档、Anthropic 系 maxTokens/4 预算）；
+// custom = 按 Effort/BudgetTokens 显式指定。
 func WithReasoning(ctx context.Context, opts ReasoningOptions) context.Context {
-	opts.Enabled = true
-	if strings.TrimSpace(opts.Effort) == "" {
-		opts.Effort = "high"
-	}
+	opts = NormalizeReasoningOptions(opts)
 	return context.WithValue(ctx, reasoningContextKey{}, opts)
 }
 
@@ -300,6 +367,13 @@ func NormalizeModelKey(key string) string {
 // GetClientWithUserModel 根据用户模型的 apiKey、modelKey（新枚举）构建 LLM 客户端
 // endpoint 从 api.yaml 按 endpointKey 查找：国内厂商用 "<clientType>-cn"，国外用 "<clientType>"
 func GetClientWithUserModel(apiKey, modelKey string) (LLMClient, error) {
+	return GetClientWithUserModelEndpoint(apiKey, modelKey, "", 0)
+}
+
+// GetClientWithUserModelEndpoint 在 GetClientWithUserModel 基础上支持用户模型自带端点覆盖：
+// apiURL 非空时跳过 api.yaml 端点查找（前端配置的自定义接入面优先），maxOutputTokens
+// 作为该端点的 max_tokens（0=回退模型目录/内置默认）。连通性检测与 run 构建共用本入口。
+func GetClientWithUserModelEndpoint(apiKey, modelKey, apiURL string, maxOutputTokens int) (LLMClient, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("%w: empty apiKey", ErrApiKeyNotConfigured)
 	}
@@ -309,17 +383,30 @@ func GetClientWithUserModel(apiKey, modelKey string) (LLMClient, error) {
 		return nil, fmt.Errorf("%w: %s", ErrModelNotSupported, modelKey)
 	}
 
-	endpointKey := clientType
-	if override, ok := modelKeyEndpointOverrides[modelKey]; ok {
-		endpointKey = override
-	} else if modelKeyIsCN[modelKey] {
-		endpointKey = clientType + "-cn"
-	}
+	endpoint := conf.EndpointConfig{}
+	if strings.TrimSpace(apiURL) != "" {
+		// 用户模型自带端点：模型配置面板「厂商与密钥」填写的自定义接入面。
+		endpoint.ApiUrl = strings.TrimSpace(apiURL)
+		if maxOutputTokens > 0 {
+			endpoint.MaxTokens = maxOutputTokens
+		}
+	} else {
+		endpointKey := clientType
+		if override, ok := modelKeyEndpointOverrides[modelKey]; ok {
+			endpointKey = override
+		} else if modelKeyIsCN[modelKey] {
+			endpointKey = clientType + "-cn"
+		}
 
-	apiCfg := conf.API.LLM
-	endpoint, ok := apiCfg.Endpoints[endpointKey]
-	if !ok {
-		return nil, fmt.Errorf("%w: endpointKey=%s", ErrEndpointNotConfigured, endpointKey)
+		apiCfg := conf.API.LLM
+		configured, ok := apiCfg.Endpoints[endpointKey]
+		if !ok {
+			return nil, fmt.Errorf("%w: endpointKey=%s", ErrEndpointNotConfigured, endpointKey)
+		}
+		endpoint = configured
+		if maxOutputTokens > 0 {
+			endpoint.MaxTokens = maxOutputTokens
+		}
 	}
 
 	switch clientType {

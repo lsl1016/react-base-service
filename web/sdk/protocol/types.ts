@@ -26,7 +26,9 @@ export type WsMessageType =
   | 'plan_resume'
   | 'plan_retry'
   | 'plan_skip'
-  | 'plan_cancel';
+  | 'plan_cancel'
+  /** S3 显式发送：晋升一条排队输入并在当前连接开新 run（payload 为 ReactQueueSendReq） */
+  | 'queue_send';
 
 /**
  * WebSocket 消息帧
@@ -96,6 +98,24 @@ export interface RunPayload {
   maxSteps?: number;
   /** 执行范式；未传时服务端按 react 兼容旧客户端。 */
   executionMode?: ExecutionMode;
+  /** 思考程度三态；未传时服务端按 auto 兼容旧客户端。 */
+  reasoning?: ReactReasoningOptions;
+}
+
+/**
+ * 思考程度三态（run 级）：off 关闭 / auto 自适应默认 / custom 显式指定。
+ *
+ * custom 时 effort 档位与 budgetTokens 思考预算二选一，协议侧自动翻译：
+ * OpenAI 系 → reasoning_effort；Anthropic 系 → thinking.budget_tokens。
+ */
+export type ReasoningMode = 'off' | 'auto' | 'custom';
+
+export interface ReactReasoningOptions {
+  mode: ReasoningMode;
+  /** custom 档位：minimal / low / medium / high */
+  effort?: string;
+  /** custom 思考预算（tokens）；OpenAI 系无预算概念时按阈值折算档位 */
+  budgetTokens?: number;
 }
 
 /**
@@ -208,11 +228,146 @@ export interface ReactModelInfo {
   modelKey: string;
   modelVersion: string;
   displayName: string;
+  /** 目录配置的上下文容量（tokens）；未配置时缺省 */
+  contextTokens?: number;
+  /** 目录配置的单次最大输出（tokens）；未配置时缺省 */
+  maxOutputTokens?: number;
+  /** 目录声明的思考能力；未声明时缺省（false） */
+  supportThinking?: boolean;
+  /** 用户模型（/model/list）的模型配置哈希；携带时 run 走该模型自带 Key/端点 */
+  modelHash?: string;
+  /** 是否来自当前用户/平台的模型配置列表（区别于 yaml 平台模型） */
+  isUserModel?: boolean;
 }
 
 export interface ReactModelsResp {
   models: ReactModelInfo[];
   defaultModel: ReactModelInfo;
+}
+
+// ─── 模型配置面板（/model/*、/setting/context/*、/react/config/schema） ───────────
+
+/** GET /models 返回的厂商目录条目（厂商枚举 key + 可选版本列表） */
+export interface VendorModelInfo {
+  key: string;
+  versions: string[];
+  defaultVersion: string;
+}
+
+export interface VendorModelsResp {
+  models: VendorModelInfo[];
+  /** 用户模型可选的厂商枚举（新枚举，/model/create 校验同源）；旧后端无此字段时回退 models key */
+  vendors?: string[];
+}
+
+/** 模型配置面板参数 schema：单个可配置参数声明 */
+export interface ConfigParamSchema {
+  key: string;
+  label: string;
+  /** model / context / reasoning */
+  group: string;
+  /** int / bool / enum */
+  type: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  default?: number;
+  enum?: string[];
+  unit?: string;
+  description?: string;
+}
+
+export interface ConfigSchemaResp {
+  params: ConfigParamSchema[];
+}
+
+/** /model/list 返回的用户/平台模型条目（API Key 脱敏，detail 接口回显明文） */
+export interface UserModelItem {
+  id: number;
+  modelHash: string;
+  userName: string;
+  modelName: string;
+  modelKey: string;
+  modelVersion: string;
+  apiKey: string;
+  bizScenes: string[];
+  apiUrl?: string;
+  contextTokens?: number;
+  maxOutputTokens?: number;
+  supportThinking?: number;
+  supportTools?: number;
+  supportVision?: number;
+  isPlatformDefault: number;
+  createdAt: string;
+  updatedAt: string;
+  baseCredits?: number;
+  bonusCredits?: number;
+}
+
+export interface CreateUserModelReq {
+  modelName: string;
+  modelKey: string;
+  modelVersion: string;
+  apiKey: string;
+  bizScenes: string[];
+  isPlatformDefault?: number;
+  apiUrl?: string;
+  contextTokens?: number;
+  maxOutputTokens?: number;
+  supportThinking?: number;
+  supportTools?: number;
+  supportVision?: number;
+}
+
+export interface UpdateUserModelReq extends CreateUserModelReq {
+  id: number;
+}
+
+export interface CheckModelConnectivityReq {
+  modelKey: string;
+  modelVersion: string;
+  apiKey: string;
+  apiUrl?: string;
+}
+
+/** /setting/context/get 返回的上下文压缩策略生效视图 */
+export interface ContextCompactSettingResp {
+  effective: {
+    enabled: boolean;
+    tokenTrigger: number;
+    tokenTarget: number;
+    summaryLimit: number;
+    outputReserveTokens: number;
+    bufferTokens: number;
+    microcompactEnabled: boolean;
+    microcompactKeepRecent: number;
+  };
+  sources: Record<string, { value: unknown; source: string }>;
+  override: {
+    enabled?: boolean;
+    tokenTrigger?: number;
+    tokenTarget?: number;
+    summaryLimit?: number;
+    outputReserveTokens?: number;
+    bufferTokens?: number;
+    microcompactEnabled?: boolean;
+    microcompactKeepRecent?: number;
+  } | null;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface UpdateContextCompactSettingReq {
+  enabled?: boolean;
+  tokenTrigger?: number;
+  tokenTarget?: number;
+  summaryLimit?: number;
+  outputReserveTokens?: number;
+  bufferTokens?: number;
+  microcompactEnabled?: boolean;
+  microcompactKeepRecent?: number;
+  /** 清除覆盖回落 yaml/默认值的字段名列表 */
+  clearFields?: string[];
 }
 
 export interface ModelFallbackPayload {

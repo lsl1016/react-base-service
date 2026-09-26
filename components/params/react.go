@@ -25,6 +25,15 @@ const (
 	ReactExecutionModePlan  ReactExecutionMode = "plan"
 )
 
+// ReactReasoningOptions 思考程度三态（run 级）：off 关闭 / auto 自适应 / custom 显式指定。
+// custom 时 effort 档位（minimal/low/medium/high）与 budgetTokens 思考预算二选一，
+// 协议侧自动翻译：OpenAI 系 → reasoning_effort，Anthropic 系 → thinking.budget_tokens。
+type ReactReasoningOptions struct {
+	Mode         string `json:"mode"`
+	Effort       string `json:"effort,omitempty"`
+	BudgetTokens int    `json:"budgetTokens,omitempty"`
+}
+
 type ReactRunPayload struct {
 	CallerKey   string               `json:"callerKey"`
 	RouteValues []string             `json:"routeValues"`
@@ -44,6 +53,8 @@ type ReactRunPayload struct {
 	// TokenBudget 是本次 run 的递归 token 预算（输入+输出+委派孙代理）；
 	// 0 时回退 react.loop.budget_tokens_per_run，仍为 0 表示不限。
 	TokenBudget int `json:"tokenBudget,omitempty"`
+	// Reasoning 控制本次 run 的思考程度（off/auto/custom）；nil 按 auto 兼容旧客户端。
+	Reasoning *ReactReasoningOptions `json:"reasoning,omitempty"`
 	// ExecutionMode 控制本轮执行范式；空值按 react 兼容旧客户端。
 	ExecutionMode ReactExecutionMode `json:"executionMode,omitempty"`
 	// PromotePendingInputID 是 Steering S2 自动续跑时待晋升的排队输入账本 ID。
@@ -55,11 +66,35 @@ type ReactModelInfo struct {
 	ModelKey     string `json:"modelKey"`
 	ModelVersion string `json:"modelVersion"`
 	DisplayName  string `json:"displayName"`
+	// 以下为模型配置面板/思考档位选择器消费的目录能力信息；未配置时为 0/false。
+	ContextTokens   int  `json:"contextTokens,omitempty"`
+	MaxOutputTokens int  `json:"maxOutputTokens,omitempty"`
+	SupportThinking bool `json:"supportThinking,omitempty"`
 }
 
 type ReactModelsResp struct {
 	Models       []ReactModelInfo `json:"models"`
 	DefaultModel ReactModelInfo   `json:"defaultModel"`
+}
+
+// ConfigParamSchema 单个可配置参数的声明（声明式参数下发：前端按 min/max/step 渲染控件）。
+type ConfigParamSchema struct {
+	Key         string   `json:"key"`
+	Label       string   `json:"label"`
+	Group       string   `json:"group"`       // model / context / reasoning
+	Type        string   `json:"type"`        // int / bool / enum
+	Min         *int     `json:"min,omitempty"`
+	Max         *int     `json:"max,omitempty"`
+	Step        *int     `json:"step,omitempty"`
+	Default     *int     `json:"default,omitempty"`
+	Enum        []string `json:"enum,omitempty"`
+	Unit        string   `json:"unit,omitempty"`
+	Description string   `json:"description,omitempty"`
+}
+
+// ConfigSchemaResp 模型配置面板参数 schema（GET /react/config/schema）。
+type ConfigSchemaResp struct {
+	Params []ConfigParamSchema `json:"params"`
 }
 
 type ReactModelFallbackPayload struct {

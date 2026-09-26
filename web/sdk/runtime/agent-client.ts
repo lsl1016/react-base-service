@@ -36,9 +36,9 @@
  */
 import { WsClient } from '../client/ws-client';
 import { RECOVERY_CONTINUE_FLAG } from '../protocol/types';
-import type { ApiResponse, AskQuestionAnswerContent, ChatFileUpload, ClientToolUseStartPayload, ExecutionMode, LlmContext, ReactAttachmentRef, ReactEvent, ReactModelInfo, ReactModelsResp, RunPayload, UserInputOrigin, WsMessageType } from '../protocol/types';
+import type { ApiResponse, AskQuestionAnswerContent, CheckModelConnectivityReq, ChatFileUpload, ClientToolUseStartPayload, ConfigSchemaResp, ContextCompactSettingResp, CreateUserModelReq, ExecutionMode, LlmContext, ReactAttachmentRef, ReactEvent, ReactModelInfo, ReactModelsResp, ReactReasoningOptions, RunPayload, UpdateContextCompactSettingReq, UpdateUserModelReq, UserInputOrigin, UserModelItem, VendorModelsResp, WsMessageType } from '../protocol/types';
 import { SessionManager } from '../session/session-manager';
-import type { AsyncTaskItem, HistoryEvent, SessionListParams, SessionListResp } from '../session/types';
+import type { AsyncTaskItem, HistoryEvent, QueueDeleteParams, QueueListParams, QueueListResp, QueueMutateResp, QueueReorderParams, QueueUpdateParams, SessionListParams, SessionListResp } from '../session/types';
 import type { SessionMeta } from '../storage/event-ledger';
 import { EventLedger } from '../storage/event-ledger';
 import { ClientToolExecutor } from '../tools/executor';
@@ -125,6 +125,8 @@ export interface RunOptions {
   maxSteps?: number;
   /** 本轮执行范式；默认 react。 */
   executionMode?: ExecutionMode;
+  /** 本轮思考程度三态；默认 auto（与历史行为一致）。 */
+  reasoning?: ReactReasoningOptions;
   /** 本轮随用户消息发送的已上传附件 */
   attachments?: ReactAttachmentRef[];
   /** 本轮用户输入来源 */
@@ -285,6 +287,59 @@ export class AgentClient {
     return json.data;
   }
 
+  // ─── 模型配置面板（厂商与密钥 / 模型与参数 / 上下文与压缩） ───────────────
+  // 薄封装：全部经 SessionManager 落到 /model/*、/setting/context/*、/react/config/schema。
+
+  /** 厂商模型目录（厂商枚举 key + 可选版本列表）。 */
+  async listVendorModels(): Promise<VendorModelsResp> {
+    return this.sessionManager.listVendorModels();
+  }
+
+  /** 模型配置面板参数 schema（声明式 min/max/step/default）。 */
+  async getConfigSchema(): Promise<ConfigSchemaResp> {
+    return this.sessionManager.getConfigSchema();
+  }
+
+  /** 模型列表（平台默认 + 自建；API Key 脱敏）。 */
+  async listUserModels(): Promise<UserModelItem[]> {
+    return this.sessionManager.listUserModels();
+  }
+
+  /** 模型详情（API Key 不脱敏，编辑回显用）。 */
+  async getUserModelDetail(id: number): Promise<UserModelItem> {
+    return this.sessionManager.getUserModelDetail(id);
+  }
+
+  /** 创建用户/平台模型（服务端会先做连通性检测）。 */
+  async createUserModel(params: CreateUserModelReq): Promise<UserModelItem> {
+    return this.sessionManager.createUserModel(params);
+  }
+
+  /** 编辑用户/平台模型。 */
+  async updateUserModel(params: UpdateUserModelReq): Promise<void> {
+    return this.sessionManager.updateUserModel(params);
+  }
+
+  /** 删除用户/平台模型。 */
+  async deleteUserModel(id: number): Promise<void> {
+    return this.sessionManager.deleteUserModel(id);
+  }
+
+  /** 模型连通性检测（支持自定义接入面）。 */
+  async checkModelConnectivity(params: CheckModelConnectivityReq): Promise<void> {
+    return this.sessionManager.checkModelConnectivity(params);
+  }
+
+  /** 查询上下文压缩策略生效视图。 */
+  async getContextSetting(): Promise<ContextCompactSettingResp> {
+    return this.sessionManager.getContextSetting();
+  }
+
+  /** 更新上下文压缩策略（字段级覆盖，写后本进程立即生效）。 */
+  async updateContextSetting(params: UpdateContextCompactSettingReq): Promise<ContextCompactSettingResp> {
+    return this.sessionManager.updateContextSetting(params);
+  }
+
   // ─── 运行 ───────────────────────────────────────────────
 
   /** 进入新对话草稿态：只清空当前面板，不创建服务端 session，不清本地历史 */
@@ -317,6 +372,13 @@ export class AgentClient {
     // 用户主动发送：重新给满自动续跑额度。放在这里而不是 sendRun，
     // 因为 sendRun 也是自动续跑自己走的路径，放那儿等于永远清不掉。
     this.consecutiveRecoveryRuns = 0;
+    // Steering S1：run 活跃时新消息交给后端准入（guide/queue/明确拒绝），
+    // 回执以 steer_guided/steer_queued/steer_rejected 事件下发。不走 sendRun：
+    // 不能重置当前 run 的运行态（currentRunId/工具卡索引/seq 游标），也不插乐观
+    // 用户气泡——排队项被消费时自动续跑的 run 事件会带原文渲染，提前插会重复。
+    if (this.isRunInProgress()) {
+      return this.sendSteerMessage(userPrompt, options);
+    }
     this.reducer.markPendingPlanSubmitting();
     const sessionId = this.reducer.getState().sessionId;
     let hookLlmContext: LlmContext | undefined | Promise<LlmContext | undefined>;
@@ -341,6 +403,49 @@ export class AgentClient {
     }
 
     this.sendRun(userPrompt, options, hookLlmContext);
+  }
+
+  /**
+   * run 活跃期间的 steer 发送：组装 RunPayload 原样走 WS run 消息，
+   * 后端 SteerSession 准入后把回执以 steer_* 事件推回当前连接。
+   * 本地不重置任何运行态，也不等待新 runId。
+   */
+  private sendSteerMessage(userPrompt: string, options?: RunOptions): void | Promise<void> {
+    const sessionId = this.reducer.getState().sessionId;
+    const hookLlmContext = this.config.hooks?.beforeRun?.({
+      userPrompt,
+      sessionId,
+      inputOrigin: options?.inputOrigin,
+    });
+
+    const send = (llmContext?: LlmContext): void => {
+      const payload: RunPayload = {
+        callerKey: this.config.callerKey,
+        routeValues: this.config.routeValues,
+        type: 'chat',
+        userPrompt,
+        inputOrigin: options?.inputOrigin,
+        attachments: options?.attachments,
+        controlContext: options?.controlContext ?? this.config.controlContext,
+        llmContext: llmContext ?? options?.llmContext ?? this.config.llmContext,
+        modelKey: options?.modelKey ?? this.config.modelKey,
+        modelVersion: options?.modelVersion ?? this.config.modelVersion,
+        modelHash: options?.modelHash ?? this.config.modelHash,
+        maxSteps: options?.maxSteps ?? this.config.maxSteps,
+        executionMode: options?.executionMode ?? 'react',
+        reasoning: options?.reasoning,
+      };
+      this.wsClient.send({
+        type: 'run',
+        sessionId: this.reducer.getState().sessionId ?? undefined,
+        payload: payload as unknown as Record<string, unknown>,
+      });
+    };
+
+    if (isPromiseLike(hookLlmContext)) {
+      return Promise.resolve(hookLlmContext).then((resolved) => send(resolved));
+    }
+    send(hookLlmContext);
   }
 
   /** 确认计划：以一条新 run 指示模型开始执行刚提交的计划；新 run 启动后 reducer 会把计划置为 accepted。 */
@@ -399,6 +504,7 @@ export class AgentClient {
       modelHash: options?.modelHash ?? this.config.modelHash,
       maxSteps: options?.maxSteps ?? this.config.maxSteps,
       executionMode: options?.executionMode ?? 'react',
+      reasoning: options?.reasoning,
     };
     this.pendingLiveRunPayload = payload;
 
@@ -732,6 +838,67 @@ export class AgentClient {
   /** 订阅当前会话异步任务状态；注册后立即回调当前快照。 */
   subscribeAsyncTasks(listener: AsyncTaskListener): () => void {
     return this.asyncTaskManager.subscribe(listener);
+  }
+
+  // ─── 队列（S3）──────────────────────────────────────────
+
+  /** 队列管理请求的公共字段；无会话时返回 null（调用方据此跳过请求）。 */
+  private queueBaseParams(): QueueListParams | null {
+    const sessionId = this.reducer.getState().sessionId;
+    if (!sessionId) return null;
+    return {
+      sessionId,
+      callerKey: this.config.callerKey,
+      routeValues: this.config.routeValues,
+    };
+  }
+
+  /** 查询当前会话的排队输入（FIFO）；无会话时返回空队列。 */
+  async listQueue(): Promise<QueueListResp> {
+    const base = this.queueBaseParams();
+    if (!base) {
+      return { items: [], queueEnabled: false, autoDrain: false };
+    }
+    return this.sessionManager.listQueue(base);
+  }
+
+  /** 编辑一条排队输入的内容；claimed=false 表示该输入已被晋升或作废，编辑未生效。 */
+  async updateQueueItem(id: number, content: string): Promise<QueueMutateResp> {
+    const base = this.queueBaseParams();
+    if (!base) throw new Error('当前无会话，无法编辑排队输入');
+    const params: QueueUpdateParams = { ...base, id, content };
+    return this.sessionManager.updateQueueItem(params);
+  }
+
+  /** 重排会话队列（服务端同步改写账本 seq）；请求非法/并发变化时抛错。 */
+  async reorderQueue(idList: number[]): Promise<QueueMutateResp> {
+    const base = this.queueBaseParams();
+    if (!base) throw new Error('当前无会话，无法重排队列');
+    const params: QueueReorderParams = { ...base, idList };
+    return this.sessionManager.reorderQueue(params);
+  }
+
+  /** 删除（取消）一条排队输入；claimed=false 表示该输入已被晋升或作废，删除未生效。 */
+  async deleteQueueItem(id: number): Promise<QueueMutateResp> {
+    const base = this.queueBaseParams();
+    if (!base) throw new Error('当前无会话，无法删除排队输入');
+    const params: QueueDeleteParams = { ...base, id };
+    return this.sessionManager.deleteQueueItem(params);
+  }
+
+  /**
+   * 显式发送一条排队输入（S3）：WS queue_send，服务端 claim-once 晋升并在当前连接开新 run。
+   * 与 run 互斥：已有活跃 run 时忽略（排队项留在队列，由自动续跑或再次发送消费）。
+   */
+  sendQueuedMessage(pendingInputId: string): void {
+    if (!pendingInputId || this.isRunInProgress()) return;
+    const sessionId = this.reducer.getState().sessionId;
+    if (!sessionId) return;
+    this.wsClient.send({
+      type: 'queue_send',
+      sessionId,
+      payload: { sessionId, pendingInputId } as unknown as Record<string, unknown>,
+    });
   }
 
   // ─── 工具 ───────────────────────────────────────────────

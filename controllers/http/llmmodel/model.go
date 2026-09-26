@@ -30,5 +30,8 @@ func GetModels(ctx *gin.Context) {
 		})
 	}
 
-	components.RenderJsonSucc(ctx, params.ModelsResp{Models: models})
+	components.RenderJsonSucc(ctx, params.ModelsResp{
+		Models: models,
+		Vendors: llm.ValidModelKeys(),
+	})
 }
