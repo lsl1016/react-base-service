@@ -141,7 +141,11 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 		roundResult, err = state.callModelRound(step, prefixDebugKey, tools)
 		metrics.ModelRoundDuration.WithLabelValues(roundResult.Model.ModelKey + "/" + roundResult.Model.ModelVersion).Observe(time.Since(modelRoundStart).Seconds())
 		streamResult := roundResult.Stream
-		state.logModelRoundResult(step, roundResult.Model, streamResult)
+		if err != nil {
+			state.logModelRoundFailure(step, roundResult.Model, err)
+		} else {
+			state.logModelRoundResult(step, roundResult.Model, streamResult)
+		}
 		if IsReactRunCancelled(err) {
 			if persistErr := state.persistPartialAssistant(streamResult, roundResult.Model, step); persistErr != nil {
 				return persistErr
@@ -428,6 +432,12 @@ func sortedActiveToolNames(tools map[string]model.Tool) []string {
 
 func (s *reactEngineState) logModelRoundResult(step int, actualModel reactModelTarget, result collectLLMStreamResult) {
 	zlog.Infof(s.ctx, "[React.ModelRound] 模型轮次完成: runId=%s, step=%d, model=%s/%s, stopReason=%s, toolCallCount=%d, toolNames=%v", s.runID, step, actualModel.ModelKey, actualModel.ModelVersion, result.StopReason, len(result.ToolCalls), reactToolCallNames(result.ToolCalls))
+}
+
+// logModelRoundFailure 与 logModelRoundResult 区分：调用失败时 Stream 是零值，
+// 打“完成”会以空 stopReason/0 工具调用误导排障。
+func (s *reactEngineState) logModelRoundFailure(step int, actualModel reactModelTarget, roundErr error) {
+	zlog.Warnf(s.ctx, "[React.ModelRound] 模型轮次失败: runId=%s, step=%d, model=%s/%s, err=%v", s.runID, step, actualModel.ModelKey, actualModel.ModelVersion, roundErr)
 }
 
 func (s *reactEngineState) logToolCallInput(call llm.ToolCall, step int) {

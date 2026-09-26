@@ -150,3 +150,56 @@ export interface AsyncTaskListResp {
   /** 当前会话是否仍有 Provider 正在跟踪的任务，用于决定前端是否继续轮询。 */
   hasProcessingTasks: boolean;
 }
+
+// ─── S3 队列管理（/queue/*，对齐 params.ReactQueueItem 等结构）──────────
+
+/** 队列管理视图里的一条排队输入（run 运行中准入排队的用户消息）。 */
+export interface QueueItem {
+  /** 账本行 ID（update/reorder/delete 用） */
+  id: number;
+  /** 账本行 ID 的字符串形态（WS queue_send 用） */
+  pendingInputId: string;
+  sessionId: string;
+  /** 排队消息内容 */
+  content: string;
+  /** 执行顺序号（FIFO，重排由服务端同步改写） */
+  seq: number;
+  status: string;
+  createdAt: string;
+}
+
+/** queue/list 请求参数 */
+export interface QueueListParams {
+  sessionId: string;
+  callerKey: string;
+  routeValues?: string[];
+}
+
+/** queue/list 响应：items 为 FIFO 排序的排队输入，autoDrain/queueEnabled 回显 steering 配置 */
+export interface QueueListResp {
+  items: QueueItem[];
+  queueEnabled: boolean;
+  autoDrain: boolean;
+}
+
+/** queue/update 请求参数 */
+export interface QueueUpdateParams extends QueueListParams {
+  id: number;
+  content: string;
+}
+
+/** queue/reorder 请求参数：idList 按期望的新顺序给出全部排队输入 ID */
+export interface QueueReorderParams extends QueueListParams {
+  idList: number[];
+}
+
+/** queue/delete 请求参数 */
+export interface QueueDeleteParams extends QueueListParams {
+  id: number;
+}
+
+/** queue/update|reorder|delete 统一响应：claimed=false 表示该输入已被晋升或作废（claim-once 落空） */
+export interface QueueMutateResp {
+  claimed: boolean;
+  queueLength: number;
+}

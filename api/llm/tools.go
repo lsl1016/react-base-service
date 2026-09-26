@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 )
 
 // ToolDefinition 平台无关的工具定义（适配 Claude / GPT）
@@ -94,7 +95,9 @@ func BuildToolRoundMessages(assistantText string, toolCalls []ToolCall, results 
 func BuildToolRoundMessagesWithReasoning(assistantText, reasoningText, reasoningSignature string, toolCalls []ToolCall, results []ToolResultContent) (assistantMsg, userMsg ChatMessage) {
 	var assistantParts []ContentPart
 
-	if reasoningText != "" || reasoningSignature != "" {
+	// thinking 块必须携带思考文本才能落库/续轮：signature-only 块经 omitempty 序列化后缺
+	// thinking 字段，claude 协议重放会被严格 provider 以 missing field `thinking` 422 拒收。
+	if strings.TrimSpace(reasoningText) != "" {
 		assistantParts = append(assistantParts, ContentPart{
 			Type:      "thinking",
 			Thinking:  reasoningText,

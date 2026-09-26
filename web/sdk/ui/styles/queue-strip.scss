@@ -1,0 +1,187 @@
+@use 'variables' as *;
+@use 'mixins' as *;
+
+.agent-ui-queue-strip {
+  flex-shrink: 0;
+  margin: 0 0 $agent-ui-spacing-sm;
+  border: 1px solid $agent-ui-border-color-light;
+  border-radius: $agent-ui-radius-md;
+  background: $agent-ui-bg-primary;
+  font-size: $agent-ui-font-size-xs;
+  overflow: hidden;
+
+  &-header {
+    @include agent-ui-button-reset;
+    @include agent-ui-flex-between;
+    width: 100%;
+    gap: $agent-ui-spacing-sm;
+    padding: $agent-ui-spacing-sm $agent-ui-spacing-lg;
+    color: $agent-ui-text-secondary;
+    @include agent-ui-transition(background-color);
+
+    &:hover {
+      background: $agent-ui-bg-secondary;
+    }
+  }
+
+  &-icon {
+    flex-shrink: 0;
+    color: $agent-ui-primary;
+  }
+
+  &-title {
+    @include truncate;
+    flex: 1;
+    text-align: left;
+    color: $agent-ui-text-primary;
+    font-weight: $agent-ui-font-weight-medium;
+  }
+
+  &-hint {
+    color: $agent-ui-text-tertiary;
+    font-weight: $agent-ui-font-weight-normal;
+  }
+
+  &-notice {
+    color: $agent-ui-warning-strong;
+  }
+
+  &-list {
+    max-height: 180px;
+    overflow-y: auto;
+    border-top: 1px solid $agent-ui-border-color-light;
+    @include agent-ui-scrollbar;
+  }
+
+  &-item {
+    @include center-row;
+    gap: $agent-ui-spacing-sm;
+    padding: $agent-ui-spacing-sm $agent-ui-spacing-lg;
+
+    &:hover {
+      background: $agent-ui-bg-secondary;
+
+      .agent-ui-queue-strip-actions {
+        opacity: 1;
+      }
+    }
+  }
+
+  &-seq {
+    @include agent-ui-flex-center;
+    flex-shrink: 0;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: $agent-ui-radius-full;
+    background: $agent-ui-primary-light;
+    color: $agent-ui-primary;
+    font-size: 10px;
+    font-weight: $agent-ui-font-weight-semibold;
+  }
+
+  &-content {
+    @include truncate;
+    flex: 1;
+    color: $agent-ui-text-primary;
+  }
+
+  &-actions {
+    @include center-row;
+    flex-shrink: 0;
+    gap: 2px;
+    opacity: 0;
+    @include agent-ui-transition(opacity);
+
+    button {
+      @include agent-ui-button-reset;
+      @include agent-ui-flex-center;
+      width: 20px;
+      height: 20px;
+      border-radius: $agent-ui-radius-sm;
+      color: $agent-ui-text-tertiary;
+      @include agent-ui-transition(background-color, color);
+
+      &:hover:not(:disabled) {
+        background: $agent-ui-bg-tertiary;
+        color: $agent-ui-text-primary;
+      }
+
+      &:disabled {
+        cursor: not-allowed;
+        opacity: .4;
+      }
+    }
+  }
+
+  &-editor {
+    @include center-row;
+    gap: $agent-ui-spacing-sm;
+    padding: $agent-ui-spacing-sm $agent-ui-spacing-lg;
+
+    textarea {
+      flex: 1;
+      min-width: 0;
+      padding: $agent-ui-spacing-sm;
+      border: 1px solid $agent-ui-border-color;
+      border-radius: $agent-ui-radius-sm;
+      background: $agent-ui-bg-primary;
+      color: $agent-ui-text-primary;
+      font-size: $agent-ui-font-size-xs;
+      font-family: inherit;
+      line-height: 1.5;
+      resize: vertical;
+
+      &:focus {
+        outline: none;
+        border-color: $agent-ui-primary;
+      }
+
+      &:disabled {
+        opacity: .55;
+      }
+    }
+
+    .agent-ui-queue-strip-actions {
+      opacity: 1;
+    }
+  }
+
+  &-footer {
+    @include agent-ui-flex-between;
+    gap: $agent-ui-spacing-sm;
+    padding: $agent-ui-spacing-sm $agent-ui-spacing-lg;
+    border-top: 1px solid $agent-ui-border-color-light;
+    background: $agent-ui-bg-secondary;
+  }
+
+  &-footer-hint {
+    @include truncate;
+    color: $agent-ui-text-tertiary;
+  }
+
+  &-send {
+    @include agent-ui-button-reset;
+    @include center-row;
+    flex-shrink: 0;
+    gap: $agent-ui-spacing-xs;
+    height: 24px;
+    padding: 0 $agent-ui-spacing-md;
+    border-radius: $agent-ui-radius-sm;
+    background: $agent-ui-primary-light;
+    color: $agent-ui-primary;
+    font-size: $agent-ui-font-size-xs;
+    font-weight: $agent-ui-font-weight-medium;
+    @include agent-ui-transition(background-color, color);
+
+    &:hover:not(:disabled) {
+      background: $agent-ui-primary-border-soft;
+      color: $agent-ui-primary-hover;
+    }
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: .5;
+    }
+  }
+}
