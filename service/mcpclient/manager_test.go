@@ -7,11 +7,13 @@ import (
 )
 
 // TestToolConfigJSON 验证 MCP 工具落库 config 的形状：入参 schema 缺省补空对象，
-// 出参 schema 仅在服务器声明时写入（未声明不写 outputSchema 字段，避免覆盖语义）。
+// 出参 schema 仅在服务器声明时写入（未声明不写 outputSchema 字段，避免覆盖语义）；
+// readOnly 仅在声明时写入（repo kind 只读检索服务专用）。
 func TestToolConfigJSON(t *testing.T) {
 	configJSON, err := ToolConfigJSON("demo", "echo",
 		map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}},
 		map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}},
+		true,
 	)
 	if err != nil {
 		t.Fatalf("ToolConfigJSON: %v", err)
@@ -31,13 +33,19 @@ func TestToolConfigJSON(t *testing.T) {
 	if !ok || output["type"] != "object" {
 		t.Fatalf("outputSchema 未透传: %s", configJSON)
 	}
+	if cfg["readOnly"] != true {
+		t.Fatalf("readOnly=true 未写入: %s", configJSON)
+	}
 
-	minimalJSON, err := ToolConfigJSON("demo", "boom", nil, nil)
+	minimalJSON, err := ToolConfigJSON("demo", "boom", nil, nil, false)
 	if err != nil {
 		t.Fatalf("ToolConfigJSON(minimal): %v", err)
 	}
 	if strings.Contains(minimalJSON, "outputSchema") {
 		t.Fatalf("未声明 outputSchema 时不应写入该字段: %s", minimalJSON)
+	}
+	if strings.Contains(minimalJSON, "readOnly") {
+		t.Fatalf("未声明 readOnly 时不应写入该字段: %s", minimalJSON)
 	}
 	var minimal map[string]any
 	if err := json.Unmarshal([]byte(minimalJSON), &minimal); err != nil {

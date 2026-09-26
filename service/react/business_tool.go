@@ -83,6 +83,11 @@ func (s *reactEngineState) getTool(input json.RawMessage) (string, bool, error) 
 	}
 	for _, tool := range tools {
 		if (req.ToolID != "" && tool.ToolID == req.ToolID) || (req.Name != "" && tool.Name == req.Name) {
+			// 子代理业务工具白名单硬检查（WP2）：索引快照过滤只控制模型"看到什么"，
+			// 这里控制"能加载什么"——白名单外工具即使被猜到名字也无法激活。
+			if !agentToolRefAllows(s.req.agentToolRefs, tool) {
+				return "", true, fmt.Errorf("工具 %s 不在当前子代理的业务工具白名单内，无法加载；请改用白名单内的工具完成任务", tool.Name)
+			}
 			return s.activateBusinessTool(tool, businessToolDefinition(tool))
 		}
 	}
@@ -444,6 +449,10 @@ func (s *reactEngineState) reloadBusinessToolIfUnchanged(toolID, name, callName 
 	for _, tool := range tools {
 		toolCallName := businessToolCallName(tool)
 		if (toolID != "" && tool.ToolID == toolID) || (name != "" && tool.Name == name) || (callName != "" && toolCallName == callName) {
+			// 自愈激活同样受子代理白名单约束（与 get_tool 同口径）。
+			if !agentToolRefAllows(s.req.agentToolRefs, tool) {
+				return model.Tool{}, false, "business tool is not loaded, call get_tool first"
+			}
 			prevFP, hadPrev := s.prevToolDefFingerprint[toolCallName]
 			if !hadPrev {
 				// 本会话此前没加载过该工具，模型上下文里没有它的 schema，仍要求先 get_tool。

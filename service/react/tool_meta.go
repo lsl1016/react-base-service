@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	llm "react-base-service/api/llm"
+	agentService "react-base-service/service/agent"
 	model "react-base-service/models/llm"
 	toolService "react-base-service/service/tool"
 )
@@ -149,6 +150,19 @@ func (s *reactEngineState) readOnlyViolationResult(call llm.ToolCall, tool model
 //   - 含 @none：全部拒绝（显式不继承任何业务工具）；
 //   - 含 @readonly：声明 readOnly 的工具放行；
 //   - 其余 refs 按 name/toolId 精确匹配。
-//
-// 实现随内置子智能体批次（service/agent）落库后接入 get_tool 激活路径。
-func agentToolRefAllowsPlaceholder() {}
+func agentToolRefAllows(refs []string, tool model.Tool) bool {
+	if len(refs) == 0 {
+		return true
+	}
+	refSet := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		refSet[strings.TrimSpace(ref)] = true
+	}
+	if refSet[agentService.AgentToolRefNone] {
+		return false
+	}
+	if refSet[agentService.AgentToolRefReadOnly] && businessToolMeta(tool).ReadOnly {
+		return true
+	}
+	return refSet[tool.Name] || refSet[tool.ToolID]
+}

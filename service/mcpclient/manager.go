@@ -38,8 +38,9 @@ type RegistryTool struct {
 
 // ToolConfigJSON 生成写入 tblLlmTool.config 的 JSON（tool_type=mcp）。
 // inputSchema 供 get_tool 校验与参数透出；outputSchema（如有）透出给模型理解返回结构；
-// mcpServer/mcpTool 供执行分发。
-func ToolConfigJSON(server, tool string, inputSchema, outputSchema map[string]any) (string, error) {
+// mcpServer/mcpTool 供执行分发；readOnly 声明工具只读（无外部副作用）——
+// repo kind 适配器（代码只读检索）的全体工具为 true，其余服务器未知语义按 false 保守处理。
+func ToolConfigJSON(server, tool string, inputSchema, outputSchema map[string]any, readOnly bool) (string, error) {
 	payload := map[string]any{
 		"mcpServer":   server,
 		"mcpTool":     tool,
@@ -47,6 +48,9 @@ func ToolConfigJSON(server, tool string, inputSchema, outputSchema map[string]an
 	}
 	if len(outputSchema) > 0 {
 		payload["outputSchema"] = outputSchema
+	}
+	if readOnly {
+		payload["readOnly"] = true
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -60,6 +64,19 @@ func orEmptyObject(schema map[string]any) map[string]any {
 		return map[string]any{"type": "object", "properties": map[string]any{}}
 	}
 	return schema
+}
+
+// serverKindReadOnly 判断一个运行中服务器的全部工具是否可整体声明只读：
+// 仅 repo kind（自研只读代码检索适配器：ws_<service>_* 工具族）成立；其余服务器工具语义未知，
+// 保守按可写（不同步声明 readOnly，避免只读域/白名单误放行写工具）。
+// 经可选接口取 Kind，测试替身等非 *Client 实现返回 false。
+func serverKindReadOnly(serverName string) bool {
+	client := GetServer(serverName)
+	kindAware, ok := client.(interface{ Kind() string })
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(kindAware.Kind()), "repo")
 }
 
 // Server 是一个 MCP 服务器的统一抽象：stdio（kind=repo）与 HTTP（kind=http）实现同一接口，
@@ -462,7 +479,7 @@ func upsertRegistryTool(ctx *gin.Context, callerKey, server string, tool Registr
 	if description == "" {
 		description = fmt.Sprintf("MCP tool %s/%s", server, tool.Tool)
 	}
-	configJSON, err := ToolConfigJSON(server, tool.Tool, tool.InputSchema, tool.OutputSchema)
+	configJSON, err := ToolConfigJSON(server, tool.Tool, tool.InputSchema, tool.OutputSchema, serverKindReadOnly(server))
 	if err != nil {
 		return err
 	}

@@ -143,6 +143,10 @@ func NewClient(cfg ServerConfig) (*Client, error) {
 // Name 返回服务器名。
 func (c *Client) Name() string { return c.name }
 
+// Kind 返回服务器传输类型（repo/http/http_sdk）；非 Client 实现（测试替身等）无此方法，
+// 同步侧经可选接口断言获取，取不到按未知语义保守处理。
+func (c *Client) Kind() string { return c.kind }
+
 type rpcRequest struct {
 	JSONRPC string `json:"jsonrpc"`
 	ID      int    `json:"id,omitempty"`
