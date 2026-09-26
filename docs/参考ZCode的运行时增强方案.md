@@ -165,3 +165,58 @@ WP4 / WP5（独立，可随时并行插入）
 - **不做运行时动态创建 agent 定义**：ZCode 的 Agent 工具允许临时拼 subagent_type；本仓库 agent 是带工具策略的治理对象（tblLlmAgent），模型凭空造 agent 会绕开治理。若需"清单外的专家"，走受控临时模板方向单独设计。
 - **不做本地文件系统工具（Read/Write/Edit/Glob/Grep）**：本仓库是服务端多租户运行时，本地文件语义不成立；代码执行已有 sandbox + `load_runtime_code`（P2-1 代码工作区）承担。
 - **不做兄弟智能体点对点消息总线**：兄弟间经父模型中转，可审计可归因（todo §四既有结论，维持）。
+
+---
+
+## 6. 实现说明（2026-09-27，WP1/WP2/WP3 + web_fetch 已落地）
+
+> 全量 go test 通过；前端 web/ 零改动。以下为实际落点与设计取舍，供联调与后续 WP4/WP5 参考。
+
+### 6.1 WP1 统一工具元数据（已落地）
+
+- **注册表**：`service/react/tool_meta.go`——`ToolMeta{ReadOnly, ConcurrentSafe, SideEffect, RiskLevel, TimeoutMs, MaxOutputBytes}` + `metaToolRegistry`，25 个内置工具全量登记（含新增 web_fetch）；`TestToolMetaRegistryCoversInternalTools` 保证 isInternalMetaTool 清单与注册表同步（新增工具漏登记会测试失败）。
+- **业务工具声明**：`service/tool/executor.go::ToolConfig` 扩展 `readOnly / riskLevel / maxOutputBytes`（`timeout_ms` 已有）；`businessToolMeta()` 解析，config 非法保守按可写/串行/全局预算。
+- **三项接线**：
+  1. 只读硬拦截：`runtimeRequest.enforceReadOnlyTools` 开启后，`executeServerTool` / `executeClientTool` 对非 readOnly 业务工具直接回错误结果（`readOnlyViolationResult`）；
+  2. 输出预算：`normalizeToolResultWithLimit`，`executeServerTool` 按业务工具 `config.maxOutputBytes` 覆盖全局 InlineLimitBytes（web_fetch 注册表值 20KB）；
+  3. 并发调度：`tool_dispatch.go::roundParallelism`——ConcurrentSafe 只读工具同轮并发上限 4；delegate_agent 并行仍严格跟随 `subagent.max_parallel`（默认 1=串行的成本语义保留）。
+
+### 6.2 WP2 内置子智能体（已落地）
+
+- **内置 profile**：`service/agent/builtin.go`——`general-purpose`（继承全部业务工具）/ `researcher`（`@readonly` 白名单 + `ReadOnly=1` 只读执行域）/ `report-writer`（`@none` + python_exec/displayFiles 数据加工）。物化为 `model.Agent` 值，`AgentID` 带 `builtin:` 前缀，不落库。
+- **同名覆盖**：`Runtime.FindVisible/Resolve` 合并规则 = DB 行在前 + 未被同 agent_key 遮蔽的内置在后；DB 同名行整体生效（`mergeBuiltinAgents`），engine 其余代码零改动获得覆盖语义。**行为只来自解析命中的定义，无任何按名分支**（ZCode profile.ts 纪律）。
+- **白名单 token**：`tools_json` 支持 `@none`（显式不继承业务工具，区别于空数组=继承全部的存量语义）与 `@readonly`（只保留 config.readOnly 业务工具），`FilterToolIndexSnapshot` 签名增加全量工具列表参数（`runtimeRequest.visibleTools` 随 run 传递）。
+- **只读执行域单调收紧**：`buildSubAgentRuntimeRequest` 中 `enforceReadOnlyTools = 父run开关 || agent.ReadOnly`——嵌套委派只能继承不能放宽。researcher 的只读保证是三层：白名单收敛 + 系统提示词禁止清单 + ToolMeta 硬拦截（第三层唯一可靠）。
+- **表结构**：`tblLlmAgent` 增 `read_only TINYINT DEFAULT 0`（init.sql 建表 + 存量 ALTER 注释），params 的 Create/Update/Resp 均已接入。
+- **delegate 描述**：内置项标注 `(built-in)`，token 渲染为「（仅只读业务工具）/（无业务工具）」。
+- 顺带修复历史缺口：`delegate_agent / send_message / memory_* / graph_memory_* / load_runtime_code` 此前未加入 `tool.reservedToolNames`（业务工具可与其同名），已补齐并由测试兜底。
+
+### 6.3 WP3 内置技能包（已落地）
+
+- **内容**：`service/skill/bundled-skills/`——manifest.json + 4 个技能（委派任务写作 / 大数据结果处理 / 业务工具两段式调用 / Python 数据分析），正文均从仓库既有调优文案沉淀。
+- **引擎+数据分离**：`service/skill/bundled.go`——`go:embed bundled-skills` 打进二进制；`EnsureBundledSkillsForCaller` 幂等导入（同 caller+name 活跃行即跳过，**用户覆盖优先、永不回写**），单条失败只记日志不阻断。
+- **两个触发点**：caller 创建（`service/caller/caller.go::RegisterCaller`）+ 服务启动为存量 caller 补种（`main.go` 异步调 `SeedBundledSkillsForAllCallers`，含 default 伪作用域）。生效路径与用户自建技能完全一致（skill 索引注入 + get_skill 按需加载 + triggers 关键词触发）。
+
+### 6.4 web_fetch（已落地，WP4 的第一步）
+
+- `service/react/web_fetch.go`：URL→下载（2MB 硬上限）→正文提取（HTML 去脚本/样式/标签+实体解码，文本类原样）→按 `max_content_runes`（默认 20000）截断回填，完整正文经 resultRef 分页续读。
+- 安全边界：仅 http/https；拒绝环回/私网/链路本地地址**字面量**与 localhost/.internal 后缀（重定向同样校验；DNS rebinding 不在本版防护范围，生产建议 egress 代理）；Content-Type 仅文本类。
+- 15 分钟内存缓存（同 URL 零成本重取）；conf 开关 `llm.react.web_fetch.enabled`（默认关，custom.yaml 已加示例）；软着陆窗口放行（只读）。
+- 与 ZCode 的差异：ZCode 抓取后用小快模型按 prompt 代答；本版返回提取正文（更通用），LLM 代答形态后续按需叠加。
+
+### 6.5 code-reader 只读代码调查员（2026-09-27 追加，参考 ZCode Explore）
+
+读代码工具链（`load_runtime_code` + 动态挂载的 `ws_<service>_*` 只读检索工具族：get_repo_map / find_symbol / get_file_symbols / find_references / search_code / search_pattern / list_files / read_file，符号类为 go/ast 声明级）此前只能靠 DB 自建 agent 使用，本次收编为第 4 个内置子智能体，并补齐两处执行缺口：
+
+1. **`code-reader` 内置 profile**（`service/agent/builtin.go`）：`@readonly` 业务工具白名单 + `ReadOnly=1` 只读执行域（非只读业务工具硬拦截）；系统提示词写明检索策略顺序（repo_map 全局认知 → 符号级定位优先于文本搜索 → read_file 精读殿后）、只读纪律（修改建议以文字+file:line 给出）与报告格式（结论 + file:line 证据 + commit）。`skills_json` 引用内置技能「代码工作区调查」。
+2. **MCP 同步补 readOnly 声明**（`service/mcpclient`）：`ToolConfigJSON` 增加 readOnly 参数——repo kind 适配器（自研只读代码检索服务）的工具同步时自动写 `readOnly:true`，其余 kind 未知语义保守不标。此前 ws_ 工具 config 无 readOnly，`@readonly` 白名单拣不到它们、只读域还会误杀。ws_ 服务器为临时拉起（无 DB 行），kind 判定走客户端可选接口断言（`Client.Kind()`），每次挂载重新同步即刷新存量行。
+3. **get_tool 白名单硬执行**（补 WP2 缺口）：原实现只过滤索引快照（模型"看到什么"），`get_tool` 活查询不校验白名单——子代理按名字猜工具仍可激活。新增 `runtimeRequest.agentToolRefs`（子 run 从 agent 定义继承，未声明时继承父 run 限制，单调收紧）+ `agentToolRefAllows()`，`get_tool` 与 `reloadBusinessToolIfUnchanged` 自愈激活路径统一硬检查。**注意这是对存量 DB agent 的行为收紧**：此前配置了 tools_json 白名单的 agent，白名单外工具从"索引里看不到但能猜名加载"变为"激活即拒绝"。
+4. **内置技能 +1**：`workspace-code-investigation`（代码工作区调查）——工作区生命周期、8 个检索工具的选用顺序表、两段式调用、只读纪律、报告格式（file:line + commit）；`service/skill/bundled_test.go` 增加 manifest 完整性与技能名同步测试（code-reader 白名单引用的名字改动会在此失败提醒）。
+
+### 6.6 后续待办
+
+- **WP4 剩余**：web_search（provider 原生能力位 + 服务端工具配置下发）；
+- **WP5**：config.permissionRules 的 deny/allow 两端（deny 优先于询问）；
+- **面板**：内置 agent 可视化列出与一键 fork（当前 fork 方式 = 面板新建同 agent_key 的 DB 行）；agent/skill 面板的 read_only 字段与技能来源展示；
+- **借鉴 ZCode profile 的剩余能力面**：`disallowedTools` deny 列表（tools 白名单之外的减法）、Explore 式动态工具面变体（配置驱动换白名单+换提示词）、project 来源 profile 禁止经 frontmatter 提升权限；
+- **P1（todo）**：wait_agent join 原语（与本方案正交）。
