@@ -56,7 +56,7 @@ const (
 // isInternalMetaTool 判断工具名是否属于 Runtime 内置 Meta Tool，内置工具不走外部工具注册表。
 func isInternalMetaTool(name string) bool {
 	switch name {
-	case metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolAskQuestion, metaToolDisplayFiles, metaToolResolveAsyncTask, metaToolGetAsyncTask, metaToolReadAttachment, metaToolInspectAttachment, metaToolCreatePlan, metaToolDelegateAgent, metaToolSendMessage, metaToolLoadRuntimeCode, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite:
+	case metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolAskQuestion, metaToolDisplayFiles, metaToolResolveAsyncTask, metaToolGetAsyncTask, metaToolReadAttachment, metaToolInspectAttachment, metaToolCreatePlan, metaToolDelegateAgent, metaToolSendMessage, metaToolLoadRuntimeCode, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolWebFetch:
 		return true
 	default:
 		return false
@@ -89,6 +89,10 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 	// workspace.enabled=true 时注册 load_runtime_code（P2-1 代码工作区入口）。
 	if conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled() {
 		definitions = append(definitions, loadRuntimeCodeDefinition())
+	}
+	// web_fetch.enabled=true 时注册网页抓取工具（WP4，URL→正文提取→按预算回填）。
+	if conf.CustomConf.LLM.React.WebFetch.WebFetchEnabled() {
+		definitions = append(definitions, webFetchToolDefinition())
 	}
 	// memory.enabled=true 时注册长期记忆三工具（list/read/write），关闭时模型不可见。
 	if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
@@ -381,6 +385,8 @@ func (s *reactEngineState) executeInternalToolContent(call llm.ToolCall, step in
 		return noToolMeta(s.executeGraphMemorySearch(call.Input))
 	case metaToolGraphMemoryWrite:
 		return noToolMeta(s.executeGraphMemoryWrite(call.Input))
+	case metaToolWebFetch:
+		return noToolMeta(s.executeWebFetch(call.Input))
 	default:
 		return "", nil, true, fmt.Errorf("unknown internal meta tool: %s", call.Name)
 	}

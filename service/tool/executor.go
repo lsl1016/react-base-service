@@ -49,6 +49,13 @@ type ToolConfig struct {
 	// RiskPatterns 是 confirm_risky 模式的自定义风险正则（大小写不敏感），
 	// 匹配目标为工具名 + 序列化入参；为空时使用内置默认风险表（drop/alter/kill 等）。
 	RiskPatterns []string `json:"riskPatterns,omitempty"`
+	// ReadOnly 声明工具只读（无外部副作用）：可进入只读执行域（如只读子代理），
+	// 并标记为同轮可并发。未声明时保守按可写处理。
+	ReadOnly bool `json:"readOnly,omitempty"`
+	// RiskLevel 是展示用风险等级（low/medium/high）；为空时按可写工具默认 medium。
+	RiskLevel string `json:"riskLevel,omitempty"`
+	// MaxOutputBytes 是单次执行结果的模型回填字节上限；0 = 跟随全局 InlineLimitBytes。
+	MaxOutputBytes int `json:"maxOutputBytes,omitempty"`
 }
 
 // AsyncTaskConfig 描述异步 Tool 所属的调度系统，不暴露 MQ、接口或状态查询 Tool 等实现细节。

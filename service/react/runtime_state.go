@@ -60,6 +60,9 @@ type runtimeRequestCapabilities struct {
 	memoryContext           string
 	graphMemoryContext      string
 	agents                  []model.Agent
+	// visibleTools 是 run 装配时的全量可见业务工具（WP2）：agent 工具白名单的 @readonly
+	// token 需要按工具 config 判定只读，快照索引里没有 config，故随 request 传递。
+	visibleTools []model.Tool
 }
 
 // runtimeRequestExecution 是多 Agent / HITL 等执行期策略。
@@ -69,6 +72,14 @@ type runtimeRequestExecution struct {
 	clientHub           *clientMessageHub
 	agentPermissionMode string
 	tokenBudget         int
+	// enforceReadOnlyTools 是只读执行域开关（WP2 只读子代理）：开启后本 run 内一切
+	// 非 readOnly 声明的业务工具（含 client 工具）被硬拦截。单调收紧：子 run 取
+	// 「父 run 开关 || 自身 agent 定义」，任何嵌套层级都不能放宽。
+	enforceReadOnlyTools bool
+	// agentToolRefs 是子代理业务工具白名单的原始 refs（含 @none/@readonly 约定 token）：
+	// get_tool/自愈激活路径的硬检查依据（索引快照过滤只控制模型"看到什么"，这里控制"能加载什么"）。
+	// nil = 不限制（外层 run / 白名单为空=继承全部的存量语义）。
+	agentToolRefs []string
 	// promotePendingInputID 是 Steering S2 自动续跑时待晋升的排队输入账本 ID（0=无）；
 	// 在 createReactRunContext 事务内与 run 创建、用户消息落库一起原子置 guided。
 	promotePendingInputID uint

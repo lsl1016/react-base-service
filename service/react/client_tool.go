@@ -91,6 +91,10 @@ func (s *reactEngineState) executeClientToolCalls(calls []reactClientToolCall, s
 // executeClientTool 是单 Client Tool 的兼容执行路径。
 // 其状态机与批量版本一致；保留它是为了让 Business Tool 分发可以在单工具场景直接复用。
 func (s *reactEngineState) executeClientTool(call llm.ToolCall, tool model.Tool, step int, description string) (llm.ToolResultContent, error) {
+	// 只读执行域硬拦截（WP2）：client 工具在前端执行，展示/交互前同样拒绝非只读工具。
+	if blocked := s.readOnlyViolationResult(call, tool, executedByClient); blocked != nil {
+		return *blocked, nil
+	}
 	clientEmitter := s.clientToolEmitter()
 	_ = clientEmitter.EmitStep(step, EventClientToolUseStart, params.ReactClientToolUseStartPayload{ToolUseID: call.ID, ToolName: tool.Name, ToolInput: json.RawMessage(call.Input), Description: strings.TrimSpace(description), FrontendHint: clientToolFrontendHint(tool), Status: toolExecutionStatusWaiting})
 	pendingJSON, _ := json.Marshal([]string{call.ID})

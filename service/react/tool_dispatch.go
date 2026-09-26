@@ -19,16 +19,17 @@ import (
 
 // executeToolCalls 是“模型 ToolCall -> Runtime 执行”的统一调度入口。
 //
-// 默认按模型返回顺序串行执行，保证外部副作用顺序和 tool_result 回填顺序稳定；只有 delegate_agent
-// 被允许并行，因为它创建隔离的子 ReactRun。即使并行执行，最终 results 仍按原 ToolCall 索引回填，
+// 默认按模型返回顺序串行执行，保证外部副作用顺序和 tool_result 回填顺序稳定；可并行集合
+// （delegate_agent + ToolMeta.ConcurrentSafe 只读/隔离型工具，WP1 统一元数据）在多调用同轮时
+// 并发执行。即使并行执行，最终 results 仍按原 ToolCall 索引回填，
 // 因此下一轮模型看到的 tool_result 顺序不会被 goroutine 完成先后打乱。
 //
 // 闭合治理（Phase 1）：本函数返回的 results 永远与 calls 等长且每个槽位都有配对 ToolUseID——
 // 中断/出错时由 completeToolRoundResults 收口补全（中断登记优先，其次合成"状态未知"），
 // 串行中断后的未开始调用直接合成"未执行"，让引擎层无论如何都能为本轮 tool_use 落一条配对结果。
 //
-// delegate_agent 调用之间可并行（agent 委派无副作用），受 subagent.max_parallel 限制；
-// 其余工具保持串行；并行度 1（默认）时与历史完全串行等价。
+// 并行集合受 semaphore 限制：delegate 上限 subagent.max_parallel，只读类工具固定 4；
+// 整体并行度 1（无可并行调用）时与历史完全串行等价。
 // 并行委派的多个子 run 同时等待用户输入（ask_question/client tool）时，上行消息经
 // clientHub 按 toolUseId 路由到各自的等待者（并行 HITL，见 client_hub.go）。
 func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]llm.ToolResultContent, error) {
@@ -40,7 +41,8 @@ func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]l
 		results[i] = s.duplicateToolCallResult(calls[i])
 	}
 
-	if s.delegateParallelism(len(calls)) <= 1 {
+	parallelism := s.roundParallelism(calls, duplicates)
+	if parallelism <= 1 {
 		return s.executeToolCallsSerial(calls, results, duplicates, step)
 	}
 
@@ -57,9 +59,9 @@ func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]l
 			firstErr = err
 		}
 	}
-	sem := make(chan struct{}, s.delegateParallelism(len(calls)))
+	sem := make(chan struct{}, parallelism)
 	for i, call := range calls {
-		if call.Name != metaToolDelegateAgent || duplicates[i] {
+		if !s.isParallelizableCall(call, duplicates[i]) {
 			continue
 		}
 		wg.Add(1)
@@ -77,7 +79,7 @@ func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]l
 	lastSerialIndex := -1
 	serialStopped := false
 	for i, call := range calls {
-		if call.Name == metaToolDelegateAgent || duplicates[i] {
+		if s.isParallelizableCall(call, duplicates[i]) {
 			continue
 		}
 		start := time.Now()
@@ -101,6 +103,54 @@ func (s *reactEngineState) executeToolCalls(calls []llm.ToolCall, step int) ([]l
 	return completed, firstErr
 }
 
+// isParallelizableCall 判断一次调用是否进入并行批次（重复调用槽位已填充，永不并行）：
+//   - delegate_agent 仅当配置放行（subagent.enabled && max_parallel>1）——多委派并行是显式配置的成本决策，默认串行；
+//   - 其余工具按 ToolMeta.ConcurrentSafe（只读/隔离型，无副作用竞争）。
+func (s *reactEngineState) isParallelizableCall(call llm.ToolCall, duplicate bool) bool {
+	if duplicate {
+		return false
+	}
+	if call.Name == metaToolDelegateAgent {
+		if s.req == nil || !s.profile.AllowSubagent {
+			return false
+		}
+		cfg := conf.GetReactRuntimeConfig().SubAgent
+		return cfg.SubAgentEnabled() && cfg.MaxParallel > 1
+	}
+	return s.isConcurrentSafeTool(call)
+}
+
+// roundParallelism 返回本轮并行度：无可并行调用返回 1（走纯串行路径）；
+// 并行批次含已放行的 delegate 时取 max(subagent.max_parallel, 只读类并发上限)，否则固定只读上限。
+func (s *reactEngineState) roundParallelism(calls []llm.ToolCall, duplicates map[int]bool) int {
+	parallelCount, delegateAllowed := 0, false
+	for i, call := range calls {
+		if s.isParallelizableCall(call, duplicates[i]) {
+			parallelCount++
+			if call.Name == metaToolDelegateAgent {
+				delegateAllowed = true
+			}
+		}
+	}
+	if parallelCount <= 1 {
+		return 1
+	}
+	limit := concurrentSafeParallelLimit
+	if delegateAllowed {
+		if mp := conf.GetReactRuntimeConfig().SubAgent.MaxParallel; mp > limit {
+			limit = mp
+		}
+	}
+	if parallelCount < limit {
+		return parallelCount
+	}
+	return limit
+}
+
+// concurrentSafeParallelLimit 是 ConcurrentSafe（只读）工具同轮并发的固定上限：
+// 只读调用无副作用竞争，4 路已足够摊薄多源检索延迟，不随配置放大。
+const concurrentSafeParallelLimit = 4
+
 // executeToolCallsSerial 串行执行路径（含去重跳过）；出错时后续调用补"未执行"结果。
 func (s *reactEngineState) executeToolCallsSerial(calls []llm.ToolCall, results []llm.ToolResultContent, duplicates map[int]bool, step int) ([]llm.ToolResultContent, error) {
 	for i, call := range calls {
@@ -120,28 +170,15 @@ func (s *reactEngineState) executeToolCallsSerial(calls []llm.ToolCall, results 
 }
 
 // fillUnexecutedSerialSuffix 把串行执行停止点之后的未开始调用补成"未执行"结果（确定无副作用）。
-// 并行路径（skipDelegates=true）跳过 delegate_agent：委派 goroutine 在停止点前已全部启动并运行到终态，
-// 其结果槽位由 completeToolRoundResults 收口补全。
-func (s *reactEngineState) fillUnexecutedSerialSuffix(calls []llm.ToolCall, results []llm.ToolResultContent, duplicates map[int]bool, lastExecuted int, skipDelegates bool) {
+// 并行路径（skipParallel=true）跳过全部并行批次调用（delegate_agent + ConcurrentSafe 工具）：
+// 这些 goroutine 在停止点前已全部启动并运行到终态，其结果槽位由 completeToolRoundResults 收口补全。
+func (s *reactEngineState) fillUnexecutedSerialSuffix(calls []llm.ToolCall, results []llm.ToolResultContent, duplicates map[int]bool, lastExecuted int, skipParallel bool) {
 	for i := lastExecuted + 1; i < len(calls); i++ {
-		if duplicates[i] || skipDelegates && calls[i].Name == metaToolDelegateAgent || strings.TrimSpace(results[i].ToolUseID) != "" {
+		if duplicates[i] || skipParallel && s.isParallelizableCall(calls[i], false) || strings.TrimSpace(results[i].ToolUseID) != "" {
 			continue
 		}
 		results[i] = s.synthesizeUnexecutedToolResult(calls[i], toolUnexecutedContent)
 	}
-}
-
-// delegateParallelism 返回本轮 delegate_agent 的并行度：
-// 仅当同轮存在多个委派调用、执行档案放行且配置 max_parallel>1 时取配置值，否则 1。
-func (s *reactEngineState) delegateParallelism(callCount int) int {
-	if callCount <= 1 || s.req == nil || !s.profile.AllowSubagent {
-		return 1
-	}
-	cfg := conf.GetReactRuntimeConfig().SubAgent
-	if !cfg.SubAgentEnabled() || cfg.MaxParallel <= 1 {
-		return 1
-	}
-	return cfg.MaxParallel
 }
 
 // metricToolName 解析用于指标标签的工具名：execute_tool 反解入参里的业务工具名，其余用元工具名。
@@ -209,6 +246,11 @@ func (s *reactEngineState) executeToolCall(call llm.ToolCall, step int) (llm.Too
 // 这样新增新的服务端 Tool Transport 时，不需要修改 ReAct 主循环。
 // HTTP/MCP 传输细节由 service/tool Runtime 统一负责；本层只保留确认、事件、取消、resultRef 与异步任务等 Agent Runtime 语义。
 func (s *reactEngineState) executeServerTool(call llm.ToolCall, tool model.Tool, step int, description string) (llm.ToolResultContent, error) {
+	// 只读执行域硬拦截（WP2）：enforceReadOnlyTools 的 run 内，非 readOnly 声明的服务端工具直接拒绝。
+	if blocked := s.readOnlyViolationResult(call, tool, executedByServer); blocked != nil {
+		_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: blocked.Content, IsError: true, ExecutedBy: executedByServer, Status: toolExecutionStatusRejected, DurationMs: 0})
+		return *blocked, nil
+	}
 	_ = s.emitter.EmitStep(step, EventToolUseStart, params.ReactToolUseStartPayload{ToolUseID: call.ID, ToolName: tool.Name, ToolInput: json.RawMessage(call.Input), Description: strings.TrimSpace(description), ExecutedBy: executedByServer, Status: toolExecutionStatusRunning})
 	start := time.Now()
 
@@ -246,7 +288,8 @@ func (s *reactEngineState) executeServerTool(call llm.ToolCall, tool model.Tool,
 	}
 
 	content := execution.Content
-	normalized := normalizeToolResult(call.ID, content, err != nil, executedByServer)
+	// 输出预算按工具声明差异化（WP1）：config.maxOutputBytes 覆盖全局 InlineLimitBytes。
+	normalized := normalizeToolResultWithLimit(call.ID, content, err != nil, executedByServer, businessToolMeta(tool).MaxOutputBytes)
 	if err != nil {
 		normalized.Content = err.Error()
 	}

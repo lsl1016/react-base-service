@@ -24,6 +24,8 @@ func (p ExecutionProfile) allowsInternalTool(name string) bool {
 		return p.AllowMemory
 	case metaToolGraphMemorySearch, metaToolGraphMemoryWrite:
 		return p.AllowGraphMemory
+	case metaToolWebFetch:
+		return p.AllowWebFetch
 	default:
 		return false
 	}

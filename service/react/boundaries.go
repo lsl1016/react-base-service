@@ -86,6 +86,7 @@ var softLandingAllowedTools = map[string]bool{
 	metaToolMemoryList:        true,
 	metaToolMemoryRead:        true,
 	metaToolGraphMemorySearch: true,
+	metaToolWebFetch:          true,
 }
 
 // maybeEnterSoftLanding 在每轮模型调用前判定是否进入软着陆收尾窗口。

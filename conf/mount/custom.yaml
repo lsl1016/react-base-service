@@ -136,6 +136,13 @@ llm:
       git_timeout_sec: 120                # 单次 git 子操作超时
       allowed_source_prefixes:            # 来源白名单（按前缀匹配）
         - 'C:/Users/keke/Desktop/xm/'     # 本地开发/测试用；生产换内部 git 前缀
+    # 内置 web_fetch 工具（WP4 前置）：URL 抓取 → 正文提取 → 按预算回填；未配置默认关闭。
+    # 只允许公网 http/https（拒绝环回/私网字面量），完整正文经 resultRef 落库可分页续读。
+    web_fetch:
+      enabled: true
+      timeout_sec: 60          # 单次抓取超时
+      max_content_runes: 20000 # 提取正文回填上限（超出部分走 resultRef）
+      cache_ttl_sec: 900       # 同 URL 结果缓存秒数（负数禁用缓存）
     # 子 Agent 委派（delegate_agent）：开启前需先执行 sql/init.sql 中 tblLlmAgent 建表；
     # 未配置默认关闭（不注册 delegate_agent、不解析 agent 资源，行为与历史版本一致）。
     subagent:

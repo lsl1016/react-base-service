@@ -117,6 +117,8 @@ type ReactRuntimeConfig struct {
 	// Steering 控制 Steering（运行中引导/排队）能力；未配置时默认关闭，
 	// 运行中新用户消息保持历史"硬拒绝"行为（Session与Steering机制借鉴方案 S1/S2）。
 	Steering ReactSteeringConfig `yaml:"steering"`
+	// WebFetch 控制内置 web_fetch 工具（URL 抓取→正文提取→按预算回填）；未配置时默认关闭。
+	WebFetch ReactWebFetchConfig `yaml:"web_fetch"`
 }
 
 // ReactSteeringConfig Steering 配置：guide 引导注入与 queue 排队（S2）分开关。
@@ -248,6 +250,57 @@ func (c ReactWorkspaceConfig) WorkspaceEnabled() bool {
 	}
 	return false
 }
+
+// ReactWebFetchConfig 内置 web_fetch 工具配置（参考 ZCode WebFetch：URL→正文提取→按预算回填）。
+type ReactWebFetchConfig struct {
+	// Enabled 控制总开关；未配置默认 false（不注册 web_fetch，行为与历史一致）。
+	Enabled *bool `yaml:"enabled"`
+	// TimeoutSec 是单次抓取的超时秒数；0 = 默认 60s。
+	TimeoutSec int `yaml:"timeout_sec"`
+	// MaxContentRunes 是提取正文回填给模型的字符上限（超出部分经 resultRef 分页读取）；0 = 默认 20000。
+	MaxContentRunes int `yaml:"max_content_runes"`
+	// CacheTTLSec 是同 URL 抓取结果的内存缓存秒数；0 = 默认 900s（15 分钟），负数禁用缓存。
+	CacheTTLSec int `yaml:"cache_ttl_sec"`
+}
+
+const (
+	defaultWebFetchTimeoutSec     = 60
+	defaultWebFetchMaxContentRunes = 20000
+	defaultWebFetchCacheTTLSec     = 900
+)
+
+// WebFetchEnabled 解析 web_fetch.enabled：未配置默认 false。
+func (c ReactWebFetchConfig) WebFetchEnabled() bool {
+	if c.Enabled != nil {
+		return *c.Enabled
+	}
+	return false
+}
+
+// EffectiveTimeoutSec 返回抓取超时秒数（带默认值兜底）。
+func (c ReactWebFetchConfig) EffectiveTimeoutSec() int {
+	if c.TimeoutSec > 0 {
+		return c.TimeoutSec
+	}
+	return defaultWebFetchTimeoutSec
+}
+
+// EffectiveMaxContentRunes 返回正文字符上限（带默认值兜底）。
+func (c ReactWebFetchConfig) EffectiveMaxContentRunes() int {
+	if c.MaxContentRunes > 0 {
+		return c.MaxContentRunes
+	}
+	return defaultWebFetchMaxContentRunes
+}
+
+// EffectiveCacheTTLSec 返回缓存 TTL 秒数；负数表示禁用缓存。
+func (c ReactWebFetchConfig) EffectiveCacheTTLSec() int {
+	if c.CacheTTLSec != 0 {
+		return c.CacheTTLSec
+	}
+	return defaultWebFetchCacheTTLSec
+}
+
 
 // ReactSubAgentConfig 子 Agent 委派配置：主 Agent 经 delegate_agent 把子任务派给
 // 注册表中的专家子 Agent，引擎按 agent 定义装配隔离子 run 执行。

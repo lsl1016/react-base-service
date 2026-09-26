@@ -25,6 +25,9 @@ type ExecutionProfile struct {
 	// AllowWorkspace 控制 load_runtime_code（P2-1 代码工作区入口）；外层/子 run 跟随
 	// workspace.enabled 配置，reflection 等受限执行域恒关闭。
 	AllowWorkspace bool
+	// AllowWebFetch 控制 web_fetch（WP4 网页抓取）；外层/子 run 跟随 web_fetch.enabled 配置，
+	// reflection 等受限执行域恒关闭。
+	AllowWebFetch bool
 	// AllowAnalysisTools 控制 read_tool_result/inspect_data/python_exec 等分析类内置工具；
 	// 主对话默认开启，reflection 等受限执行域关闭。
 	AllowAnalysisTools      bool
@@ -48,6 +51,7 @@ func outerExecutionProfile() ExecutionProfile {
 		// 经 GetReactRuntimeConfig 取值以合并管理面板「运行时配置」的 DB 覆盖（与 delegate/装配同口径）。
 		AllowSubagent:           conf.GetReactRuntimeConfig().SubAgent.SubAgentEnabled(),
 		AllowWorkspace:          conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled(),
+		AllowWebFetch:           conf.CustomConf.LLM.React.WebFetch.WebFetchEnabled(),
 		AllowAnalysisTools:      true,
 		InjectAsyncTaskReminder: true,
 		RestoreOuterHistory:     true,

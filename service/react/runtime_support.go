@@ -51,6 +51,14 @@ func (r NormalizedToolResult) LLMContent() string {
 // normalizeToolResult 将原始工具输出转成模型可消费的结果；所有结果都生成 resultRef 并落库，
 // 大结果额外做 preview 截断以控制上下文体积。
 func normalizeToolResult(toolUseID, content string, isError bool, executedBy string) NormalizedToolResult {
+	return normalizeToolResultWithLimit(toolUseID, content, isError, executedBy, 0)
+}
+
+// normalizeToolResultWithLimit 是 normalizeToolResult 的按工具预算版（WP1 统一元数据）：
+// maxOutputBytes > 0 时覆盖全局 InlineLimitBytes 作为截断阈值（业务工具 config.maxOutputBytes、
+// 内置工具注册表 MaxOutputBytes）；0 = 跟随全局。预览长度仍以全局 PreviewLimit 为上限，
+// 预算更小时按预算收紧，保证回填内容不超过声明上限。
+func normalizeToolResultWithLimit(toolUseID, content string, isError bool, executedBy string, maxOutputBytes int) NormalizedToolResult {
 	toolResultCfg := conf.GetReactRuntimeConfig().ToolResult
 	result := NormalizedToolResult{
 		ToolUseID:  toolUseID,
@@ -63,10 +71,18 @@ func normalizeToolResult(toolUseID, content string, isError bool, executedBy str
 	if isError {
 		result.Status = toolExecutionStatusError
 	}
+	inlineLimit := toolResultCfg.InlineLimitBytes
+	previewLimit := toolResultCfg.PreviewLimit
+	if maxOutputBytes > 0 {
+		inlineLimit = maxOutputBytes
+		if maxOutputBytes < previewLimit {
+			previewLimit = maxOutputBytes
+		}
+	}
 	// 是否截断仍以字节阈值判定（控制上下文/存储体积）；一旦截断，预览长度与省略量统一按 rune 计量，
 	// 与 read_tool_result 的 offset/limit/nextOffset 坐标系保持一致。
-	if len([]byte(content)) > toolResultCfg.InlineLimitBytes {
-		preview := headRunes(content, toolResultCfg.PreviewLimit)
+	if len([]byte(content)) > inlineLimit {
+		preview := headRunes(content, previewLimit)
 		result.Content = preview
 		result.Truncated = true
 		result.OmittedChars = utf8.RuneCountInString(content) - utf8.RuneCountInString(preview)
