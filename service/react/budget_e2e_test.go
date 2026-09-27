@@ -77,7 +77,7 @@ func TestSubAgentBudgetE2E(t *testing.T) {
 		RouteValues: []string{},
 		Type:        model.ReactSessionTypeChat,
 		UserPrompt:  "请立即调用 delegate_agent 工具，把任务「回答 ok」委派给子代理 e2e-budget-probe（agent_key: e2e-budget-probe），拿到结论或失败原因后向用户转述。",
-		ModelKey:    "claude",
+		ModelKey:    e2eModelKey(),
 		MaxSteps:    4,
 	}
 	result, err := RunWithClientReaderContext(ctx, ctx.Request.Context(), payload, "", func(event params.ReactEvent) error {

@@ -65,7 +65,7 @@ func TestSkillTriggerE2E(t *testing.T) {
 			RouteValues: []string{},
 			Type:        model.ReactSessionTypeChat,
 			UserPrompt:  prompt,
-			ModelKey:    "claude",
+			ModelKey:    e2eModelKey(),
 			MaxSteps:    3,
 		}, "", func(event params.ReactEvent) error {
 			events = append(events, event)

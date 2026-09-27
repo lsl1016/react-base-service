@@ -995,6 +995,9 @@ export class EventReducer {
           afterContent: step.contentStarted,
           planConfirmationStatus: p.toolName === 'create_plan' ? 'pending' : undefined,
           agentPath: event.agentPath,
+          // ToolMeta 声明的风险/只读徽标（与 plan 路径同口径；缺省不展示）
+          riskLevel: p.riskLevel,
+          readOnly: p.readOnly,
         };
         step.toolCalls.push(tc);
         this.toolCallIndex.set(p.toolUseId, {
@@ -1034,6 +1037,10 @@ export class EventReducer {
             tc.isError = p.isError;
             tc.durationMs = p.durationMs;
             tc.confirmReason = undefined;
+            // ToolMeta 声明的徽标与 UI 旁路（与 plan 路径同口径；回放场景 end 事件独立展示）
+            if (p.meta) tc.meta = p.meta;
+            if (p.riskLevel) tc.riskLevel = p.riskLevel;
+            if (p.readOnly) tc.readOnly = p.readOnly;
             if (isPlanExecutionToolName(tc.toolName)) {
               const view = parsePlanPublicView(p.content);
               if (view) {

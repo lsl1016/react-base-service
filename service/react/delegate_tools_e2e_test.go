@@ -171,7 +171,7 @@ func runE2EConversation(t *testing.T, ctx *gin.Context, prompt string, maxSteps 
 		RouteValues: []string{},
 		Type:        model.ReactSessionTypeChat,
 		UserPrompt:  prompt,
-		ModelKey:    "claude",
+		ModelKey:    e2eModelKey(),
 		MaxSteps:    maxSteps,
 	}
 	events := make([]params.ReactEvent, 0, 128)

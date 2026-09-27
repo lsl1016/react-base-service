@@ -134,8 +134,9 @@ func TestShouldDeliverBackgroundNotification(t *testing.T) {
 	}
 }
 
-// async_launched 文案纪律（对齐 ZCode agent.ts:153-171）：告知 runId、说明自动通知、
-// 要求模型简要转达并结束本轮回复——避免父模型空转等待或编造子任务结论。
+// async_launched 文案纪律（对齐 ZCode agent.ts:153-171）：告知 runId、说明自动通知；
+// wait_agent 与"结束本轮回复"条件并列——本轮后续需要结果时立即收割，暂不需要时
+// 简要转达后收尾——避免父模型空转等待或编造子任务结论。
 func TestRenderBackgroundDelegateLaunchedText(t *testing.T) {
 	text := renderBackgroundDelegateLaunchedText("ops-agent", "run_xyz")
 	for _, required := range []string{"ops-agent", "run_xyz", "自动回灌", "结束本轮回复"} {

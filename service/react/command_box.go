@@ -159,13 +159,14 @@ func mergeTaskNotificationContent(notices []runtimeNotification) string {
 }
 
 // renderBackgroundDelegateLaunchedText 是 background=true 时 delegate_agent 的工具结果：
-// async_launched 文案纪律（对齐 ZCode agent.ts）——给模型的指令是"简要转达并结束本轮回复"，
-// 不等待、不编造子任务结论；完成通知会自动回灌，需要主动等结果时用 wait_agent（P1）。
+// async_launched 文案纪律（对齐 ZCode agent.ts）——不等待、不编造子任务结论；完成通知会
+// 自动回灌。wait_agent 与"结束本轮回复"等权重并列：本轮后续就需要结果时立即收割，
+// 暂不需要时才转达后收尾，避免"结束回合"指令压过任务自身的等待需求。
 func renderBackgroundDelegateLaunchedText(agentKey, runID string) string {
 	return fmt.Sprintf(
-		"后台委派已启动：agent=%s, runId=%s。该子 Agent 正在后台独立执行，完成时会以系统通知自动回灌当前运行，"+
-			"无需轮询或等待；若后续某个步骤必须使用该子任务结果，可用 wait_agent（run_ids=[\"%s\"]）主动收割。"+
-			"请简要告知用户已启动该后台任务，并结束本轮回复。",
+		"后台委派已启动：agent=%s, runId=%s。该子 Agent 正在后台独立执行，完成时会以系统通知自动回灌当前运行，无需轮询；"+
+			"若本轮任务接下来就需要该结果，请立即用 wait_agent（run_ids=[\"%s\"]）主动收割后再继续，不要直接结束回合；"+
+			"若暂不需要，简要告知用户已启动该后台任务，即可结束本轮回复。",
 		agentKey, runID, runID)
 }
 

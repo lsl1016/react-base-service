@@ -222,14 +222,15 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 			return "", false, loopErr
 		}
 		// 子 run 失败（模型故障、超步数上限等）：软错误回给父模型，可自行调整后重试或换路。
+		// 结构化返回（含 runId/status/errorMessage），父模型凭 runId 即可走 continue_run_id 续跑。
 		metrics.ReactDelegationsTotal.WithLabelValues(agent.AgentKey, "error").Inc()
-		return fmt.Sprintf("子 Agent %s 执行失败: %s", agent.AgentKey, loopErr.Error()), true, nil
+		return s.subAgentErrorResult(agent.AgentKey, subRunID, loopErr.Error()), true, nil
 	}
 
 	finalResponse, err := subAgentFinalResponse(s.ctx, subRunID)
 	if err != nil {
 		metrics.ReactDelegationsTotal.WithLabelValues(agent.AgentKey, "no_response").Inc()
-		return fmt.Sprintf("子 Agent %s 未产生最终回复: %v", agent.AgentKey, err), true, nil
+		return s.subAgentErrorResult(agent.AgentKey, subRunID, fmt.Sprintf("未产生最终回复: %v", err)), true, nil
 	}
 	metrics.ReactDelegationsTotal.WithLabelValues(agent.AgentKey, "success").Inc()
 	zlog.Infof(s.ctx, "[React.Delegate] 子Agent run完成: parentRun=%s, subRun=%s, agentKey=%s", s.runID, subRunID, agent.AgentKey)
@@ -246,6 +247,26 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 		"finalResponse": finalResponse,
 	})
 	return string(resultPayload), false, nil
+}
+
+// subAgentErrorResult 构造失败委派的结构化返回（isError 工具结果）：在错误原文之外附带
+// runId 与终态 status（词汇与 wait_agent 快照/后台通知一致），父模型凭 runId 即可走
+// continue_run_id 续跑，而不是只有一句报错。
+func (s *reactEngineState) subAgentErrorResult(agentKey, subRunID, message string) string {
+	status := subRunStatusError
+	if run, runErr := model.GetReactRunByRunID(s.ctx, subRunID); runErr == nil && run != nil {
+		status = subRunFinalStatus(run)
+	}
+	payload, marshalErr := json.Marshal(map[string]string{
+		"agentKey":     agentKey,
+		"runId":        subRunID,
+		"status":       status,
+		"errorMessage": message,
+	})
+	if marshalErr != nil {
+		return fmt.Sprintf("子 Agent %s 执行失败: %s", agentKey, message)
+	}
+	return string(payload)
 }
 
 // backgroundDelegateOutcome 是后台子 run 终态的投递输入（完成监视 goroutine 汇总）。

@@ -105,7 +105,8 @@ mcp:
     # 与本机开发配置 conf/mount/custom.yaml 的 127.0.0.1 端点各写各的，工具同步进同一注册表）
     - name: mcpgw
       kind: http
-      endpoint: 'http://host.docker.internal:18080/api/mcp'
+      # 独立网关进程（cmd/mcp-gateway）挂载在 /mcp，见 mcpgateway.Bootstrap(engine, "/mcp")
+      endpoint: 'http://host.docker.internal:18080/mcp'
       headers:
         Authorization: 'Bearer demo-app-key:demo-app-secret-please-rotate'
       timeout_ms: 30000

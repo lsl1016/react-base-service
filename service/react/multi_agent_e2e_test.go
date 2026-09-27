@@ -279,7 +279,7 @@ func TestParallelDisconnectCascadeE2E(t *testing.T) {
 		RouteValues: []string{},
 		Type:        model.ReactSessionTypeChat,
 		UserPrompt:  "请在同一次回复中同时发起两次 delegate_agent 调用：①委派 hitl-a 确认水果；②委派 hitl-b 确认颜色。等它们提问后由我作答。",
-		ModelKey:    "claude",
+		ModelKey:    e2eModelKey(),
 		MaxSteps:    6,
 	}
 	result, err := RunWithClientReaderContext(ctx, ctx.Request.Context(), payload, "", writer, readClient)

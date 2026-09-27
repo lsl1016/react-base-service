@@ -99,6 +99,9 @@ func GetHistoryEvents(ctx *gin.Context, req params.ReactSessionEventsReq) (param
 	}
 
 	builder := newHistoryEventBuilder(sessionID, runs, messages)
+	builder.historyCtx = ctx
+	builder.historyCallerKey = session.CallerKey
+	builder.toolMetaCache = make(map[string]ToolMeta)
 	events := builder.Build()
 	return params.ReactSessionEventsResp{SessionID: session.SessionID, Title: session.Title, Events: events}, nil
 }
@@ -125,6 +128,11 @@ type historyEventBuilder struct {
 	currentRunID               string
 	runHasMessages             map[string]bool
 	closedRunTerminal          map[string]bool
+	// ToolMeta 徽标回放支持：历史事件由消息记录重建（原始 WS payload 不落库），
+	// 内置工具查注册表、业务工具按会话 caller 查库，解析结果按工具名缓存。
+	historyCtx      *gin.Context
+	historyCallerKey string
+	toolMetaCache   map[string]ToolMeta
 	contextMessages            []llm.ChatMessage
 	contextMessageRefs         [][]reactMessageRef
 	contextUsedTokensByRunID   map[string]int
@@ -374,6 +382,7 @@ func (b *historyEventBuilder) appendToolUseStartEvent(message model.ReactMessage
 	if part.Name == metaToolAskQuestion {
 		status = "waiting"
 	}
+	toolMeta := b.historyToolMeta(eventInput.ToolName)
 	b.appendStepEvent(message.StepIndex, EventToolUseStart, message.RunID, params.ReactToolUseStartPayload{
 		ToolUseID:   part.ID,
 		ToolName:    eventInput.ToolName,
@@ -381,7 +390,40 @@ func (b *historyEventBuilder) appendToolUseStartEvent(message model.ReactMessage
 		Description: eventInput.Description,
 		ExecutedBy:  executedBy,
 		Status:      status,
+		RiskLevel:   toolMeta.RiskLevel,
+		ReadOnly:    toolMeta.ReadOnly,
 	}, message.CreatedAt)
+}
+
+// historyToolMeta 历史回放路径的 ToolMeta 解析：内置工具查注册表，业务工具按会话 caller
+// 查注册工具行（businessToolMeta 解析 config 声明）；查不到回退零值（保守不标）。
+func (b *historyEventBuilder) historyToolMeta(toolName string) ToolMeta {
+	if toolName == "" {
+		return ToolMeta{}
+	}
+	if isInternalMetaTool(toolName) {
+		return toolMetaForName(toolName)
+	}
+	if meta, ok := b.toolMetaCache[toolName]; ok {
+		return meta
+	}
+	meta := ToolMeta{}
+	if b.historyCtx != nil {
+		tools, err := model.ListToolsByCaller(b.historyCtx, b.historyCallerKey)
+		if err == nil {
+			for i := range tools {
+				if tools[i].Name == toolName {
+					meta = businessToolMeta(tools[i])
+					break
+				}
+			}
+		}
+	}
+	if b.toolMetaCache == nil {
+		b.toolMetaCache = make(map[string]ToolMeta)
+	}
+	b.toolMetaCache[toolName] = meta
+	return meta
 }
 
 type historyToolUseStartInput struct {
@@ -494,6 +536,7 @@ func (b *historyEventBuilder) appendToolResultEvents(message model.ReactMessage)
 				}},
 			}, message.CreatedAt)
 		} else {
+			endToolMeta := b.historyToolMeta(b.toolNameByUse[result.ToolUseID])
 			b.appendStepEvent(message.StepIndex, EventToolUseEnd, message.RunID, params.ReactToolUseEndPayload{
 				ToolUseID:    result.ToolUseID,
 				Content:      result.Content,
@@ -505,6 +548,8 @@ func (b *historyEventBuilder) appendToolResultEvents(message model.ReactMessage)
 				Status:       normalizeToolStatus(result.Status, result.IsError),
 				DurationMs:   0,
 				Meta:         toolMeta[result.ToolUseID],
+				RiskLevel:    endToolMeta.RiskLevel,
+				ReadOnly:     endToolMeta.ReadOnly,
 			}, message.CreatedAt)
 		}
 		toolName := b.toolNameByUse[result.ToolUseID]
