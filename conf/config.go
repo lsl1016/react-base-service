@@ -119,6 +119,8 @@ type ReactRuntimeConfig struct {
 	Steering ReactSteeringConfig `yaml:"steering"`
 	// WebFetch 控制内置 web_fetch 工具（URL 抓取→正文提取→按预算回填）；未配置时默认关闭。
 	WebFetch ReactWebFetchConfig `yaml:"web_fetch"`
+	// WebSearch 控制内置 web_search 工具（外部搜索服务适配器，当前支持 searxng）；未配置时默认关闭。
+	WebSearch ReactWebSearchConfig `yaml:"web_search"`
 }
 
 // ReactSteeringConfig Steering 配置：guide 引导注入与 queue 排队（S2）分开关。
@@ -261,6 +263,59 @@ type ReactWebFetchConfig struct {
 	MaxContentRunes int `yaml:"max_content_runes"`
 	// CacheTTLSec 是同 URL 抓取结果的内存缓存秒数；0 = 默认 900s（15 分钟），负数禁用缓存。
 	CacheTTLSec int `yaml:"cache_ttl_sec"`
+}
+
+// ReactWebSearchConfig 内置 web_search 工具配置（WP4）：
+// 经外部搜索服务（SearXNG JSON API，自建可免密钥）检索网页，返回标题/链接/摘要清单，
+// 全文内容用 web_fetch 抓取。不内置任何爬虫；provider 原生搜索（如 claude 服务端 web_search
+// 工具）作为后续演进方向，届时按模型能力位接入。
+type ReactWebSearchConfig struct {
+	// Enabled 控制总开关；未配置默认 false（不注册 web_search）。
+	Enabled *bool `yaml:"enabled"`
+	// Kind 是搜索服务适配器类型；当前仅支持 searxng。
+	Kind string `yaml:"kind"`
+	// BaseURL 是 SearXNG 实例地址（如 http://searxng:8080，需开启 json format）。
+	BaseURL string `yaml:"base_url"`
+	// APIKey 是可选的请求凭证（随 header 透传，部分托管实例需要）。
+	APIKey string `yaml:"api_key"`
+	// TimeoutSec 是单次检索超时秒数；0 = 默认 20s。
+	TimeoutSec int `yaml:"timeout_sec"`
+	// MaxResults 是返回条数上限；0 = 默认 8。
+	MaxResults int `yaml:"max_results"`
+}
+
+const (
+	defaultWebSearchTimeoutSec = 20
+	defaultWebSearchMaxResults = 8
+)
+
+// WebSearchEnabled 解析 web_search.enabled：未配置默认 false。
+func (c ReactWebSearchConfig) WebSearchEnabled() bool {
+	if c.Enabled != nil {
+		return *c.Enabled
+	}
+	return false
+}
+
+// WebSearchConfigured 校验 kind 与 base_url：enabled 但配置不完整时工具同样不注册（记日志）。
+func (c ReactWebSearchConfig) WebSearchConfigured() bool {
+	return strings.EqualFold(strings.TrimSpace(c.Kind), "searxng") && strings.TrimSpace(c.BaseURL) != ""
+}
+
+// EffectiveTimeoutSec 返回检索超时秒数（带默认值兜底）。
+func (c ReactWebSearchConfig) EffectiveTimeoutSec() int {
+	if c.TimeoutSec > 0 {
+		return c.TimeoutSec
+	}
+	return defaultWebSearchTimeoutSec
+}
+
+// EffectiveMaxResults 返回结果条数上限（带默认值兜底）。
+func (c ReactWebSearchConfig) EffectiveMaxResults() int {
+	if c.MaxResults > 0 {
+		return c.MaxResults
+	}
+	return defaultWebSearchMaxResults
 }
 
 const (

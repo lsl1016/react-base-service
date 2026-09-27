@@ -608,7 +608,7 @@ func makeReactTestMessages(count int, content string) []llm.ChatMessage {
 }
 
 func TestInternalMetaToolNamesAreReservedInToolService(t *testing.T) {
-	names := []string{metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolDisplayFiles, metaToolWebFetch, metaToolDelegateAgent, metaToolSendMessage, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolLoadRuntimeCode}
+	names := []string{metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolDisplayFiles, metaToolWebFetch, metaToolWebSearch, metaToolDelegateAgent, metaToolSendMessage, metaToolWaitAgent, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolLoadRuntimeCode}
 	for _, name := range names {
 		if !toolService.IsReservedToolName(name) {
 			t.Fatalf("内置工具 %q 未加入 tool.reservedToolNames，注册校验会漏拦截", name)
@@ -630,7 +630,7 @@ func TestToolMetaRegistryCoversInternalTools(t *testing.T) {
 		metaToolDisplayFiles, metaToolResolveAsyncTask, metaToolGetAsyncTask, metaToolReadAttachment,
 		metaToolInspectAttachment, metaToolCreatePlan, metaToolDelegateAgent, metaToolSendMessage,
 		metaToolLoadRuntimeCode, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite,
-		metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolWebFetch,
+		metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolWebFetch, metaToolWaitAgent, metaToolWebSearch,
 	} {
 		if _, ok := metaToolRegistry[name]; !ok {
 			t.Fatalf("内置工具 %q 未登记 toolMetaRegistry，元数据语义缺失", name)

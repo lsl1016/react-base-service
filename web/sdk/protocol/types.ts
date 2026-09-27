@@ -646,6 +646,10 @@ export interface ToolUseStartPayload {
   executedBy: 'server' | 'internal';
   /** 初始状态，通常为 'running'；ask_question 为 'waiting'（等待用户作答） */
   status: string;
+  /** 工具风险等级徽标（low/medium/high，来自 ToolMeta 声明）；缺省不展示 */
+  riskLevel?: string;
+  /** 工具为只读声明（展示"只读"徽标） */
+  readOnly?: boolean;
 }
 
 /**
@@ -740,6 +744,12 @@ export interface ToolUseEndPayload {
   status: string;
   /** 执行耗时（毫秒） */
   durationMs: number;
+  /** 工具产物 UI 旁路（python_exec 产物 / web_search 结果清单等），不进模型上下文 */
+  meta?: Record<string, unknown>;
+  /** 工具风险等级徽标（与 start 事件同口径，回放场景 end 事件独立展示） */
+  riskLevel?: string;
+  /** 工具为只读声明 */
+  readOnly?: boolean;
 }
 
 /** 上下文压缩开始 */

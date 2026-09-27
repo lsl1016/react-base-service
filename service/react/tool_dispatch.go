@@ -251,7 +251,8 @@ func (s *reactEngineState) executeServerTool(call llm.ToolCall, tool model.Tool,
 		_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: blocked.Content, IsError: true, ExecutedBy: executedByServer, Status: toolExecutionStatusRejected, DurationMs: 0})
 		return *blocked, nil
 	}
-	_ = s.emitter.EmitStep(step, EventToolUseStart, params.ReactToolUseStartPayload{ToolUseID: call.ID, ToolName: tool.Name, ToolInput: json.RawMessage(call.Input), Description: strings.TrimSpace(description), ExecutedBy: executedByServer, Status: toolExecutionStatusRunning})
+	meta := businessToolMeta(tool)
+	_ = s.emitter.EmitStep(step, EventToolUseStart, params.ReactToolUseStartPayload{ToolUseID: call.ID, ToolName: tool.Name, ToolInput: json.RawMessage(call.Input), Description: strings.TrimSpace(description), ExecutedBy: executedByServer, Status: toolExecutionStatusRunning, RiskLevel: meta.RiskLevel, ReadOnly: meta.ReadOnly})
 	start := time.Now()
 
 	// 危险操作确认门（P2-3）：permission_mode 命中时先等人工允许；拒绝按 rejected 工具结果回填。
@@ -299,7 +300,7 @@ func (s *reactEngineState) executeServerTool(call llm.ToolCall, tool model.Tool,
 			return llm.ToolResultContent{}, storeErr
 		}
 	}
-	_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, ResultRef: normalized.ResultRef, Truncated: normalized.Truncated, OmittedChars: normalized.OmittedChars, IsError: normalized.IsError, ExecutedBy: executedByServer, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds()})
+	_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, ResultRef: normalized.ResultRef, Truncated: normalized.Truncated, OmittedChars: normalized.OmittedChars, IsError: normalized.IsError, ExecutedBy: executedByServer, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds(), RiskLevel: meta.RiskLevel, ReadOnly: meta.ReadOnly})
 	// 异步提交型工具成功后保留提交快照，作为 Session 级提醒注入后续 run 的模型上下文。
 	s.recordAsyncSubmit(tool, call.Input, content, normalized)
 	return llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: normalized.IsError}, nil

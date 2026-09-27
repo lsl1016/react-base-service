@@ -213,10 +213,34 @@ WP4 / WP5（独立，可随时并行插入）
 3. **get_tool 白名单硬执行**（补 WP2 缺口）：原实现只过滤索引快照（模型"看到什么"），`get_tool` 活查询不校验白名单——子代理按名字猜工具仍可激活。新增 `runtimeRequest.agentToolRefs`（子 run 从 agent 定义继承，未声明时继承父 run 限制，单调收紧）+ `agentToolRefAllows()`，`get_tool` 与 `reloadBusinessToolIfUnchanged` 自愈激活路径统一硬检查。**注意这是对存量 DB agent 的行为收紧**：此前配置了 tools_json 白名单的 agent，白名单外工具从"索引里看不到但能猜名加载"变为"激活即拒绝"。
 4. **内置技能 +1**：`workspace-code-investigation`（代码工作区调查）——工作区生命周期、8 个检索工具的选用顺序表、两段式调用、只读纪律、报告格式（file:line + commit）；`service/skill/bundled_test.go` 增加 manifest 完整性与技能名同步测试（code-reader 白名单引用的名字改动会在此失败提醒）。
 
-### 6.6 后续待办
+### 6.7 后续待办
 
-- **WP4 剩余**：web_search（provider 原生能力位 + 服务端工具配置下发）；
+- ~~**P1（todo）**：wait_agent join 原语~~ ✅ 已实现（2026-09-27，`service/react/wait_agent.go`，含阻塞委派返回值 status 透传与 P2 描述引导，见 §6.8 与 todo 文档 §P1）；
+- ~~**子代理续跑**：delegate_agent 加 `continue_run_id`~~ ✅ 已实现（2026-09-27，见 §6.9）；
+- ~~**WP4 剩余**：web_search~~ ✅ 已实现（2026-09-27，SearXNG 适配器形态，见 §6.9；provider 原生路径作为后续演进）；
 - **WP5**：config.permissionRules 的 deny/allow 两端（deny 优先于询问）；
 - **面板**：内置 agent 可视化列出与一键 fork（当前 fork 方式 = 面板新建同 agent_key 的 DB 行）；agent/skill 面板的 read_only 字段与技能来源展示；
-- **借鉴 ZCode profile 的剩余能力面**：`disallowedTools` deny 列表（tools 白名单之外的减法）、Explore 式动态工具面变体（配置驱动换白名单+换提示词）、project 来源 profile 禁止经 frontmatter 提升权限；
-- **P1（todo）**：wait_agent join 原语（与本方案正交）。
+- **借鉴 ZCode profile 的剩余能力面**：`disallowedTools` deny 列表（tools 白名单之外的减法）、Explore 式动态工具面变体（配置驱动换白名单+换提示词）、project 来源 profile 禁止经 frontmatter 提升权限。
+
+### 6.8 wait_agent 等待原语与完成度透传（2026-09-27，todo P1/P2 落地）
+
+- **`wait_agent` Meta Tool**（`service/react/wait_agent.go`）：父循环阻塞在工具执行内，每 2s 轮询目标子 run 状态直至终态/waiting/超时；返回各 run 状态快照 `{"runs":[{runId, agentKey, status, finalResponse?, errorMessage?}]}`，整体永不报错。入参 `run_ids`（≤10 个）+ `timeout_sec`（缺省跟随看门狗上限、未配置看门狗时 300s，显式值钳位 [1,3600] 且不超过看门狗）。安全边界：仅允许等本 run 委派的子 run（校验 `parent_run_id`），他人 runId 一律 not_found。与 delegate/send_message 同域装配（`runtimeToolDefinitions`），状态词汇与后台通知口径对齐。
+- **语义要点**：子 run 处于 waiting_*（HITL 等用户输入）不算完成——立即随快照返回（status=waiting + 提示可 send_message 催办），由父模型决定催办或放弃，避免空转；timeout 是快照收场不是错误；等待期间命令箱通知照常投递（父 run 活跃），与快照信息冗余无害。
+- **完成度透传**：阻塞委派返回值新增 `status`（completed/error/timeout/cancelled/expired，从子 run 行终态读取）——父模型不再需要从 finalResponse 文本里猜"完成 vs 预算耗尽被迫收尾"。
+- **验收**：`wait_agent_test.go` 覆盖状态映射、快照授权（parent 校验）、waiting 语义、timeout 钳位；端到端后台委派→wait_agent 收割沿用环境门控 e2e（与 TestDelegateAgentE2E 同 harness）另行验证。
+
+### 6.9 子代理续跑 continue_run_id 与 web_search（2026-09-27 落地）
+
+**续跑（continue_run_id，与 wait_agent 配对：wait 解决"等结果"，续跑解决"结果不够"）**：
+
+- `delegate_agent` 入参新增 `continue_run_id`（可选）：新子 run 不再从空白开始，而是装载该子 run 的持久化上下文继续执行——历史消息复用外层装载同一转换器（`reactMessagesToChatMessagesWithRefs`，压缩摘要覆盖与孤儿 tool_result 回填天然生效）、todo 状态、已加载业务工具（`prevActiveToolIDs/Defs` 经引擎现有指纹校验恢复，定义已变的仍被丢弃强制重新 get_tool）。`modelUserMessage` 仍是本次 task（继续指令）。
+- 校验（`validateContinueRun` 纯函数 + 单测）：run 必须存在、必须是本 run 委派的子 run（parent_run_id 匹配，防跨 run 窥探）、agent_key 必须与原 run 一致（续跑语义是"同一个专家接着干"）、原 run 已到终态——运行中引导 wait_agent、HITL 等待引导 send_message。阻塞与后台（background=true）委派均可续跑。
+- 成本语义：每次续跑是新 run、独立计费与步数/token 预算；父 run 自身的步数/tokenBudget 仍约束续跑循环，无服务端自动续跑（决策留给父模型）。
+- 工具描述已加引导："子任务已结束但结论不完整（status=error/timeout/cancelled/expired，或 completed 但内容不完整）时，用 continue_run_id=runId 续跑，不要从零重查。"
+
+**web_search（WP4 收口）**：
+
+- **实现形态与方案的分歧**：方案首选 provider 原生搜索（模型能力位 + 服务端工具配置下发），需逐 provider 改 api/llm 协议层且无法本地验证，暂缓；本版为 **SearXNG 适配器**（`service/react/web_search.go`）——conf 配置自建/托管 SearXNG 实例（`web_search.enabled + kind=searxng + base_url`，自建免密钥，托管可配 api_key），模型获得同一检索能力，服务端零爬虫。provider 原生路径（claude 服务端 web_search 工具）作为后续演进，届时按模型能力位注册、本工具不动。
+- 工具行为：`web_search(query, max_results?)` → 返回标题/链接/摘要清单（snippet 按 300 rune 截断、整体 6000 rune 上限），引导用 web_fetch 抓取全文；空结果给出换词建议。ToolMeta：只读、可并发、network、30s 超时、8KB 输出预算。
+- 门控：conf 开关 + 配置完整性双校验（`webSearchProfileEnabled`），半配置状态不注册也不可执行；softLanding 窗口放行（只读）；`reservedToolNames` 与注册表完整性测试已同步。
+- 验收：`web_search_test.go` 覆盖 SearXNG 响应解析（脏数据丢弃/截断）、渲染与超限截断、conf 门控三态；真实检索链路依赖外部实例，按环境门控联调。

@@ -175,6 +175,10 @@ type ReactToolUseStartPayload struct {
 	Description string          `json:"description,omitempty"`
 	ExecutedBy  string          `json:"executedBy"`
 	Status      string          `json:"status"`
+	// RiskLevel 是工具风险等级展示徽标（low/medium/high，来自 ToolMeta 声明）；空 = 不展示。
+	RiskLevel string `json:"riskLevel,omitempty"`
+	// ReadOnly 标记工具为只读声明（前端展示"只读"徽标）。
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 type ReactClientToolUseStartPayload struct {
@@ -199,6 +203,9 @@ type ReactToolUseEndPayload struct {
 	Status       string          `json:"status"`
 	DurationMs   int64           `json:"durationMs"`
 	Meta         json.RawMessage `json:"meta,omitempty" swaggertype:"object"`
+	// RiskLevel/ReadOnly 与 start 事件同口径（回放场景 end 事件独立展示）。
+	RiskLevel string `json:"riskLevel,omitempty"`
+	ReadOnly  bool   `json:"readOnly,omitempty"`
 }
 
 type ReactClientToolOutput struct {

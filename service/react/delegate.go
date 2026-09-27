@@ -61,6 +61,10 @@ type delegateAgentInput struct {
 	// Background=true 时异步启动（async_launched 等价物，A1）：立即返回启动回执，
 	// 子 run 完成后经运行时通知邮箱（Q1 命令箱）回灌父 run。
 	Background bool `json:"background"`
+	// ContinueRunID 非空时续跑（P1 配套）：不新建空白子 run，而是装载该子 run 的持久化
+	// 历史上下文继续执行（解决"预算耗尽未完成，重派从零重查"的浪费）。仅允许续跑
+	// 本 run 委派的、已终态的同 agent 子 run（校验见 validateContinueRun）。
+	ContinueRunID string `json:"continue_run_id"`
 }
 
 // delegateAgentToolDefinition 构造 delegate_agent 工具声明，描述动态渲染可用子 Agent 清单。
@@ -70,6 +74,8 @@ func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 	var sb strings.Builder
 	sb.WriteString("把一个自包含的子任务委派给专家子 Agent 隔离执行，默认阻塞等待其结论后返回；")
 	sb.WriteString("background=true 时立即返回（后台执行），完成通知自动回灌当前运行，适合耗时较长、无需阻塞当前对话的独立子任务。")
+	sb.WriteString("需要子任务结果但无需立刻阻塞时，可先 background=true 委派、推进主干、稍后用 wait_agent 按 runId 收割结果；若下一步推理立即需要结论，仍用阻塞委派。")
+	sb.WriteString("子任务已结束但结论不完整（status=error/timeout/cancelled/expired，或 completed 但内容不完整）时，可用 continue_run_id=runId 续跑：新子 run 保留其历史上下文继续执行，task 写明继续目标，不要从零重查。")
 	sb.WriteString("子 Agent 看不到当前对话历史，task 必须包含完成子任务所需的全部背景、已知信息与期望产出；")
 	sb.WriteString("需要多个子 Agent 配合时分别委派，不要把多个目标塞进一次调用。\n可用子 Agent：\n")
 	for _, agent := range agents {
@@ -100,7 +106,11 @@ func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 				"expect": stringSchema("期望返回什么（可选），例如：根因结论 + 关键证据。"),
 				"background": map[string]interface{}{
 					"type":        "boolean",
-					"description": "true=后台委派：立即返回，子 Agent 完成后以系统通知自动回灌当前运行（适合耗时长、无需阻塞对话的子任务）；缺省 false=阻塞等待结论。",
+					"description": "true=后台委派：立即返回，子 Agent 完成后以系统通知自动回灌当前运行，也可用 wait_agent 主动收割（适合耗时长、无需阻塞对话的子任务）；缺省 false=阻塞等待结论。",
+				},
+				"continue_run_id": map[string]interface{}{
+					"type":        "string",
+					"description": "可选。续跑此前委派的子 run（该 runId 必须是本次运行委派、已结束、且 agent_key 与本次相同的子任务）：新子 run 保留其全部历史上下文、todo 与已加载工具继续执行，避免从零重查。task 写明继续目标（已完成什么/接下来做什么）。仍在运行或等待用户输入的子 run 不能续跑。",
 				},
 			},
 			"required":             []string{"description", "agent_key", "task"},
@@ -160,12 +170,23 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 		return fmt.Sprintf("agent %s is not available, available agents: %s", input.AgentKey, strings.Join(s.visibleAgentKeys(), ", ")), true, nil
 	}
 
-	// A1 后台委派：注册隔离子 run 后立即返回启动回执，完成通知经 Q1 命令箱回灌。
-	if input.Background {
-		return s.launchBackgroundDelegate(agent, input)
+	// 续跑（P1 配套）：解析并校验被续跑的子 run（本 run 名下、已终态、同 agent），
+	// 通过后装载其持久化历史继续执行；失败以 isError 结果回给模型自行调整。
+	var continueRun *model.ReactRun
+	if input.ContinueRunID = strings.TrimSpace(input.ContinueRunID); input.ContinueRunID != "" {
+		prior, err := model.GetReactRunByRunID(s.ctx, input.ContinueRunID)
+		if reason := validateContinueRun(prior, input.ContinueRunID, s.runID, input.AgentKey, err != nil); reason != "" {
+			return reason, true, nil
+		}
+		continueRun = prior
 	}
 
-	subReq, subRunID, err := s.buildSubAgentRuntimeRequest(agent, input.Task, input.Expect)
+	// A1 后台委派：注册隔离子 run 后立即返回启动回执，完成通知经 Q1 命令箱回灌。
+	if input.Background {
+		return s.launchBackgroundDelegate(agent, input, continueRun)
+	}
+
+	subReq, subRunID, err := s.buildSubAgentRuntimeRequest(agent, input.Task, input.Expect, continueRun)
 	if err != nil {
 		return "", true, err
 	}
@@ -212,9 +233,16 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 	}
 	metrics.ReactDelegationsTotal.WithLabelValues(agent.AgentKey, "success").Inc()
 	zlog.Infof(s.ctx, "[React.Delegate] 子Agent run完成: parentRun=%s, subRun=%s, agentKey=%s", s.runID, subRunID, agent.AgentKey)
+	// status 透传（P1 配套）：父模型据此区分「子任务完成」与「预算/看门狗耗尽被迫收尾」，
+	// 而不是从 finalResponse 文本里猜。词汇与 wait_agent 快照/后台通知一致。
+	status := subRunStatusCompleted
+	if run, runErr := model.GetReactRunByRunID(s.ctx, subRunID); runErr == nil {
+		status = subRunFinalStatus(run)
+	}
 	resultPayload, _ := json.Marshal(map[string]string{
 		"agentKey":      agent.AgentKey,
 		"runId":         subRunID,
+		"status":        status,
 		"finalResponse": finalResponse,
 	})
 	return string(resultPayload), false, nil
@@ -239,8 +267,8 @@ type backgroundDelegateOutcome struct {
 // gin ctx 用 headless 快照：后台子 run 可能比父 run/WS 连接活得久，原 gin ctx 归还
 // 连接后会被 gin 池回收复用，后台 goroutine 不能再持有；runCtx 的取消级联不受影响。
 // 父请求 Cookie 捕获进快照，HTTP 业务工具与同步委派保持同一调用态。
-func (s *reactEngineState) launchBackgroundDelegate(agent model.Agent, input delegateAgentInput) (string, bool, error) {
-	subReq, subRunID, err := s.buildSubAgentRuntimeRequest(agent, input.Task, input.Expect)
+func (s *reactEngineState) launchBackgroundDelegate(agent model.Agent, input delegateAgentInput, continueRun *model.ReactRun) (string, bool, error) {
+	subReq, subRunID, err := s.buildSubAgentRuntimeRequest(agent, input.Task, input.Expect, continueRun)
 	if err != nil {
 		return "", true, err
 	}
@@ -375,6 +403,34 @@ func (s *reactEngineState) deliverBackgroundNotification(ctx *gin.Context, outco
 	zlog.Infof(ctx, "[React.Notify] 后台委派完成通知已投递命令箱: parentRun=%s, subRun=%s, agent=%s, status=%s, pendingInputId=%s", s.runID, outcome.SubRunID, outcome.AgentKey, status, pendingInputID(row.ID))
 }
 
+// validateContinueRun 校验 continue_run_id 的可续跑性（纯函数，便于单测）：
+// 返回空串 = 通过；否则返回面向模型的失败原因（isError 工具结果）。
+// 规则：run 必须存在、必须是本 run 委派的子 run（parent_run_id 匹配，防跨 run 窥探）、
+// 目标 agent_key 必须与原 run 一致（续跑语义是"同一个专家接着干"）、原 run 已到终态
+//（运行中→先用 wait_agent 等；HITL 等待→用 send_message 催办）。
+func validateContinueRun(prior *model.ReactRun, runID, parentRunID, agentKey string, queryFailed bool) string {
+	if queryFailed {
+		return fmt.Sprintf("continue_run_id %s 查询失败，无法续跑", runID)
+	}
+	if prior == nil {
+		return fmt.Sprintf("continue_run_id %s 不存在，请确认 runId 来自本会话 delegate_agent 的返回", runID)
+	}
+	if prior.ParentRunID != parentRunID {
+		return fmt.Sprintf("continue_run_id %s 不是本次运行委派的子 run，不允许跨 run 续跑", runID)
+	}
+	if priorAgent := agentKeyFromAgentPath(prior.AgentPath); priorAgent != agentKey {
+		return fmt.Sprintf("continue_run_id %s 属于 agent %s，与目标 agent_key %s 不一致；续跑必须是同一个子 Agent", runID, priorAgent, agentKey)
+	}
+	status, terminal, waiting := subRunStatusMapping(prior.State)
+	if waiting {
+		return fmt.Sprintf("子 run %s 仍在等待用户输入（%s），不能续跑：可用 send_message 催办，等其结束后再续跑", runID, status)
+	}
+	if !terminal {
+		return fmt.Sprintf("子 run %s 仍在运行（%s），不能续跑：用 wait_agent 等待其结束后再续跑", runID, status)
+	}
+	return ""
+}
+
 // buildSubAgentRuntimeRequest 组装子 run 的运行请求：复用 prepareRuntimeRequest 完成 caller/apikey/
 // 模型解析与全量索引装配，再覆盖为 agent 定义（系统提示词、工具/Skill 白名单、独立历史、继承或指定模型）。
 // buildSubAgentRuntimeRequest 从父 Run 派生子 Agent 的运行快照。
@@ -382,7 +438,9 @@ func (s *reactEngineState) deliverBackgroundNotification(ctx *gin.Context, outco
 // 这里刻意不复制父会话历史：主 Agent 必须把完成子任务所需的背景压缩到 task/expect 中，
 // 防止父上下文递归膨胀，也避免子 Agent 获得无关信息。Tool/Skill 白名单、permissionMode、
 // maxSteps、tokenBudget 等策略统一由 service/agent.RuntimePolicy 解释。
-func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, expect string) (*runtimeRequest, string, error) {
+// continueRun 非空时（continue_run_id 续跑）：历史/已加载工具/todo 从该子 run 恢复，
+// modelUserMessage 仍是本次 task（继续指令），其余隔离语义不变。
+func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, expect string, continueRun *model.ReactRun) (*runtimeRequest, string, error) {
 	cfg := conf.GetReactRuntimeConfig().SubAgent
 
 	modelKey := strings.TrimSpace(agent.ModelKey)
@@ -424,6 +482,19 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	base.historyMessages = nil
 	base.historyMessageRefs = nil
 	base.attachments = nil
+	// 续跑（P1 配套）：continueRun 非空时恢复该子 run 的持久化上下文——历史消息（含压缩摘要
+	// 与孤儿 tool_result 回填，复用外层装载同一转换器）、todo 状态、已加载业务工具（指纹
+	// 校验后恢复，定义已变的仍会被丢弃强制重新 get_tool）。modelUserMessage 仍是本次 task。
+	if continueRun != nil {
+		storedMessages, loadErr := model.GetReactMessagesByRunID(s.ctx, continueRun.RunID)
+		if loadErr != nil {
+			return nil, "", loadErr
+		}
+		base.historyMessages, base.historyMessageRefs = reactMessagesToChatMessagesWithRefs(storedMessages)
+		base.todoStateJSON = continueRun.TodoStateJSON
+		base.prevActiveToolIDsJSON = continueRun.ActiveToolIDs
+		base.prevActiveToolDefsJSON = continueRun.ActiveToolDefsJSON
+	}
 	// 思考程度随父 run 继承（off/auto/custom）；agent 定义级的独立覆盖（P1-5）后续经
 	// tblLlmAgent 扩展列接入，当前先保证父子 run 思考口径一致。
 	base.reasoning = s.req.reasoning
@@ -433,9 +504,11 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	base.memoryContext = ""
 	base.graphMemoryContext = ""
 	base.modelUserMessage = llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: taskContent}
-	base.todoStateJSON = ""
-	base.prevActiveToolIDsJSON = ""
-	base.prevActiveToolDefsJSON = ""
+	if continueRun == nil {
+		base.todoStateJSON = ""
+		base.prevActiveToolIDsJSON = ""
+		base.prevActiveToolDefsJSON = ""
+	}
 	base.agents = s.req.agents // 嵌套委派可见同一清单（是否装配 delegate_agent 由 MaxDepth 限制）
 	base.agentPath = delegateAgentPath(s.agentPath, agent.AgentKey)
 	base.depth = s.depth + 1

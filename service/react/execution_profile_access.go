@@ -10,7 +10,7 @@ func (p ExecutionProfile) allowsInternalTool(name string) bool {
 		return p.AllowPlan
 	case metaToolGetTool, metaToolExecuteTool, metaToolListTools:
 		return p.AllowDynamicTools
-	case metaToolDelegateAgent, metaToolSendMessage:
+	case metaToolDelegateAgent, metaToolSendMessage, metaToolWaitAgent:
 		return p.AllowSubagent
 	case metaToolLoadRuntimeCode:
 		return p.AllowWorkspace
@@ -26,6 +26,8 @@ func (p ExecutionProfile) allowsInternalTool(name string) bool {
 		return p.AllowGraphMemory
 	case metaToolWebFetch:
 		return p.AllowWebFetch
+	case metaToolWebSearch:
+		return p.AllowWebSearch
 	default:
 		return false
 	}

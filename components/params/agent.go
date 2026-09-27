@@ -82,6 +82,9 @@ type AgentResp struct {
 	ReadOnly        int      `json:"readOnly"`
 	PermissionMode  string   `json:"permissionMode"`
 	Status          int      `json:"status"`
+	// Source 是定义来源：builtin=代码内置 profile（不可编辑/删除，仅可 fork）；
+	// 空 = DB 注册行（custom）。
+	Source          string   `json:"source,omitempty"`
 	CreatedBy       string   `json:"createdBy"`
 	UpdatedBy       string   `json:"updatedBy"`
 	CreatedAt       string   `json:"createdAt"`

@@ -56,7 +56,7 @@ const (
 // isInternalMetaTool 判断工具名是否属于 Runtime 内置 Meta Tool，内置工具不走外部工具注册表。
 func isInternalMetaTool(name string) bool {
 	switch name {
-	case metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolAskQuestion, metaToolDisplayFiles, metaToolResolveAsyncTask, metaToolGetAsyncTask, metaToolReadAttachment, metaToolInspectAttachment, metaToolCreatePlan, metaToolDelegateAgent, metaToolSendMessage, metaToolLoadRuntimeCode, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolWebFetch:
+	case metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolAskQuestion, metaToolDisplayFiles, metaToolResolveAsyncTask, metaToolGetAsyncTask, metaToolReadAttachment, metaToolInspectAttachment, metaToolCreatePlan, metaToolDelegateAgent, metaToolSendMessage, metaToolLoadRuntimeCode, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolWebFetch, metaToolWaitAgent, metaToolWebSearch:
 		return true
 	default:
 		return false
@@ -94,6 +94,10 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 	if conf.CustomConf.LLM.React.WebFetch.WebFetchEnabled() {
 		definitions = append(definitions, webFetchToolDefinition())
 	}
+	// web_search.enabled 且服务配置完整时注册网页检索工具（WP4，SearXNG 适配器）。
+	if searchCfg := conf.CustomConf.LLM.React.WebSearch; searchCfg.WebSearchEnabled() && searchCfg.WebSearchConfigured() {
+		definitions = append(definitions, webSearchToolDefinition())
+	}
 	// memory.enabled=true 时注册长期记忆三工具（list/read/write），关闭时模型不可见。
 	if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
 		definitions = append(definitions, memoryToolDefinitions()...)
@@ -112,6 +116,8 @@ func runtimeToolDefinitions(req *runtimeRequest, profile ExecutionProfile) []llm
 	if profile.AllowSubagent && req.delegationAllowed() {
 		definitions = append(definitions, delegateAgentToolDefinition(req.agents))
 		definitions = append(definitions, sendMessageToolDefinition())
+		// P1 join 原语：与 delegate/send_message 同域装配（委派不可用时等待无意义）。
+		definitions = append(definitions, waitAgentToolDefinition())
 	}
 	return definitions
 }
@@ -317,7 +323,8 @@ func (s *reactEngineState) executeInternalTool(call llm.ToolCall, step int) (llm
 	}
 	description := extractToolDescription(call.Input)
 	toolInput := stripToolDescriptionInput(call.Input)
-	_ = s.emitter.EmitStep(step, EventToolUseStart, params.ReactToolUseStartPayload{ToolUseID: call.ID, ToolName: call.Name, ToolInput: toolInput, Description: description, ExecutedBy: executedByInternal, Status: toolExecutionStatusRunning})
+	toolMeta := toolMetaForName(call.Name)
+	_ = s.emitter.EmitStep(step, EventToolUseStart, params.ReactToolUseStartPayload{ToolUseID: call.ID, ToolName: call.Name, ToolInput: toolInput, Description: description, ExecutedBy: executedByInternal, Status: toolExecutionStatusRunning, RiskLevel: toolMeta.RiskLevel, ReadOnly: toolMeta.ReadOnly})
 	start := time.Now()
 	call.Input = toolInput
 	content, meta, isError, err := s.executeInternalToolContent(call, step)
@@ -336,7 +343,7 @@ func (s *reactEngineState) executeInternalTool(call llm.ToolCall, step int) (llm
 			return llm.ToolResultContent{}, err
 		}
 	}
-	_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, ResultRef: normalized.ResultRef, Truncated: normalized.Truncated, OmittedChars: normalized.OmittedChars, IsError: normalized.IsError, ExecutedBy: executedByInternal, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds(), Meta: meta})
+	_ = s.emitter.EmitStep(step, EventToolUseEnd, params.ReactToolUseEndPayload{ToolUseID: call.ID, Content: normalized.Content, ResultRef: normalized.ResultRef, Truncated: normalized.Truncated, OmittedChars: normalized.OmittedChars, IsError: normalized.IsError, ExecutedBy: executedByInternal, Status: normalized.Status, DurationMs: time.Since(start).Milliseconds(), Meta: meta, RiskLevel: toolMeta.RiskLevel, ReadOnly: toolMeta.ReadOnly})
 	return llm.ToolResultContent{ToolUseID: call.ID, Content: normalized.LLMContent(), IsError: normalized.IsError, Meta: meta}, nil
 }
 
@@ -387,6 +394,10 @@ func (s *reactEngineState) executeInternalToolContent(call llm.ToolCall, step in
 		return noToolMeta(s.executeGraphMemoryWrite(call.Input))
 	case metaToolWebFetch:
 		return noToolMeta(s.executeWebFetch(call.Input))
+	case metaToolWebSearch:
+		return s.executeWebSearch(call.Input)
+	case metaToolWaitAgent:
+		return noToolMeta(s.executeWaitAgent(call, step))
 	default:
 		return "", nil, true, fmt.Errorf("unknown internal meta tool: %s", call.Name)
 	}

@@ -143,6 +143,15 @@ llm:
       timeout_sec: 60          # 单次抓取超时
       max_content_runes: 20000 # 提取正文回填上限（超出部分走 resultRef）
       cache_ttl_sec: 900       # 同 URL 结果缓存秒数（负数禁用缓存）
+    # 内置 web_search 工具（WP4）：经外部搜索服务检索，返回标题/链接/摘要清单；未配置默认关闭。
+    # 自建 SearXNG 需在 settings.yml 的 formats 中开启 json；全文内容用 web_fetch 跟进抓取。
+    web_search:
+      enabled: false
+      kind: searxng            # 搜索服务适配器类型（当前仅支持 searxng）
+      base_url: 'http://searxng:8080'  # SearXNG 实例地址
+      api_key: ''              # 可选请求凭证（托管实例需要时填写）
+      timeout_sec: 20          # 单次检索超时
+      max_results: 8           # 返回条数上限
     # 子 Agent 委派（delegate_agent）：开启前需先执行 sql/init.sql 中 tblLlmAgent 建表；
     # 未配置默认关闭（不注册 delegate_agent、不解析 agent 资源，行为与历史版本一致）。
     subagent:

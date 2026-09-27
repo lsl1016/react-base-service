@@ -96,6 +96,10 @@ export interface ToolCallState {
   agentPath?: string;
   /** 危险操作确认待答说明（P2-3）：tool_confirm_request 到达时写入，卡片渲染允许/拒绝按钮 */
   confirmReason?: string;
+  /** 工具风险等级徽标（low/medium/high，来自 ToolMeta 声明）；缺省不展示 */
+  riskLevel?: string;
+  /** 工具为只读声明（展示"只读"徽标） */
+  readOnly?: boolean;
 }
 
 /**

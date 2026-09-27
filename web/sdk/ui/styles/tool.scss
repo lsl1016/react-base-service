@@ -142,6 +142,73 @@
   font-family: var(--agent-ui-font-mono, monospace);
 }
 
+// 工具风险等级徽章（ToolMeta.riskLevel：low=灰 medium=橙 high=红）
+.agent-ui-tool-risk-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+
+  &.agent-ui-tool-risk-low {
+    color: var(--agent-ui-message-meta, #888);
+    background: var(--agent-ui-border-color, rgba(127, 127, 127, 0.15));
+  }
+
+  &.agent-ui-tool-risk-medium {
+    color: #b26a00;
+    background: rgba(255, 152, 0, 0.14);
+    border: 1px solid rgba(255, 152, 0, 0.35);
+  }
+
+  &.agent-ui-tool-risk-high {
+    color: #c62828;
+    background: rgba(244, 67, 54, 0.12);
+    border: 1px solid rgba(244, 67, 54, 0.35);
+  }
+}
+
+// 只读工具徽章（ToolMeta.readOnly）
+.agent-ui-tool-readonly-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--agent-ui-message-meta, #888);
+  background: var(--agent-ui-border-color, rgba(127, 127, 127, 0.15));
+  border: 1px dashed var(--agent-ui-border-color, rgba(127, 127, 127, 0.35));
+}
+
+// web_search 结构化结果清单（tool_use_end meta 旁路）
+.agent-ui-tool-websearch-list {
+  margin: 4px 0;
+  padding: 0 0 0 4px;
+  list-style: none;
+}
+
+.agent-ui-tool-websearch-item {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+
+  a {
+    color: var(--agent-ui-link-color, #1a73e8);
+    text-decoration: none;
+    font-weight: 500;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+.agent-ui-tool-websearch-snippet {
+  margin-top: 2px;
+  color: $agent-ui-message-meta;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 // 子 Agent 消息块分隔行（步骤顶部归属标注）与缩进
 .agent-ui-subagent-divider {
   display: flex;

@@ -274,13 +274,22 @@ func GetDetail(ctx *gin.Context, agentID string) (*model.Agent, error) {
 }
 
 // ListByCallerAndRoute 管理列表：callerKey 为空跨 caller 全量；否则按路由前缀列出（含全部状态）。
+// 两种视图都会合并未被同 agent_key DB 行遮蔽的内置 profile（source=builtin），
+// 供管理面板展示与 fork；fork（同 caller 新建同名行）后内置在该 caller 作用域自动让位。
 func ListByCallerAndRoute(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Agent, error) {
+	var agents []model.Agent
+	var err error
 	if strings.TrimSpace(callerKey) == "" {
-		return model.ListAllAgents(ctx)
+		agents, err = model.ListAllAgents(ctx)
+	} else {
+		exact, parents := route.SplitRouteExactAndParents(routeValues)
+		prefixes := append([]string{exact}, parents...)
+		agents, err = model.ListAgentsByCallerAndRoutes(ctx, callerKey, prefixes)
 	}
-	exact, parents := route.SplitRouteExactAndParents(routeValues)
-	prefixes := append([]string{exact}, parents...)
-	return model.ListAgentsByCallerAndRoutes(ctx, callerKey, prefixes)
+	if err != nil {
+		return nil, err
+	}
+	return mergeBuiltinAgents(agents), nil
 }
 
 // ---------- Markdown 定义导入（OH 文件型 Agent 定义对应物） ----------
@@ -553,6 +562,10 @@ func parseAgentReferenceJSON(raw string) []string {
 }
 
 func ToAgentResp(a *model.Agent) params.AgentResp {
+	source := ""
+	if IsBuiltinAgent(*a) {
+		source = AgentSourceBuiltin
+	}
 	return params.AgentResp{
 		AgentID:        a.AgentID,
 		AgentKey:       a.AgentKey,
@@ -570,6 +583,7 @@ func ToAgentResp(a *model.Agent) params.AgentResp {
 		ReadOnly:       a.ReadOnly,
 		PermissionMode: a.PermissionMode,
 		Status:         a.Status,
+		Source:         source,
 		CreatedBy:      a.CreatedBy,
 		UpdatedBy:      a.UpdatedBy,
 		CreatedAt:      formatAgentTime(a.CreatedAt),

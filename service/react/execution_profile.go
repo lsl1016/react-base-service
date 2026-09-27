@@ -28,6 +28,9 @@ type ExecutionProfile struct {
 	// AllowWebFetch 控制 web_fetch（WP4 网页抓取）；外层/子 run 跟随 web_fetch.enabled 配置，
 	// reflection 等受限执行域恒关闭。
 	AllowWebFetch bool
+	// AllowWebSearch 控制 web_search（WP4 网页检索）；外层/子 run 跟随 web_search 配置，
+	// reflection 等受限执行域恒关闭。
+	AllowWebSearch bool
 	// AllowAnalysisTools 控制 read_tool_result/inspect_data/python_exec 等分析类内置工具；
 	// 主对话默认开启，reflection 等受限执行域关闭。
 	AllowAnalysisTools      bool
@@ -52,6 +55,7 @@ func outerExecutionProfile() ExecutionProfile {
 		AllowSubagent:           conf.GetReactRuntimeConfig().SubAgent.SubAgentEnabled(),
 		AllowWorkspace:          conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled(),
 		AllowWebFetch:           conf.CustomConf.LLM.React.WebFetch.WebFetchEnabled(),
+		AllowWebSearch:          webSearchProfileEnabled(),
 		AllowAnalysisTools:      true,
 		InjectAsyncTaskReminder: true,
 		RestoreOuterHistory:     true,

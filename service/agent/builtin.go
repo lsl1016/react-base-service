@@ -20,6 +20,9 @@ import (
 // builtinAgentIDPrefix 是内置 profile 的 AgentID 前缀（delegate 描述据此标注 built-in）。
 const builtinAgentIDPrefix = "builtin:"
 
+// AgentSourceBuiltin 是 AgentResp.Source 的内置值（管理面板据此禁用编辑/删除、提供 fork）。
+const AgentSourceBuiltin = "builtin"
+
 // Agent 工具白名单的约定 token（tools_json 内与业务工具名并存）。
 const (
 	// AgentToolRefNone 白名单显式为空：不继承 caller 业务工具（区别于空数组=继承全部的存量语义）。

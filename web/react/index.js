@@ -777,11 +777,11 @@ const resources = {
     importPath: '/agent/import',
     importNote: '粘贴「frontmatter + 正文」格式的子 Agent 定义（frontmatter 支持 agent_key/name/description/caller_key/route_values/model_key/model_version/tools/skills/max_steps/max_tokens_per_run/permission_mode，正文即系统提示词）。同 caller 同 agent_key 重复会报错。',
     columns: [
-      ['agentKey', 'agent_key'], ['name', '名称'], ['description', '委派说明'], ['callerKey', '归属 caller'], ['maxSteps', '步数上限'], ['maxTokensPerRun', 'token 预算'], ['permissionMode', '权限模式'], ['status', '状态'], ['actions', '操作'],
+      ['agentKey', 'agent_key'], ['name', '名称'], ['description', '委派说明'], ['callerKey', '归属 caller'], ['maxSteps', '步数上限'], ['maxTokensPerRun', 'token 预算'], ['readOnly', '只读'], ['permissionMode', '权限模式'], ['status', '状态'], ['actions', '操作'],
     ],
     empty: () => ({
       agentKey: '', name: '', description: '', callerKey: createTargetCallerKey(), routeText: createDefaultRouteText(),
-      systemPrompt: '', modelKey: '', modelVersion: '', toolsText: '', skillsText: '', maxSteps: 8, maxTokensPerRun: 0, permissionMode: 'inherit', status: 1,
+      systemPrompt: '', modelKey: '', modelVersion: '', toolsText: '', skillsText: '', maxSteps: 8, maxTokensPerRun: 0, readOnly: 0, permissionMode: 'inherit', status: 1,
     }),
     toDraft: (item) => ({
       ...item,
@@ -803,6 +803,7 @@ const resources = {
       skills: splitRouteText(draft.skillsText),
       maxSteps: Number(draft.maxSteps) || 0,
       maxTokensPerRun: Number(draft.maxTokensPerRun) || 0,
+      readOnly: Number(draft.readOnly) || 0,
       permissionMode: draft.permissionMode || 'inherit',
       status: Number(draft.status),
     }),
@@ -814,14 +815,17 @@ const resources = {
       ['status', '状态', 'select'],
       ['maxSteps', '步数上限（0=默认）'],
       ['maxTokensPerRun', 'token 预算（0=不限）'],
+      ['readOnly', '只读执行域', 'defaultSelect'],
       ['permissionMode', '权限模式', 'enumSelect', [['inherit', '继承父 run'], ['auto', '自动执行'], ['confirm', '每次确认'], ['confirm_risky', '高风险确认']]],
       ['modelKey', '模型种类（空=继承）'],
       ['modelVersion', '模型版本（空=默认）'],
-      ['toolsText', '工具白名单（逗号分隔，空=全部）'],
+      ['toolsText', '工具白名单（逗号分隔，空=全部；支持 @readonly=仅只读工具 / @none=无业务工具）'],
       ['skillsText', 'Skill 白名单（逗号分隔，空=不注入）'],
       ['description', '委派说明（适用/不适用）', 'textarea'],
       ['systemPrompt', '系统提示词', 'textarea'],
     ],
+    // 内置子智能体（source=builtin）：只读展示 + fork，不可编辑/删除/停用。
+    builtinBadge: true,
   },
   mcp: {
     title: 'MCP 连接管理',
@@ -1114,12 +1118,21 @@ const management = {
   },
   renderValue(key, item) {
     if (key === 'actions') {
+      // 内置子智能体（source=builtin）：仅提供 fork（预填创建表单，同 caller 保存后覆盖内置）。
+      if (item.source === 'builtin') {
+        return '<div class="rp-row-actions"><button class="rp-button rp-link-btn" data-action="fork" type="button" title="以此定义为模板新建（保存后覆盖同 caller 同 agent_key 的内置定义）">Fork</button></div>';
+      }
       // MCP 工具随连接生命周期管理：不可单独删除（修改仍可用，但配置 JSON 只读）。
       const deleteButton = this.resource().deletePath && item.toolType !== 'mcp'
         ? '<button class="rp-button rp-link-btn rp-danger-link" data-action="delete" type="button">删除</button>'
         : '';
       return `<div class="rp-row-actions"><button class="rp-button rp-link-btn" data-action="edit" type="button">修改</button>${deleteButton}</div>`;
     }
+    if (item.source === 'builtin' && key === 'name') {
+      return '<span class="rp-mcp-kind-badge" title="代码内置子智能体：不落库，delegate_agent 可直接使用；Fork 后可修改">内置</span> ' + escapeHtml(shortText(item[key], 60));
+    }
+    if (key === 'status' && item.source === 'builtin') return '<span class="rp-mcp-badge rp-mcp-badge-ok" title="内置 profile 恒可用（无启停概念）">—</span>';
+    if (key === 'readOnly') return Number(item.readOnly) === 1 ? '<span class="rp-mcp-kind-badge" title="只读执行域：非 readOnly 业务工具被硬拦截">只读</span>' : '';
     if (key === 'status') return `<button class="rp-button rp-switch ${isEnabled(item) ? 'rp-on' : ''}" data-action="toggle" type="button" title="${isEnabled(item) ? '启用' : '停用'}"></button>`;
     if (key === 'planEnabled') return `<button class="rp-button rp-switch ${isPlanEnabled(item) ? 'rp-on' : ''}" data-action="toggle-plan" type="button" title="Plan ${isPlanEnabled(item) ? '启用' : '停用'}"></button>`;
     if (key === 'callerKey' && this.resource().callerFilter) return item.callerKey === 'default' ? '<span class="rp-mcp-badge rp-mcp-badge-ok" title="挂在 default 伪 caller 下，全部 caller 的请求都能解析到">默认（全 caller）</span>' : escapeHtml(shortText(item.callerKey, 24));
@@ -1602,6 +1615,7 @@ const management = {
     const item = this.itemFromEvent(event);
     if (!item) return;
     if (action === 'edit') this.openEdit(item);
+    if (action === 'fork') this.openFork(item);
     if (action === 'delete') this.remove(item);
     if (action === 'toggle') this.toggle(item);
     if (action === 'toggle-plan') this.togglePlan(item);
@@ -1624,6 +1638,17 @@ const management = {
     }
     this.mode = 'create';
     this.draft = this.resource().empty();
+    this.renderModal();
+  },
+  // 内置子智能体 Fork：以内置定义为模板打开创建表单（当前 caller 保存后同名覆盖内置）。
+  openFork(item) {
+    const resource = this.resource();
+    this.mode = 'create';
+    const draft = { ...resource.empty(), ...resource.toDraft(item) };
+    delete draft.agentId;
+    draft.callerKey = callerFilterValue() || this.config().callerKey || 'default';
+    draft.status = 1;
+    this.draft = draft;
     this.renderModal();
   },
   // 通用「导入定义」入口（agent / skill 的 Markdown 粘贴导入）。

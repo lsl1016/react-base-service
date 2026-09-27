@@ -491,6 +491,8 @@ function reducePlanAttemptEvent(state: AgentState, payload: PlanStepEventPayload
           afterContent: step.contentStarted,
           planExecutionId: payload.planExecutionId,
           stepAttemptId: payload.stepAttemptId,
+          riskLevel: value.riskLevel,
+          readOnly: value.readOnly,
         });
       }
       break;
@@ -503,6 +505,9 @@ function reducePlanAttemptEvent(state: AgentState, payload: PlanStepEventPayload
         tool.result = value.content;
         tool.isError = value.isError;
         tool.durationMs = value.durationMs;
+        if (value.meta) tool.meta = value.meta;
+        if (value.riskLevel) tool.riskLevel = value.riskLevel;
+        if (value.readOnly) tool.readOnly = value.readOnly;
       }
       break;
     }
