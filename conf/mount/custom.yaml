@@ -183,7 +183,9 @@ mcp:
       # 独立网关进程（cmd/mcp-gateway）挂载在 /mcp，见 mcpgateway.Bootstrap(engine, "/mcp")
       endpoint: 'http://127.0.0.1:18080/mcp'
       headers:
-        Authorization: 'Bearer demo-app-key:demo-app-secret-please-rotate'
+        # 本地开发凭证（playground「MCP 应用」页创建，绑定 mcpgw_demo_weather 等 5 个工具）；
+        # 占位符 demo-app-key 无效，mcpgw 客户端连接需真实 app_key:app_secret
+        Authorization: 'Bearer mcp_71d4fd2bc3e6cc760ad8:751169239e2c13b5214f636ca2d9babc0dfed03a5b6976b6'
       timeout_ms: 30000
   # 本机开发环境放行环回/私网 MCP 端点（如 127.0.0.1 演示 MCP 服务）；生产环境必须删除此开关
   allow_private_endpoint: true
