@@ -672,77 +672,6 @@ const resources = {
   // 「API Key 管理」页已撤除（P1 Key 双轨消除）：caller 级凭证并入模型配置面板的
   // 「连接与密钥」（tblLlmConnection，协议+地址+Key，无 ModelHash run 按 caller+路由
   // 解析、优先于旧 tblLlmApiKey）；后端 /apikey/* 路由保留作为契约兼容层。
-  planTemplate: {
-    title: '模板列表',
-    tabText: '模板列表',
-    itemName: '模板',
-    addText: '新增模板',
-    idKey: 'templateId',
-    listPath: '/react/plan_template/list',
-    detailPath: '/react/plan_template/detail',
-    createPath: '/react/plan_template/create',
-    updatePath: '/react/plan_template/update',
-    columns: [
-      ['templateId', '模板 ID'], ['description', '描述'], ['revision', 'Revision'], ['status', '状态'], ['updatedBy', '更新人'], ['updatedAt', '更新时间'], ['actions', '操作'],
-    ],
-    empty: () => ({
-      templateId: '',
-      status: 1,
-      templateText: JSON.stringify({
-        description: '请填写模板用途',
-        inputs: {
-          type: 'object',
-          properties: {},
-          additionalProperties: false,
-        },
-        steps: [{
-          id: 'execute_task',
-          order: 1,
-          name: '执行任务',
-          goal: '根据输入完成目标',
-          depends_on: [],
-          input: {},
-          tool_names: ['*'],
-          max_rounds: 20,
-          timeout_seconds: 300,
-          output_schema: {
-            type: 'object',
-            properties: { result: { type: 'string' } },
-            required: ['result'],
-            additionalProperties: false,
-          },
-        }],
-        output: { result: '${steps.execute_task.result.result}' },
-        output_schema: {
-          type: 'object',
-          properties: { result: { type: 'string' } },
-          required: ['result'],
-          additionalProperties: false,
-        },
-      }, null, 2),
-    }),
-    toDraft: (item) => ({ ...item }),
-    loadDetail: async (item, config, resource) => {
-      const detail = await post(resource.detailPath, {
-        callerKey: config.callerKey,
-        templateId: item.templateId,
-      });
-      return {
-        ...detail,
-        templateText: JSON.stringify(detail?.template ?? {}, null, 2),
-      };
-    },
-    toPayload: (draft, config) => ({
-      callerKey: config.callerKey,
-      templateId: draft.templateId,
-      revision: draft.revision,
-      template: JSON.parse(draft.templateText || '{}'),
-      status: Number(draft.status),
-    }),
-    fields: (mode) => mode === 'create'
-      ? [['templateId', '模板 ID'], ['status', '状态', 'select'], ['templateText', '模板 JSON', 'codeTextarea']]
-      : [['templateId', '模板 ID', 'readonly'], ['revision', 'Revision', 'readonly'], ['status', '状态', 'select'], ['templateText', '模板 JSON', 'codeTextarea']],
-  },
   agent: {
     title: '子 Agent 管理',
     tabText: '子 Agent',
@@ -909,6 +838,7 @@ const resources = {
     columns: [],
   },
   // 运行时配置：custom.yaml 策略的在线覆盖面板（DB 覆盖 > yaml > 默认；写后新 run 生效）。
+  // 加载与渲染按 settingCards 定义展开为多张卡片，不再走通用 listPath。
   runtimeSetting: {
     title: '运行时配置',
     tabText: '运行时配置',
@@ -916,8 +846,36 @@ const resources = {
     cardList: true,
     cardKind: 'setting',
     noCreate: true,
-    listPath: '/setting/subagent/get',
     columns: [],
+  },
+};
+
+// 运行时配置卡片定义：key 对应 /setting/<key>/get|update 接口与 DB setting_key；
+// rows 声明面板字段（switch=布尔开关，number=数字输入，min 用于保存前校验）。
+const settingCards = {
+  subagent: {
+    title: 'subagent 委派策略',
+    kind: 'delegate_agent',
+    saveHint: '保存后新 run / 下一次委派即生效',
+    rows: [
+      { field: 'enabled', label: '委派总开关', hint: 'subagent.enabled：开启后主 Agent 才会装配 delegate_agent 工具', type: 'switch' },
+      { field: 'maxParallel', label: '并行上限', hint: '同一轮多个 delegate_agent 调用的并行度', type: 'number', min: 1, range: '1-8' },
+      { field: 'defaultMaxSteps', label: '子 run 默认步数上限', hint: 'agent 未配置 max_steps 时的子 run 步数上限', type: 'number', min: 1, range: '1-64' },
+      { field: 'maxDepth', label: '委派嵌套深度上限', hint: '子 Agent 再委派的最大深度，防递归失控', type: 'number', min: 1, range: '1-4' },
+    ],
+  },
+  memory: {
+    title: '长期记忆策略',
+    kind: 'memory_*',
+    saveHint: '保存后新 run 即生效',
+    rows: [
+      { field: 'enabled', label: '记忆总开关', hint: 'memory.enabled：开启后注入记忆上下文并注册 memory_* 工具', type: 'switch' },
+      { field: 'residentMaxItems', label: '常驻层条数上限', hint: '单记忆空间常驻注入条数', type: 'number', min: 1, range: '1-64' },
+      { field: 'residentBudgetChars', label: '常驻层字符预算', hint: '常驻层注入 system 的字符预算', type: 'number', min: 100, range: '100-32000' },
+      { field: 'indexMaxItems', label: '目录索引上限', hint: '按需层目录索引注入条数', type: 'number', min: 1, range: '1-200' },
+      { field: 'detachedMaxItems', label: '按需层软上限', hint: '按需层 active 条目软上限，超出拒绝新增', type: 'number', min: 10, range: '10-5000' },
+      { field: 'allowUserScope', label: '用户维度隔离', hint: '开启=caller+user 双维度隔离；关闭=收敛到 caller 维度共享', type: 'switch' },
+    ],
   },
 };
 
@@ -927,6 +885,8 @@ const management = {
   draft: null,
   mode: 'create',
   expandedMcp: new Set(),
+  // 运行时配置各卡片默认收起（按卡片 key 记忆），点卡片头展开（与 MCP 卡片手风琴交互一致）。
+  settingExpanded: {},
   mcpConnection: '',
   // 批量改状态的勾选集（存 idKey 值）：切页/重载清空，全选作用于当前筛选结果。
   selectedIds: new Set(),
@@ -970,6 +930,24 @@ const management = {
       this.updateBatchControls();
     });
     $('management-modal-body').addEventListener('click', (event) => {
+      // Bundle 目录选择器：打开浏览器 / 进入子目录 / 上一级 / 选定当前目录。
+      if (event.target.closest('[data-open-source-browser]')) {
+        this.openSourceBrowser();
+        return;
+      }
+      const browseDir = event.target.closest('[data-browse-dir]')?.dataset.browseDir;
+      if (browseDir !== undefined && browseDir !== '') {
+        this.loadBundleBrowse(browseDir);
+        return;
+      }
+      if (event.target.closest('[data-browse-up]')) {
+        this.loadBundleBrowse(this.browseState?.data?.parent || '');
+        return;
+      }
+      if (event.target.closest('[data-browse-use]')) {
+        this.useBundleBrowseCurrent();
+        return;
+      }
       const logsAction = event.target.closest('[data-logs-action]')?.dataset.logsAction;
       if (logsAction) {
         if (logsAction === 'prev') this.logsState.page = Math.max(1, this.logsState.page - 1);
@@ -989,11 +967,14 @@ const management = {
     $('management-modal-save').addEventListener('click', () => this.save());
     $('management-body').addEventListener('click', (event) => this.handleTableClick(event));
     $('management-cards').addEventListener('click', (event) => this.handleTableClick(event));
-    // 运行时配置面板的数字输入（data-setting-input=字段名）走 input 事件委托。
+    // 运行时配置面板的数字输入（data-setting-input=字段名）走 input 事件委托；
+    // 卡片容器带 data-card，据此定位对应草稿。
     $('management-cards').addEventListener('input', (event) => {
-      const field = event.target.closest('[data-setting-input]')?.dataset.settingInput;
-      if (!field || !this.settingDraft?.[field]) return;
-      this.settingDraft[field].value = event.target.value;
+      const input = event.target.closest('[data-setting-input]');
+      const card = input?.closest('[data-card]')?.dataset.card;
+      const field = input?.dataset.settingInput;
+      if (!field || !this.settingDraft?.[card]?.[field]) return;
+      this.settingDraft[card][field].value = input.value;
     });
     this.renderShell();
   },
@@ -1059,16 +1040,17 @@ const management = {
     this.selectedIds.clear();
     this.setState('加载中...');
     try {
-      // Caller 筛选资源：选中值优先（空 = 全部 caller），未启用筛选的资源沿用全局 callerKey。
-      const callerKey = resource.callerFilter ? callerFilterValue() : config.callerKey;
-      const data = await post(resource.listPath, { callerKey, routeValues: config.routeValues });
-      // 运行时配置返回单个生效视图对象而非列表，单独落 draft。
+      // 运行时配置面板：按 settingCards 逐卡拉取生效视图（无通用 listPath）。
       if (resource.cardKind === 'setting') {
-        this.settingData = data;
+        const entries = await Promise.all(Object.keys(settingCards).map(async (key) => [key, await post(`/setting/${key}/get`, {})]));
+        this.settingData = Object.fromEntries(entries);
         this.setState('');
         this.renderTable();
         return;
       }
+      // Caller 筛选资源：选中值优先（空 = 全部 caller），未启用筛选的资源沿用全局 callerKey。
+      const callerKey = resource.callerFilter ? callerFilterValue() : config.callerKey;
+      const data = await post(resource.listPath, { callerKey, routeValues: config.routeValues });
       this.items = Array.isArray(data) ? data.map(resource.toDraft) : [];
       this.setState('');
       this.renderTable();
@@ -1471,119 +1453,135 @@ const management = {
       </div>`).join('');
     this.visibleItems = rows;
   },
-  // 运行时配置面板：DB 覆盖 > custom.yaml > 内置默认。每字段「覆盖开关 + 值控件 + 来源徽标」，
-  // 覆盖关闭 = 该字段回落 yaml/默认（保存时进 clearFields）；来源徽标展示当前生效值从哪来。
+  // 运行时配置面板：DB 覆盖 > custom.yaml > 内置默认。按 settingCards 渲染多张卡片，
+  // 每字段「覆盖开关 + 值控件 + 来源徽标」，覆盖关闭 = 该字段回落 yaml/默认（保存时进 clearFields）。
   renderSettingPanel() {
     const container = $('management-cards');
-    const data = this.settingData;
-    if (!data) {
+    const dataMap = this.settingData;
+    if (!dataMap) {
       container.innerHTML = '<div class="rp-mcp-empty">暂无配置数据</div>';
       return;
     }
-    if (!this.settingDraft || this.settingDraftKey !== 'subagent') {
-      const override = data.override ?? {};
-      this.settingDraftKey = 'subagent';
-      this.settingDraft = {
-        enabled: { useOverride: override.enabled != null, value: override.enabled ?? data.effective.enabled },
-        maxParallel: { useOverride: override.maxParallel != null, value: override.maxParallel ?? data.effective.maxParallel },
-        defaultMaxSteps: { useOverride: override.defaultMaxSteps != null, value: override.defaultMaxSteps ?? data.effective.defaultMaxSteps },
-        maxDepth: { useOverride: override.maxDepth != null, value: override.maxDepth ?? data.effective.maxDepth },
-      };
-    }
-    const draft = this.settingDraft;
+    this.settingDraft ??= {};
+    this.settingExpanded ??= {};
     const sourceLabel = { override: '覆盖', yaml: 'yaml', default: '默认' };
-    const rows = [
-      { field: 'enabled', label: '委派总开关', hint: 'subagent.enabled：开启后主 Agent 才会装配 delegate_agent 工具', type: 'switch', range: '' },
-      { field: 'maxParallel', label: '并行上限', hint: '同一轮多个 delegate_agent 调用的并行度（1-8）', type: 'number', range: '1-8' },
-      { field: 'defaultMaxSteps', label: '子 run 默认步数上限', hint: 'agent 未配置 max_steps 时的子 run 步数上限（1-64）', type: 'number', range: '1-64' },
-      { field: 'maxDepth', label: '委派嵌套深度上限', hint: '子 Agent 再委派的最大深度，防递归失控（1-4）', type: 'number', range: '1-4' },
-    ].map(({ field, label, hint, type, range }) => {
-      const state = draft[field];
-      const source = data.sources?.[field]?.source ?? 'default';
-      const effective = data.effective[field];
-      const control = type === 'switch'
-        ? `<button class="rp-button rp-switch ${state.value ? 'rp-on' : ''}" data-action="setting-switch" data-field="${field}" type="button" title="${state.value ? '开启' : '关闭'}" ${state.useOverride ? '' : 'disabled'}></button>`
-        : `<input class="rp-setting-input" data-setting-input="${field}" type="number" min="1" value="${state.value}" placeholder="${effective}" ${state.useOverride ? '' : 'disabled'}>`;
-      return `
+    container.innerHTML = Object.entries(settingCards).map(([key, card]) => {
+      const data = dataMap[key];
+      if (!data) return '';
+      const draft = this.settingDraft[key] ?? (this.settingDraft[key] = this.initSettingDraft(key, data));
+      const rows = card.rows.map(({ field, label, hint, type, min, range }) => {
+        const state = draft[field];
+        const source = data.sources?.[field]?.source ?? 'default';
+        const effective = data.effective[field];
+        const control = type === 'switch'
+          ? `<button class="rp-button rp-switch ${state.value ? 'rp-on' : ''}" data-action="setting-switch" data-field="${field}" type="button" title="${state.value ? '开启' : '关闭'}" ${state.useOverride ? '' : 'disabled'}></button>`
+          : `<input class="rp-setting-input" data-setting-input="${field}" type="number" min="${min ?? 1}" value="${state.value}" placeholder="${effective}" ${state.useOverride ? '' : 'disabled'}>`;
+        return `
       <div class="rp-setting-row">
         <label class="rp-button rp-switch rp-smaller-switch ${state.useOverride ? 'rp-on' : ''}" data-action="setting-override" data-field="${field}" type="button" title="${state.useOverride ? '覆盖中：保存时提交面板值' : '未覆盖：保存时清除覆盖，回落 yaml/默认值'}"></label>
         <span class="rp-setting-label">${escapeHtml(label)}<span class="rp-setting-hint">${escapeHtml(hint)}${range ? `（${range}）` : ''}</span></span>
         ${control}
         <span class="rp-mcp-badge ${source === 'override' ? 'rp-mcp-badge-ok' : 'rp-mcp-badge-off'}" title="当前生效值来源：${source === 'override' ? 'DB 覆盖（本面板可改）' : source === 'yaml' ? 'custom.yaml 配置' : '内置默认值'}">${sourceLabel[source] || source}·生效 ${type === 'switch' ? (effective ? '开' : '关') : effective}</span>
       </div>`;
-    }).join('');
-    const audit = data.updatedBy
-      ? `<span class="rp-mcp-endpoint">最近更新：${escapeHtml(data.updatedBy)} · ${escapeHtml(data.updatedAt || '-')}</span>`
-      : '<span class="rp-mcp-endpoint">尚未通过面板设置过（当前全部回落 yaml/默认值）</span>';
-    container.innerHTML = `
-      <div class="rp-mcp-card">
-        <div class="rp-mcp-card-head">
-          <span class="rp-mcp-name">subagent 委派策略</span>
-          <span class="rp-mcp-kind">delegate_agent</span>
+      }).join('');
+      const audit = data.updatedBy
+        ? `<span class="rp-mcp-endpoint">最近更新：${escapeHtml(data.updatedBy)} · ${escapeHtml(data.updatedAt || '-')}</span>`
+        : '<span class="rp-mcp-endpoint">尚未通过面板设置过（当前全部回落 yaml/默认值）</span>';
+      const expanded = !!this.settingExpanded[key];
+      return `
+      <div class="rp-mcp-card${expanded ? ' rp-expanded' : ''}" data-card="${key}">
+        <div class="rp-mcp-card-head" data-action="setting-expand" title="展开/收起配置">
+          <span class="rp-mcp-chevron" aria-hidden="true">▸</span>
+          <span class="rp-mcp-name">${escapeHtml(card.title)}</span>
+          <span class="rp-mcp-kind">${escapeHtml(card.kind)}</span>
           ${data.effective.enabled ? '<span class="rp-mcp-badge rp-mcp-badge-ok">已开启</span>' : '<span class="rp-mcp-badge rp-mcp-badge-off">已关闭</span>'}
           ${audit}
         </div>
         <div class="rp-mcp-card-body">
           <div class="rp-setting-rows">${rows}</div>
-          <div class="rp-setting-note">每行左侧小开关 = 「覆盖」：开启时保存面板值进 DB，关闭时清除该字段覆盖、回落 custom.yaml / 默认值。保存后新 run / 下一次委派即生效，运行中的 run 不受影响；多实例部署约 10 秒内拉平。</div>
+          <div class="rp-setting-note">每行左侧小开关 = 「覆盖」：开启时保存面板值进 DB，关闭时清除该字段覆盖、回落 custom.yaml / 默认值。${escapeHtml(card.saveHint)}，运行中的 run 不受影响；多实例部署约 10 秒内拉平。</div>
           <div class="rp-setting-actions">
             <button class="rp-button rp-primary-btn" data-action="setting-save" type="button">保存</button>
             <button class="rp-button" data-action="setting-reload" type="button">放弃修改</button>
           </div>
         </div>
       </div>`;
+    }).join('');
+  },
+  // initSettingDraft 按卡片定义从生效视图初始化编辑草稿：DB 有覆盖以覆盖值为起点，否则以生效值为起点。
+  initSettingDraft(key, data) {
+    const override = data.override ?? {};
+    const draft = {};
+    for (const row of settingCards[key].rows) {
+      draft[row.field] = { useOverride: override[row.field] != null, value: override[row.field] ?? data.effective[row.field] };
+    }
+    return draft;
   },
   handleSettingClick(event, action) {
+    const cardKey = event.target.closest('[data-card]')?.dataset.card;
+    // 点卡片头展开/收起配置区（整行可点，与 MCP 卡片一致）。
+    if (action === 'setting-expand' && cardKey) {
+      this.settingExpanded[cardKey] = !this.settingExpanded[cardKey];
+      this.renderSettingPanel();
+      return;
+    }
     const field = event.target.closest('[data-field]')?.dataset.field;
-    if (action === 'setting-override' && field) {
-      const state = this.settingDraft[field];
+    const draft = cardKey ? this.settingDraft?.[cardKey] : null;
+    if (action === 'setting-override' && draft?.[field]) {
+      const state = draft[field];
       state.useOverride = !state.useOverride;
-      // 打开覆盖时以当前生效值/DB 覆盖值为起点，避免一打开就提交出界值。
-      if (state.useOverride && (state.value == null || state.value === '')) {
-        state.value = this.settingData.effective[field];
+      // 覆盖开：以生效值为起点，避免一打开就提交出界值；
+      // 覆盖关：立即回落显示基线值（= 清除覆盖后将要生效的 yaml/默认值，接口 sources[field].baseline），
+      // 保证控件所见即保存结果——否则大开关停留在旧草稿值，保存后“突然”跳成 yaml 值会造成误解。
+      const baseline = this.settingData[cardKey].sources?.[field]?.baseline;
+      if (!state.useOverride || state.value == null || state.value === '') {
+        state.value = baseline ?? this.settingData[cardKey].effective[field];
       }
       this.renderSettingPanel();
       return;
     }
-    if (action === 'setting-switch' && field) {
-      this.settingDraft[field].value = !this.settingDraft[field].value;
+    if (action === 'setting-switch' && draft?.[field]) {
+      draft[field].value = !draft[field].value;
       this.renderSettingPanel();
       return;
     }
-    if (action === 'setting-reload') {
-      this.settingDraft = null;
+    if (action === 'setting-reload' && cardKey) {
+      this.settingDraft[cardKey] = null;
       this.reload();
       return;
     }
-    if (action === 'setting-save') {
-      this.saveSetting();
+    if (action === 'setting-save' && cardKey) {
+      this.saveSetting(cardKey);
     }
   },
-  async saveSetting() {
-    const draft = this.settingDraft;
+  async saveSetting(cardKey) {
+    const card = settingCards[cardKey];
+    const draft = this.settingDraft[cardKey];
+    if (!card || !draft) return;
     const payload = { clearFields: [] };
-    for (const [field, state] of Object.entries(draft)) {
+    for (const { field, type, min } of card.rows) {
+      const state = draft[field];
       if (!state.useOverride) {
         payload.clearFields.push(field);
         continue;
       }
-      if (field === 'enabled') {
-        payload.enabled = Boolean(state.value);
+      if (type === 'switch') {
+        payload[field] = Boolean(state.value);
         continue;
       }
       const num = Number(state.value);
-      if (!Number.isFinite(num) || num < 1) {
-        this.setState(`${field} 需要填写 ≥1 的数字`, true);
+      if (!Number.isFinite(num) || num < (min ?? 1)) {
+        this.setState(`${card.title} · ${field} 需要填写 ≥${min ?? 1} 的数字`, true);
         return;
       }
       payload[field] = num;
     }
     this.setState('保存中...');
     try {
-      const data = await post('/setting/subagent/update', payload);
-      this.settingData = data;
-      this.settingDraft = null;
-      this.setState('已保存（新 run / 下一次委派生效）');
+      const data = await post(`/setting/${cardKey}/update`, payload);
+      this.settingData[cardKey] = data;
+      this.settingDraft[cardKey] = null;
+      this.setState(`已保存（${card.saveHint}）`);
       this.renderSettingPanel();
     } catch (error) {
       this.setState(error.message || '保存失败', true);
@@ -1691,6 +1689,34 @@ const management = {
     };
     this.renderModal();
   },
+  // ===== Bundle 来源目录选择器（/react/bundle/browse 白名单内逐级浏览）=====
+  async openSourceBrowser() {
+    // 安装草稿暂存：取消/返回时恢复，选定目录后回填 source。
+    this.browseState = { returnDraft: this.draft, data: null, error: '' };
+    this.mode = 'bundleBrowse';
+    this.renderModal();
+    await this.loadBundleBrowse('');
+  },
+  async loadBundleBrowse(path) {
+    try {
+      const data = await post('/react/bundle/browse', { path });
+      if (!this.browseState) return;
+      this.browseState.data = data;
+      this.browseState.error = '';
+    } catch (error) {
+      if (!this.browseState) return;
+      this.browseState.error = error?.message || '目录读取失败';
+    }
+    if (this.mode === 'bundleBrowse') this.renderModal();
+  },
+  useBundleBrowseCurrent() {
+    const current = this.browseState?.data?.current;
+    if (!current || !this.browseState?.returnDraft) return;
+    this.draft = { ...this.browseState.returnDraft, source: current };
+    this.mode = 'bundleInstall';
+    this.browseState = null;
+    this.renderModal();
+  },
   async openEdit(item) {
     const resourceType = this.type;
     const resource = this.resource();
@@ -1711,6 +1737,14 @@ const management = {
     }
   },
   closeModal() {
+    // 目录选择器的「返回」= 回到安装表单（保留已填草稿），不是关闭弹窗。
+    if (this.mode === 'bundleBrowse' && this.browseState?.returnDraft) {
+      this.draft = this.browseState.returnDraft;
+      this.mode = 'bundleInstall';
+      this.browseState = null;
+      this.renderModal();
+      return;
+    }
     this.draft = null;
     $('management-modal-mask').classList.remove('rp-visible');
   },
@@ -1750,6 +1784,31 @@ const management = {
       $('management-modal-mask').classList.add('rp-visible');
       return;
     }
+    // Bundle 来源目录选择器：浏览白名单内目录，选定后回填安装表单 source。
+    if (this.mode === 'bundleBrowse') {
+      const state = this.browseState ?? { data: null, error: '' };
+      const data = state.data;
+      $('management-modal-title').textContent = '选择安装目录';
+      let body = '';
+      if (state.error) body += `<div class="rp-operation-note" style="color:var(--danger)">${escapeHtml(state.error)}</div>`;
+      if (data) {
+        const dirs = data.dirs ?? [];
+        body += `
+          <div class="rp-dir-current" title="${escapeHtml(data.current || '')}">${data.current ? `当前：${escapeHtml(data.current)}` : '白名单根目录（点击目录进入，可逐级下钻）'}</div>
+          <div class="rp-row-actions" style="margin-bottom:8px">
+            ${data.current && data.parent ? '<button class="rp-button" type="button" data-browse-up>上一级</button>' : ''}
+            ${data.current ? '<button class="rp-button rp-primary-btn" type="button" data-browse-use>使用当前目录</button>' : ''}
+          </div>
+          <div class="rp-dir-list">${dirs.length ? dirs.map((dir) => `<button class="rp-button rp-dir-item" type="button" data-browse-dir="${escapeHtml(dir.path)}" title="${escapeHtml(dir.path)}">📁 ${escapeHtml(dir.name)}</button>`).join('') : '<div class="rp-mcp-empty">此目录下没有可选子目录</div>'}</div>`;
+      } else if (!state.error) {
+        body += '<div class="rp-mcp-empty">加载中...</div>';
+      }
+      $('management-modal-body').innerHTML = body;
+      saveButton.hidden = true;
+      cancelButton.textContent = '返回';
+      $('management-modal-mask').classList.add('rp-visible');
+      return;
+    }
     saveButton.hidden = false;
     saveButton.textContent = '保存';
     cancelButton.textContent = '取消';
@@ -1766,7 +1825,7 @@ const management = {
       title = `导入${resource.itemName ?? resource.title.replace('管理', '')}定义`;
     } else if (this.mode === 'bundleInstall') {
       fields = [
-        ['source', '来源（白名单内 git URL 或本地路径）'],
+        ['source', '来源（白名单内 git URL 或本地路径）', 'sourcePath'],
         ['ref', 'git ref（空=HEAD，本地路径忽略）'],
         ['repoPath', '包内子目录（可选）'],
         ['callerKey', '兜底 caller', 'readonly'],
@@ -1803,6 +1862,10 @@ const management = {
       }
       if (type === 'readonly') {
         return `<label class="rp-field"><span class="rp-field-label">${label}</span><input class="rp-control rp-control-size-default" value="${escapeHtml(value)}" readonly disabled /></label>`;
+      }
+      // sourcePath：来源路径输入框附带目录选择器入口（Bundle 安装表单）。
+      if (type === 'sourcePath') {
+        return `<label class="rp-field rp-span-all"><span class="rp-field-label">${label}</span><span class="rp-source-path-row"><input class="rp-control rp-control-size-default" data-field="${key}" value="${escapeHtml(value)}" /><button class="rp-button" type="button" data-open-source-browser>选择目录…</button></span></label>`;
       }
       return `<label class="rp-field"><span class="rp-field-label">${label}</span><input class="rp-control rp-control-size-default" data-field="${key}" value="${escapeHtml(value)}" /></label>`;
     }).join('')}</div>`;
