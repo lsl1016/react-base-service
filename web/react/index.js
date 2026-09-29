@@ -549,6 +549,11 @@ const resources = {
     title: '工具管理',
     addText: '新增工具',
     idKey: 'toolId',
+    // 批量改状态（勾选/全选 + 批量启停）：/tool/update 是部分更新，最小 payload 仅传
+    // toolId+status，其余字段（含 config）不会被覆盖。
+    batchStatus: true,
+    batchItemName: '工具',
+    batchStatusPayload: (item, status) => ({ toolId: item.toolId, status }),
     // 工具页支持「只看 MCP」筛选（toolbar 按钮），筛出 MCP 连接同步进注册表的工具。
     mcpFilter: true,
     // 支持 Caller 筛选：全部（跨 caller）/ 默认作用域 / 各 caller。
@@ -627,6 +632,9 @@ const resources = {
     title: 'skill 管理',
     addText: '新增 skill',
     idKey: 'skillId',
+    // 批量改状态：/skill/update 要求全量字段，走默认 payload（列表项原值 + 新 status）。
+    batchStatus: true,
+    batchItemName: '技能',
     callerFilter: true,
     listPath: '/skill/list',
     createPath: '/skill/create',
@@ -920,6 +928,8 @@ const management = {
   mode: 'create',
   expandedMcp: new Set(),
   mcpConnection: '',
+  // 批量改状态的勾选集（存 idKey 值）：切页/重载清空，全选作用于当前筛选结果。
+  selectedIds: new Set(),
   init() {
     $('management-tabs').innerHTML = Object.entries(resources).map(([key, resource]) => (
       `<button class="rp-button rp-management-tab" data-type="${key}" type="button">${resource.tabText ?? resource.title.replace('管理', '')}</button>`
@@ -944,6 +954,21 @@ const management = {
     $('management-import').addEventListener('click', () => this.openImport());
     $('management-gwadmin').addEventListener('click', () => window.open('/react-base-service/react/mcp-admin', '_blank'));
     $('management-refresh').addEventListener('click', () => this.refresh());
+    // 批量改状态：按钮 + 表头全选（委托到 thead，innerHTML 重渲染不影响）。
+    $('management-batch-enable').addEventListener('click', () => this.batchSetStatus(1));
+    $('management-batch-disable').addEventListener('click', () => this.batchSetStatus(0));
+    $('management-head').addEventListener('change', (event) => {
+      if (!event.target.matches('[data-batch-select-all]')) return;
+      this.toggleSelectAll(event.target.checked);
+    });
+    $('management-body').addEventListener('change', (event) => {
+      const box = event.target.closest('[data-batch-select]');
+      if (!box) return;
+      const key = box.dataset.batchSelect;
+      if (box.checked) this.selectedIds.add(key);
+      else this.selectedIds.delete(key);
+      this.updateBatchControls();
+    });
     $('management-modal-body').addEventListener('click', (event) => {
       const logsAction = event.target.closest('[data-logs-action]')?.dataset.logsAction;
       if (logsAction) {
@@ -992,7 +1017,15 @@ const management = {
     $('management-cards').classList.toggle('rp-hidden', !useCards);
     document.querySelector('.rp-caller-filter-field')?.classList.toggle('rp-hidden', !resource.callerFilter);
     document.querySelector('.rp-mcp-filter-field')?.classList.toggle('rp-hidden', !resource.mcpFilter);
-    $('management-head').innerHTML = useCards ? '' : `<tr class="rp-table-row">${resource.columns.map(([, label]) => `<th class="rp-table-cell rp-table-header-cell">${label}</th>`).join('')}</tr>`;
+    // 批量改状态控件：仅 batchStatus 资源显示；切页换 id 空间，勾选集清空。
+    const batchable = Boolean(resource.batchStatus) && !useCards;
+    $('management-batch-enable').hidden = !batchable;
+    $('management-batch-disable').hidden = !batchable;
+    this.selectedIds.clear();
+    const batchHead = batchable
+      ? '<th class="rp-table-cell rp-table-header-cell rp-batch-cell"><input type="checkbox" data-batch-select-all title="全选（当前筛选结果）" /></th>'
+      : '';
+    $('management-head').innerHTML = useCards ? '' : `<tr class="rp-table-row">${batchHead}${resource.columns.map(([, label]) => `<th class="rp-table-cell rp-table-header-cell">${label}</th>`).join('')}</tr>`;
     // MCP 相关页提供「网关管理台」入口（mcp-server 风格的独立管理页，
     // 工具批量注册/编辑/上下线/应用授权都在管理台里做）。
     $('management-gwadmin').hidden = !(this.type === 'mcp' || this.type === 'mcpapp');
@@ -1022,6 +1055,8 @@ const management = {
   async reload() {
     const resource = this.resource();
     const config = this.config();
+    // 重载后 id 集可能失效（增删改），勾选清空由 renderShell/renderTable 联动复位按钮。
+    this.selectedIds.clear();
     this.setState('加载中...');
     try {
       // Caller 筛选资源：选中值优先（空 = 全部 caller），未启用筛选的资源沿用全局 callerKey。
@@ -1142,14 +1177,22 @@ const management = {
     }
     const rows = this.filteredItems();
     this.refreshMcpConnectionOptions();
+    const batchable = Boolean(resource.batchStatus);
     if (!rows.length) {
-      $('management-body').innerHTML = `<tr class="rp-table-row"><td class="rp-table-cell rp-table-empty-cell" colspan="${resource.columns.length}">暂无数据</td></tr>`;
+      $('management-body').innerHTML = `<tr class="rp-table-row"><td class="rp-table-cell rp-table-empty-cell" colspan="${resource.columns.length + (batchable ? 1 : 0)}">暂无数据</td></tr>`;
+      this.updateBatchControls();
       return;
     }
+    const batchCell = (item) => {
+      if (!batchable) return '';
+      const key = this.batchKey(item);
+      return `<td class="rp-table-cell rp-batch-cell"><input type="checkbox" data-batch-select="${escapeHtml(key)}" ${this.selectedIds.has(key) ? 'checked' : ''} /></td>`;
+    };
     $('management-body').innerHTML = rows.map((item, index) => (
-      `<tr class="rp-table-row" data-index="${index}">${resource.columns.map(([key]) => `<td class="rp-table-cell" title="${escapeHtml(typeof item[key] === 'object' ? JSON.stringify(item[key] ?? '') : item[key] ?? '')}">${this.renderValue(key, item)}</td>`).join('')}</tr>`
+      `<tr class="rp-table-row" data-index="${index}">${batchCell(item)}${resource.columns.map(([key]) => `<td class="rp-table-cell" title="${escapeHtml(typeof item[key] === 'object' ? JSON.stringify(item[key] ?? '') : item[key] ?? '')}">${this.renderValue(key, item)}</td>`).join('')}</tr>`
     )).join('');
     this.visibleItems = rows;
+    this.updateBatchControls();
   },
   // MCP 连接卡片列表：每张卡片 = 头部（名称/传输/状态/端点/工具数/操作）+ 可展开工具清单。
   renderMcpCards() {
@@ -1834,6 +1877,70 @@ const management = {
     } catch (error) {
       this.setState(error.message || '删除失败', true);
     }
+  },
+  // ===== 批量改状态（batchStatus 资源：工具/技能）=====
+  batchKey(item) {
+    return String(item[this.resource().idKey] ?? '');
+  },
+  toggleSelectAll(checked) {
+    this.filteredItems().forEach((item) => {
+      const key = this.batchKey(item);
+      if (checked) this.selectedIds.add(key);
+      else this.selectedIds.delete(key);
+    });
+    this.renderTable();
+  },
+  // 同步批量按钮（计数/禁用态）与表头全选框（含半选态）。
+  updateBatchControls() {
+    const resource = this.resource();
+    if (!resource.batchStatus) return;
+    const rows = this.filteredItems();
+    const count = rows.filter((item) => this.selectedIds.has(this.batchKey(item))).length;
+    [['management-batch-enable', '批量启用'], ['management-batch-disable', '批量停用']].forEach(([id, label]) => {
+      const button = $(id);
+      if (!button) return;
+      button.disabled = count === 0;
+      button.textContent = count ? `${label}（${count}）` : label;
+    });
+    const all = $('management-head')?.querySelector('[data-batch-select-all]');
+    if (all) {
+      const allChecked = rows.length > 0 && count === rows.length;
+      all.checked = allChecked;
+      all.indeterminate = !allChecked && count > 0;
+    }
+  },
+  async batchSetStatus(status) {
+    const resource = this.resource();
+    if (!resource.batchStatus) return;
+    const label = status === 1 ? '启用' : '停用';
+    const itemName = resource.batchItemName ?? '记录';
+    const selected = this.filteredItems().filter((item) => this.selectedIds.has(this.batchKey(item)));
+    const rows = selected.filter((item) => Number(item.status) !== status);
+    const skipped = selected.length - rows.length;
+    if (selected.length === 0) return;
+    if (!rows.length) {
+      this.setState(`选中的 ${selected.length} 个${itemName}均已${label}，无需操作`);
+      return;
+    }
+    if (status === 0 && !confirm(`确认批量停用 ${rows.length} 个${itemName}吗？停用后不会出现在会话工具/技能索引中。`)) return;
+    // payload 构造：资源可覆写 batchStatusPayload（工具走最小 payload），默认全量 + 新 status。
+    const build = resource.batchStatusPayload || ((item, target) => resource.toPayload({ ...item, status: target }, this.config()));
+    this.setState(`正在批量${label} ${rows.length} 个${itemName}...`);
+    let ok = 0;
+    const failed = [];
+    for (const item of rows) {
+      try {
+        await post(resource.updatePath, build(item, status));
+        ok += 1;
+      } catch (error) {
+        failed.push(`${item[resource.idKey]}：${error?.message || '失败'}`);
+      }
+    }
+    await this.reload();
+    const suffix = skipped ? `，${skipped} 个已是目标状态跳过` : '';
+    this.setState(failed.length
+      ? `批量${label}完成：成功 ${ok}，失败 ${failed.length}（${failed.slice(0, 3).join('；')}${failed.length > 3 ? ' 等' : ''}）${suffix}`
+      : `批量${label}完成：${ok} 个${itemName}${suffix}`);
   },
   async toggle(item) {
     const resource = this.resource();

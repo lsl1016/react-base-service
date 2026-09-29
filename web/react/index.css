@@ -556,6 +556,17 @@
   font-weight: 700;
 }
 
+/* 批量改状态：行首勾选列（工具/技能管理页），窄列居中。 */
+.rp-table-cell.rp-batch-cell {
+  width: 34px;
+  min-width: 34px;
+  text-align: center;
+}
+.rp-batch-cell input[type='checkbox'] {
+  cursor: pointer;
+  accent-color: #2563eb;
+}
+
 .rp-table-row:hover {
   background: #f8fafc;
 }
