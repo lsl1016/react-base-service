@@ -1,0 +1,29 @@
+{
+  "_comment": "LLM 模型能力目录（models.dev 风格的本地种子数据）。匹配规则：先查 exact（模型 ID 全等，大小写不敏感），未命中再按 prefixes 顺序取首个前缀命中。目录只是种子——能力声明可被「模型与参数」tab 的每模型开关覆盖。contextTokens/maxOutputTokens 为 0 表示未知（回退目录/默认），不猜数值。",
+  "exact": {
+    "glm-4.5":    { "tools": true,  "thinking": true,  "vision": false },
+    "glm-4.5-air":{ "tools": true,  "thinking": true,  "vision": false },
+    "glm-4.6":    { "tools": true,  "thinking": true,  "vision": false },
+    "glm-4.7":    { "tools": true,  "thinking": true,  "vision": false },
+    "glm-5":      { "tools": true,  "thinking": true,  "vision": false },
+    "glm-5-turbo":{ "tools": true,  "thinking": true,  "vision": false },
+    "glm-5.1":    { "tools": true,  "thinking": true,  "vision": false },
+    "glm-5.2":    { "tools": true,  "thinking": true,  "vision": false },
+    "glm-5.3":    { "tools": true,  "thinking": true,  "vision": false },
+    "glm-5.3-flash":  { "tools": true, "thinking": true, "vision": false },
+    "glm-5.3-flashx": { "tools": true, "thinking": true, "vision": false },
+    "deepseek-flash":   { "tools": true, "thinking": true, "vision": false },
+    "deepseek-v4-pro":  { "tools": true, "thinking": true, "vision": false }
+  },
+  "prefixes": [
+    { "prefix": "glm-4.5v",  "caps": { "tools": true, "thinking": true, "vision": true } },
+    { "prefix": "glm-4.6v",  "caps": { "tools": true, "thinking": true, "vision": true } },
+    { "prefix": "glm-",      "caps": { "tools": true, "thinking": true, "vision": false } },
+    { "prefix": "deepseek",  "caps": { "tools": true, "thinking": true, "vision": false } },
+    { "prefix": "claude-",   "caps": { "tools": true, "thinking": true, "vision": true } },
+    { "prefix": "gpt-",      "caps": { "tools": true, "thinking": false, "vision": true } },
+    { "prefix": "qwen-vl",   "caps": { "tools": true, "thinking": true, "vision": true } },
+    { "prefix": "qwen",      "caps": { "tools": true, "thinking": true, "vision": false } },
+    { "prefix": "minimax",   "caps": { "tools": true, "thinking": true, "vision": false } }
+  ]
+}

@@ -408,3 +408,77 @@
     }
   }
 }
+
+// 模型发现勾选列表（连接卡片「拉取模型」结果）：
+// 网格对齐——复选框固定列、ID 等宽字体 + 超长省略、（已在用）徽标右贴；
+// 容器按面板宽度自动排双列，避免单列长短 ID 参差。
+.agent-ui-settings-model-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: $agent-ui-spacing-xs $agent-ui-spacing-md;
+  max-height: 264px;
+  overflow-y: auto;
+  padding: $agent-ui-spacing-sm 0;
+}
+
+.agent-ui-settings-model-option {
+  display: flex;
+  align-items: center;
+  gap: $agent-ui-spacing-sm;
+  min-width: 0;
+  font-size: $agent-ui-font-size-xs;
+  color: $agent-ui-text-secondary;
+  cursor: pointer;
+
+  // 行内分区：[复选框][模型ID 弹性伸缩+超长省略][能力徽标 右贴][(已在用) 右贴]。
+  // 用专用类而不是 >span 通配——徽标容器同为直接子 span，通配会把它也拉成弹性伸缩，
+  // 徽标位置随 ID 长度漂移（曾出现的对齐 bug）。
+  .agent-ui-settings-model-id {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  em {
+    flex: 0 0 auto;
+    color: $agent-ui-text-tertiary;
+    font-style: normal;
+    white-space: nowrap;
+  }
+
+  input[type="checkbox"] {
+    // 抵消 .agent-ui-settings-field 的 input { width: 100% }（会把复选框撑满整行、
+    // 把模型 ID 挤成 0 宽），复选框必须回到内容尺寸。
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0;
+    cursor: pointer;
+  }
+}
+
+// 能力徽标（模型发现列表：工具/思考/视觉，目录自动识别）；右贴对齐，
+// 与（已在用）标记一起构成行尾固定区，不随 ID 长度漂移。
+.agent-ui-settings-model-caps {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.agent-ui-settings-cap {
+  padding: 0 4px;
+  border: 1px solid $agent-ui-border-color-light;
+  border-radius: $agent-ui-radius-sm;
+  font-size: 10px;
+  line-height: 14px;
+  color: $agent-ui-text-tertiary;
+  font-style: normal;
+  white-space: nowrap;
+
+  &.agent-ui-settings-cap-vision {
+    color: $agent-ui-text-secondary;
+  }
+}

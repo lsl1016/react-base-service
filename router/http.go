@@ -154,6 +154,16 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		modelGroup.POST("/detail", llmmodel.GetUserModelDetail)
 		// 积分管理接口
 		modelGroup.POST("/credits/adjust", llmmodel.AdjustCredits)
+		// 连接管理接口（协议+接入地址+Key 的自包含连接，模型配置的主体形态）
+		connectionGroup := modelGroup.Group("/connection")
+		{
+			connectionGroup.POST("/create", llmmodel.CreateConnection)
+			connectionGroup.POST("/update", llmmodel.UpdateConnection)
+			connectionGroup.POST("/delete", llmmodel.DeleteConnection)
+			connectionGroup.POST("/list", llmmodel.ListConnections)
+			connectionGroup.POST("/check", llmmodel.CheckConnection)
+			connectionGroup.POST("/fetch_models", llmmodel.FetchConnectionModels)
+		}
 	}
 
 	// Caller 管理接口

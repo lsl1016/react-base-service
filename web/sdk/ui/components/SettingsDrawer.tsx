@@ -12,7 +12,7 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import IconMdiClose from "~icons/mdi/close";
 import type { AgentClient } from "../../runtime/agent-client";
-import type { ConfigParamSchema, ConfigSchemaResp, UserModelItem, VendorModelInfo, VendorModelsResp } from "../../protocol/types";
+import type { ConfigParamSchema, ConfigSchemaResp, ConnectionItem, ConnectionModelItem, ConnectionProtocol, UserModelItem, VendorModelInfo, VendorModelsResp } from "../../protocol/types";
 
 export interface SettingsDrawerProps {
   /** 是否展开 */
@@ -27,7 +27,7 @@ export interface SettingsDrawerProps {
 type SettingsTab = "providers" | "models" | "context" | "advanced";
 
 const TABS: Array<{ key: SettingsTab; label: string }> = [
-  { key: "providers", label: "厂商与密钥" },
+  { key: "providers", label: "连接与密钥" },
   { key: "models", label: "模型与参数" },
   { key: "context", label: "上下文与压缩" },
   { key: "advanced", label: "高级" },
@@ -44,6 +44,7 @@ interface Feedback {
 export function SettingsDrawer(props: SettingsDrawerProps) {
   const [tab, setTab] = createSignal<SettingsTab>("providers");
   const [userModels, setUserModels] = createSignal<UserModelItem[]>([]);
+  const [connections, setConnections] = createSignal<ConnectionItem[]>([]);
   const [vendors, setVendors] = createSignal<VendorModelInfo[]>([]);
   const [vendorEnum, setVendorEnum] = createSignal<string[]>([]);
   const [schema, setSchema] = createSignal<ConfigParamSchema[]>([]);
@@ -62,12 +63,14 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
 
   const refreshAll = async () => {
     try {
-      const [models, vendorResp, schemaResp] = await Promise.all([
+      const [models, connList, vendorResp, schemaResp] = await Promise.all([
         props.client.listUserModels(),
+        props.client.listConnections().catch(() => [] as ConnectionItem[]),
         props.client.listVendorModels().catch(() => ({ models: [] }) as VendorModelsResp),
         props.client.getConfigSchema().catch(() => ({ params: [] }) as ConfigSchemaResp),
       ]);
       setUserModels(models ?? []);
+      setConnections(connList ?? []);
       setVendors(vendorResp.models ?? []);
       setVendorEnum(vendorResp.vendors ?? []);
       setSchema(schemaResp.params ?? []);
@@ -78,12 +81,10 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   };
 
   createEffect(() => {
-    if (props.open && userModels().length === 0 && vendors().length === 0) {
+    if (props.open && userModels().length === 0 && vendors().length === 0 && connections().length === 0) {
       void refreshAll();
     }
   });
-
-  const vendorLabel = (modelKey: string): string => modelKey;
 
   return (
     <Show when={props.open}>
@@ -126,12 +127,12 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
 
           <div class="agent-ui-settings-body">
             <Show when={tab() === "providers"}>
-              <ProviderGroups
+              <ConnectionsSection
                 client={props.client}
+                connections={connections()}
                 userModels={userModels()}
                 vendors={vendors()}
                 vendorEnum={vendorEnum()}
-                vendorLabel={vendorLabel}
                 onFeedback={showFeedback}
                 onChanged={refreshAll}
                 schemaParam={schemaParam}
@@ -159,24 +160,38 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   );
 }
 
-// ─── Tab 1：厂商与密钥 ─────────────────────────────────────────────
+// ─── Tab 1：连接与密钥 ─────────────────────────────────────────────
+// 连接（协议 + 接入地址 + Key）是模型配置的主体形态：
+//   添加连接（选预设/自定义）→ 测试连通 → 拉取模型列表 → 勾选启用；
+// 自包含模型（自带 key/接入地址的旧形态）保留在下方兜底。
 
-interface ProviderGroupsProps {
+/** 连接预设：预填协议与接入地址，降低「不知道贴哪个 URL」的成本 */
+const CONNECTION_PRESETS: Array<{ key: string; label: string; protocol: ConnectionProtocol; baseUrl: string }> = [
+  { key: "custom", label: "自定义", protocol: "openai", baseUrl: "" },
+  { key: "zhipu-anthropic", label: "智谱 GLM（Anthropic 协议）", protocol: "anthropic", baseUrl: "https://open.bigmodel.cn/api/anthropic" },
+  { key: "zhipu-openai", label: "智谱 GLM（OpenAI 兼容）", protocol: "openai", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4" },
+  { key: "deepseek-anthropic", label: "DeepSeek（Anthropic 协议）", protocol: "anthropic", baseUrl: "https://api.deepseek.com/anthropic" },
+  { key: "openrouter", label: "OpenRouter", protocol: "openai", baseUrl: "https://openrouter.ai/api/v1" },
+  { key: "ollama", label: "Ollama 本地", protocol: "openai", baseUrl: "http://127.0.0.1:11434/v1" },
+];
+
+interface ConnectionsSectionProps {
   client: AgentClient;
+  connections: ConnectionItem[];
   userModels: UserModelItem[];
   vendors: VendorModelInfo[];
-  /** 厂商枚举（/models 的 vendors 字段，新枚举）；空数组时添加行退化为自由填写厂商 */
   vendorEnum: string[];
-  vendorLabel: (modelKey: string) => string;
   schemaParam: (key: string) => ConfigParamSchema | undefined;
   onFeedback: (kind: Feedback["kind"], text: string) => void;
   onChanged: () => Promise<void> | void;
 }
 
-function ProviderGroups(props: ProviderGroupsProps) {
-  const groups = createMemo(() => {
+function ConnectionsSection(props: ConnectionsSectionProps) {
+  const legacyModels = createMemo(() => props.userModels.filter((item) => !item.connectionId));
+
+  const groupedLegacy = createMemo(() => {
     const byKey = new Map<string, UserModelItem[]>();
-    for (const item of props.userModels) {
+    for (const item of legacyModels()) {
       const list = byKey.get(item.modelKey) ?? [];
       list.push(item);
       byKey.set(item.modelKey, list);
@@ -191,51 +206,435 @@ function ProviderGroups(props: ProviderGroupsProps) {
 
   return (
     <div class="agent-ui-settings-stack">
-      <For each={groups()}>
-        {(group) => (
-          <div class="agent-ui-settings-card">
-            <div class="agent-ui-settings-card-head">
-              <span class="agent-ui-settings-card-title">{props.vendorLabel(group.modelKey)}</span>
-              <span class="agent-ui-settings-card-sub">{group.items.length} 个模型</span>
-            </div>
-            <For each={group.items}>
-              {(item) => (
-                <ProviderModelRow
-                  client={props.client}
-                  item={item}
-                  schemaParam={props.schemaParam}
-                  onFeedback={props.onFeedback}
-                  onChanged={props.onChanged}
-                />
-              )}
-            </For>
-            <AddModelRow
-              client={props.client}
-              modelKey={group.modelKey}
-              versions={catalogVersions(group.modelKey)}
-              vendorOptions={[]}
-              onFeedback={props.onFeedback}
-              onChanged={props.onChanged}
-            />
-          </div>
+      <div class="agent-ui-settings-hint">
+        连接 = 协议 + 接入地址 + API Key。测试连通后可一键拉取可用模型并勾选启用；
+        无 ModelHash 的 run 也会按 caller+路由解析到连接（优先于旧版 API Key）。
+      </div>
+      <For each={props.connections}>
+        {(item) => (
+          <ConnectionCard
+            client={props.client}
+            item={item}
+            boundModels={props.userModels.filter((m) => m.connectionId === item.id)}
+            onFeedback={props.onFeedback}
+            onChanged={props.onChanged}
+          />
         )}
       </For>
-      <Show when={groups().length === 0}>
+      <Show when={props.connections.length === 0}>
         <div class="agent-ui-settings-empty">
-          暂无模型配置。通过下方「添加模型」选择厂商并填写 API Key 创建第一条配置；
-          或联系管理员在模型管理后台配置平台默认模型。
+          暂无连接。通过下方「添加连接」选择预设（或自定义）并填写 API Key 创建第一条连接。
         </div>
       </Show>
-      <AddModelRow
-        client={props.client}
-        versions={[]}
-        vendorOptions={props.vendorEnum}
-        onFeedback={props.onFeedback}
-        onChanged={props.onChanged}
-      />
+      <AddConnectionRow client={props.client} onFeedback={props.onFeedback} onChanged={props.onChanged} />
+
+      <Show when={groupedLegacy().length > 0}>
+        <div class="agent-ui-settings-card">
+          <div class="agent-ui-settings-card-head">
+            <span class="agent-ui-settings-card-title">自包含模型（未挂连接，自带 Key）</span>
+            <span class="agent-ui-settings-card-sub">{legacyModels().length} 个模型</span>
+          </div>
+          <For each={groupedLegacy()}>
+            {(group) => (
+              <For each={group.items}>
+                {(item) => (
+                  <ProviderModelRow
+                    client={props.client}
+                    item={item}
+                    schemaParam={props.schemaParam}
+                    onFeedback={props.onFeedback}
+                    onChanged={props.onChanged}
+                  />
+                )}
+              </For>
+            )}
+          </For>
+          <AddModelRow
+            client={props.client}
+            modelKey={groupedLegacy()[0]?.modelKey}
+            versions={catalogVersions(groupedLegacy()[0]?.modelKey ?? "")}
+            vendorOptions={props.vendorEnum}
+            onFeedback={props.onFeedback}
+            onChanged={props.onChanged}
+          />
+        </div>
+      </Show>
     </div>
   );
 }
+
+// ─── 连接卡片 ──────────────────────────────────────────────────────
+
+interface ConnectionCardProps {
+  client: AgentClient;
+  item: ConnectionItem;
+  boundModels: UserModelItem[];
+  onFeedback: (kind: Feedback["kind"], text: string) => void;
+  onChanged: () => Promise<void> | void;
+}
+
+function ConnectionCard(props: ConnectionCardProps) {
+  const [expanded, setExpanded] = createSignal(false);
+  const [name, setName] = createSignal("");
+  const [baseUrl, setBaseUrl] = createSignal("");
+  const [apiKey, setApiKey] = createSignal("");
+  const [testing, setTesting] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
+  const [testResult, setTestResult] = createSignal<Feedback>();
+  const [fetching, setFetching] = createSignal(false);
+  const [discovered, setDiscovered] = createSignal<ConnectionModelItem[]>([]);
+  const [selected, setSelected] = createSignal<Set<string>>(new Set());
+  const [adding, setAdding] = createSignal(false);
+
+  const startEdit = async () => {
+    setExpanded((value) => !value);
+  };
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(undefined);
+    try {
+      await props.client.checkConnection(props.item.id);
+      setTestResult({ kind: "ok", text: "连通成功" });
+    } catch (error) {
+      setTestResult({ kind: "error", text: `连通失败: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await props.client.updateConnection({
+        id: props.item.id,
+        name: name() || undefined,
+        baseUrl: baseUrl() || undefined,
+        apiKey: apiKey() || undefined,
+      });
+      props.onFeedback("ok", "已保存");
+      setApiKey("");
+      await props.onChanged();
+    } catch (error) {
+      props.onFeedback("error", `保存失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirm(`删除连接「${props.item.name}」后不可恢复，确认继续吗？`)) return;
+    try {
+      await props.client.deleteConnection(props.item.id);
+      props.onFeedback("ok", "已删除");
+      await props.onChanged();
+    } catch (error) {
+      props.onFeedback("error", `删除失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const fetchModels = async () => {
+    setFetching(true);
+    setDiscovered([]);
+    try {
+      const resp = await props.client.fetchConnectionModels(props.item.id);
+      setDiscovered(resp.models ?? []);
+      const existing = new Set(props.boundModels.map((m) => m.modelVersion));
+      setSelected(new Set((resp.models ?? []).filter((item) => !existing.has(item.id)).slice(0, 1).map((item) => item.id)));
+    } catch (error) {
+      props.onFeedback("error", `拉取模型列表失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const toggleModel = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const addSelected = async () => {
+    const ids = [...selected()];
+    if (ids.length === 0) {
+      props.onFeedback("error", "请先勾选要启用的模型");
+      return;
+    }
+    setAdding(true);
+    let created = 0;
+    try {
+      for (const id of ids) {
+        // 能力位来自 fetch_models 的目录自动填充；未命中目录时为 0（保守），可在「模型与参数」修正。
+        const caps = discovered().find((item) => item.id === id);
+        try {
+          await props.client.createUserModel({
+            modelName: id,
+            modelKey: props.item.protocol === "anthropic" ? "Anthropic" : "OpenAI",
+            modelVersion: id,
+            apiKey: "",
+            bizScenes: DEFAULT_BIZ_SCENES,
+            connectionId: props.item.id,
+            supportTools: caps?.supportTools ?? 0,
+            supportThinking: caps?.supportThinking ?? 0,
+            supportVision: caps?.supportVision ?? 0,
+            contextTokens: caps?.contextTokens ?? 0,
+            maxOutputTokens: caps?.maxOutputTokens ?? 0,
+          });
+          created++;
+        } catch (error) {
+          // 单个失败（如重名）不阻断批量，汇总提示。
+          props.onFeedback("error", `模型 ${id} 创建失败: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (created > 0) props.onFeedback("ok", `已启用 ${created} 个模型，可在模型选择器使用`);
+      setDiscovered([]);
+      await props.onChanged();
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div class="agent-ui-settings-card">
+      <div class="agent-ui-settings-card-head">
+        <span class="agent-ui-settings-card-title">
+          {props.item.name}
+          <span class="agent-ui-settings-card-sub">
+            {props.item.protocol === "anthropic" ? "Anthropic 协议" : "OpenAI 兼容"} · {props.boundModels.length} 个模型
+          </span>
+        </span>
+        <div class="agent-ui-settings-row-actions">
+          <button type="button" class="agent-ui-settings-btn" disabled={testing()} onClick={() => void runTest()}>
+            {testing() ? "检测中…" : "测试连通"}
+          </button>
+          <button type="button" class="agent-ui-settings-btn" disabled={fetching()} onClick={() => void fetchModels()}>
+            {fetching() ? "拉取中…" : "拉取模型"}
+          </button>
+          <button type="button" class="agent-ui-settings-btn" onClick={() => void startEdit()}>
+            {expanded() ? "收起" : "编辑"}
+          </button>
+          <button type="button" class="agent-ui-settings-btn agent-ui-settings-btn-danger" onClick={() => void remove()}>
+            删除
+          </button>
+        </div>
+      </div>
+      <div class="agent-ui-settings-card-sub" title={props.item.baseUrl}>
+        {props.item.baseUrl} · {props.item.apiKey} · caller: {props.item.callerKey || "（空）"}
+      </div>
+      <Show when={testResult()}>
+        {(result) => (
+          <div class={`agent-ui-settings-feedback agent-ui-settings-feedback-${result().kind}`}>{result().text}</div>
+        )}
+      </Show>
+      <Show when={expanded()}>
+        <div class="agent-ui-settings-form">
+          <label class="agent-ui-settings-field">
+            <span>名称</span>
+            <input
+              type="text"
+              placeholder={props.item.name}
+              value={name()}
+              onInput={(event) => setName(event.currentTarget.value)}
+            />
+          </label>
+          <label class="agent-ui-settings-field">
+            <span>接入地址</span>
+            <input
+              type="text"
+              placeholder={props.item.baseUrl}
+              value={baseUrl()}
+              onInput={(event) => setBaseUrl(event.currentTarget.value)}
+            />
+          </label>
+          <label class="agent-ui-settings-field">
+            <span>新 API Key（留空 = 保持原值）</span>
+            <input
+              type="password"
+              autocomplete="off"
+              placeholder="不修改则留空"
+              value={apiKey()}
+              onInput={(event) => setApiKey(event.currentTarget.value)}
+            />
+          </label>
+          <div class="agent-ui-settings-form-actions">
+            <button type="button" class="agent-ui-settings-btn agent-ui-settings-btn-primary" disabled={saving()} onClick={() => void save()}>
+              {saving() ? "保存中…" : "保存"}
+            </button>
+          </div>
+        </div>
+      </Show>
+      <Show when={discovered().length > 0}>
+        <div class="agent-ui-settings-form">
+          <div class="agent-ui-settings-field">
+            <span>可用模型（勾选后启用；标签为能力目录自动识别：工具/思考/视觉）</span>
+            <div class="agent-ui-settings-model-list">
+              <For each={discovered()}>
+                {(item) => {
+                  const bound = () => props.boundModels.some((m) => m.modelVersion === item.id);
+                  return (
+                    <label class="agent-ui-settings-model-option">
+                      <input
+                        type="checkbox"
+                        checked={selected().has(item.id)}
+                        disabled={bound()}
+                        onChange={() => toggleModel(item.id)}
+                      />
+                      <span class="agent-ui-settings-model-id">{item.id}</span>
+                      <span class="agent-ui-settings-model-caps">
+                        <Show when={item.supportTools === 1}>
+                          <em class="agent-ui-settings-cap">工具</em>
+                        </Show>
+                        <Show when={item.supportThinking === 1}>
+                          <em class="agent-ui-settings-cap">思考</em>
+                        </Show>
+                        <Show when={item.supportVision === 1}>
+                          <em class="agent-ui-settings-cap agent-ui-settings-cap-vision">视觉</em>
+                        </Show>
+                      </span>
+                      <Show when={bound()}>
+                        <em>（已在用）</em>
+                      </Show>
+                    </label>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+          <div class="agent-ui-settings-form-actions">
+            <button type="button" class="agent-ui-settings-btn agent-ui-settings-btn-primary" disabled={adding()} onClick={() => void addSelected()}>
+              {adding() ? "添加中…" : `启用所选（${selected().size}）`}
+            </button>
+            <button type="button" class="agent-ui-settings-btn" onClick={() => setDiscovered([])}>
+              收起
+            </button>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ─── 添加连接 ──────────────────────────────────────────────────────
+
+function AddConnectionRow(props: {
+  client: AgentClient;
+  onFeedback: (kind: Feedback["kind"], text: string) => void;
+  onChanged: () => Promise<void> | void;
+}) {
+  const [expanded, setExpanded] = createSignal(false);
+  const [preset, setPreset] = createSignal("zhipu-anthropic");
+  const [name, setName] = createSignal("");
+  const [baseUrl, setBaseUrl] = createSignal("");
+  const [apiKey, setApiKey] = createSignal("");
+  const [callerKey, setCallerKey] = createSignal("");
+  const [creating, setCreating] = createSignal(false);
+
+  const activePreset = () => CONNECTION_PRESETS.find((item) => item.key === preset()) ?? CONNECTION_PRESETS[0];
+  const effectiveProtocol = () => activePreset().protocol;
+  const effectiveBaseUrl = () => baseUrl().trim() || activePreset().baseUrl;
+
+  const applyPreset = (key: string) => {
+    setPreset(key);
+    const found = CONNECTION_PRESETS.find((item) => item.key === key);
+    if (found?.baseUrl) setBaseUrl(found.baseUrl);
+    if (!name().trim() && found && found.key !== "custom") setName(found.label.replace(/（.*）/, ""));
+  };
+
+  const canSubmit = () => name().trim() && effectiveBaseUrl() && apiKey().trim();
+
+  const create = async () => {
+    if (!canSubmit()) {
+      props.onFeedback("error", "名称、接入地址与 API Key 均必填");
+      return;
+    }
+    setCreating(true);
+    try {
+      await props.client.createConnection({
+        name: name().trim(),
+        protocol: effectiveProtocol(),
+        baseUrl: effectiveBaseUrl().trim(),
+        apiKey: apiKey().trim(),
+        callerKey: callerKey().trim(),
+        routeValues: [],
+      });
+      props.onFeedback("ok", "连接已创建，可点「测试连通」验证后拉取模型");
+      setName("");
+      setApiKey("");
+      setExpanded(false);
+      await props.onChanged();
+    } catch (error) {
+      props.onFeedback("error", `创建失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div class="agent-ui-settings-add-row">
+      <Show
+        when={expanded()}
+        fallback={
+          <button type="button" class="agent-ui-settings-btn" onClick={() => { setExpanded(true); applyPreset(preset()); }}>
+            + 添加连接
+          </button>
+        }
+      >
+        <div class="agent-ui-settings-form">
+          <label class="agent-ui-settings-field">
+            <span>预设</span>
+            <select value={preset()} onChange={(event) => applyPreset(event.currentTarget.value)}>
+              <For each={CONNECTION_PRESETS}>{(item) => <option value={item.key}>{item.label}</option>}</For>
+            </select>
+          </label>
+          <label class="agent-ui-settings-field">
+            <span>名称</span>
+            <input type="text" placeholder="如 智谱 GLM" value={name()} onInput={(event) => setName(event.currentTarget.value)} />
+          </label>
+          <label class="agent-ui-settings-field">
+            <span>协议</span>
+            <input type="text" readonly value={effectiveProtocol() === "anthropic" ? "Anthropic 兼容" : "OpenAI 兼容"} />
+          </label>
+          <label class="agent-ui-settings-field">
+            <span>接入地址</span>
+            <input
+              type="text"
+              placeholder={activePreset().baseUrl || "https://example.com/v1"}
+              value={baseUrl()}
+              onInput={(event) => setBaseUrl(event.currentTarget.value)}
+            />
+          </label>
+          <label class="agent-ui-settings-field">
+            <span>API Key</span>
+            <input
+              type="password"
+              autocomplete="off"
+              placeholder="sk-..."
+              value={apiKey()}
+              onInput={(event) => setApiKey(event.currentTarget.value)}
+            />
+          </label>
+          <label class="agent-ui-settings-field">
+            <span>作用 caller（可选；留空 = 全局通用，无 ModelHash 的 run 按 caller+路由解析）</span>
+            <input type="text" placeholder="如 demo-app" value={callerKey()} onInput={(event) => setCallerKey(event.currentTarget.value)} />
+          </label>
+          <div class="agent-ui-settings-form-actions">
+            <button type="button" class="agent-ui-settings-btn agent-ui-settings-btn-primary" disabled={creating()} onClick={() => void create()}>
+              {creating() ? "创建中…" : "创建"}
+            </button>
+            <button type="button" class="agent-ui-settings-btn" onClick={() => setExpanded(false)}>
+              取消
+            </button>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ─── 自包含模型行（旧形态：自带 Key/接入地址，P0-3 修复后保留兜底） ──
 
 interface ProviderModelRowProps {
   client: AgentClient;
@@ -266,14 +665,36 @@ function ProviderModelRow(props: ProviderModelRowProps) {
     }
   };
 
+  // P0 修复：输入为空时取真实 key（detail 回填或现拉），绝不把列表的脱敏占位值发给后端。
+  const resolveRealApiKey = async (): Promise<string | null> => {
+    const typed = apiKey().trim();
+    if (typed) return typed;
+    if (props.item.apiKey && !props.item.apiKey.includes("*")) return props.item.apiKey;
+    try {
+      const detail = await props.client.getUserModelDetail(props.item.id);
+      if (detail.apiKey) {
+        setApiKey(detail.apiKey);
+        return detail.apiKey;
+      }
+    } catch {
+      // 拉取失败走下方提示
+    }
+    return null;
+  };
+
   const runTest = async () => {
+    const realKey = await resolveRealApiKey();
+    if (!realKey) {
+      setTestResult({ kind: "error", text: "请填写 API Key（留空无法检测）" });
+      return;
+    }
     setTesting(true);
     setTestResult(undefined);
     try {
       await props.client.checkModelConnectivity({
         modelKey: props.item.modelKey,
         modelVersion: props.item.modelVersion,
-        apiKey: apiKey() || props.item.apiKey,
+        apiKey: realKey,
         apiUrl: apiUrl() || undefined,
       });
       setTestResult({ kind: "ok", text: "连通成功" });
@@ -285,6 +706,11 @@ function ProviderModelRow(props: ProviderModelRowProps) {
   };
 
   const save = async () => {
+    const realKey = await resolveRealApiKey();
+    if (!realKey) {
+      props.onFeedback("error", "请填写 API Key（留空无法保存）");
+      return;
+    }
     setSaving(true);
     try {
       await props.client.updateUserModel({
@@ -292,9 +718,10 @@ function ProviderModelRow(props: ProviderModelRowProps) {
         modelName: props.item.modelName,
         modelKey: props.item.modelKey,
         modelVersion: props.item.modelVersion,
-        apiKey: apiKey() || props.item.apiKey,
+        apiKey: realKey,
         bizScenes: props.item.bizScenes?.length ? props.item.bizScenes : DEFAULT_BIZ_SCENES,
         apiUrl: apiUrl(),
+        connectionId: props.item.connectionId ?? 0,
         contextTokens: props.item.contextTokens ?? 0,
         maxOutputTokens: props.item.maxOutputTokens ?? 0,
         supportThinking: props.item.supportThinking ?? 0,
@@ -577,14 +1004,26 @@ function ModelParamsRow(props: ModelParamsRowProps) {
   const save = async () => {
     setSaving(true);
     try {
+      // 本 tab 只编辑容量/能力参数：key 不回写脱敏值——挂连接模型传空，
+      // 自包含模型回拉 detail 取真实 key（与 ProviderModelRow 的 P0 修复同口径）。
+      let apiKey = props.item.connectionId ? "" : props.item.apiKey ?? "";
+      if (apiKey.includes("*")) {
+        try {
+          const detail = await props.client.getUserModelDetail(props.item.id);
+          apiKey = detail.apiKey ?? "";
+        } catch {
+          apiKey = "";
+        }
+      }
       await props.client.updateUserModel({
         id: props.item.id,
         modelName: props.item.modelName,
         modelKey: props.item.modelKey,
         modelVersion: props.item.modelVersion,
-        apiKey: props.item.apiKey,
+        apiKey,
         bizScenes: props.item.bizScenes?.length ? props.item.bizScenes : DEFAULT_BIZ_SCENES,
         apiUrl: props.item.apiUrl ?? "",
+        connectionId: props.item.connectionId ?? 0,
         contextTokens: Math.max(0, Math.floor(contextTokens() || 0)),
         maxOutputTokens: Math.max(0, Math.floor(maxOutputTokens() || 0)),
         supportThinking: supportThinking() ? 1 : 0,

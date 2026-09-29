@@ -24,6 +24,9 @@ type UserModel struct {
 	BizScenes    string                `json:"bizScenes" gorm:"column:biz_scenes;not null"`
 	// ApiURL 是模型配置面板「厂商与密钥」填写的自定义接入面（base url）；空=走 api.yaml 全局端点。
 	ApiURL string `json:"apiUrl" gorm:"column:api_url;not null;default:''"`
+	// ConnectionID 引用的 LLM 连接（tblLlmConnection）；非 0 时凭证/端点/协议以连接为准，
+	// 本记录的 ApiKey/ApiURL 不参与运行时解析。0=自包含模式（自带 key/接入地址，旧语义）。
+	ConnectionID uint `json:"connectionId" gorm:"column:connection_id;not null;default:0"`
 	// ContextTokens 是前端配置的上下文容量（token）；0=回退模型目录/全局压缩阈值。
 	ContextTokens int `json:"contextTokens" gorm:"column:context_tokens;not null;default:0"`
 	// MaxOutputTokens 是前端配置的单次最大输出 token；0=回退端点/目录/内置默认。

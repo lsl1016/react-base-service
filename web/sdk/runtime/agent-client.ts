@@ -36,7 +36,7 @@
  */
 import { WsClient } from '../client/ws-client';
 import { RECOVERY_CONTINUE_FLAG } from '../protocol/types';
-import type { ApiResponse, AskQuestionAnswerContent, CheckModelConnectivityReq, ChatFileUpload, ClientToolUseStartPayload, ConfigSchemaResp, ContextCompactSettingResp, CreateUserModelReq, ExecutionMode, LlmContext, ReactAttachmentRef, ReactEvent, ReactModelInfo, ReactModelsResp, ReactReasoningOptions, RunPayload, UpdateContextCompactSettingReq, UpdateUserModelReq, UserInputOrigin, UserModelItem, VendorModelsResp, WsMessageType } from '../protocol/types';
+import type { ApiResponse, AskQuestionAnswerContent, CheckModelConnectivityReq, ChatFileUpload, ClientToolUseStartPayload, ConfigSchemaResp, ConnectionItem, ConnectionModelsResp, ContextCompactSettingResp, CreateConnectionReq, CreateUserModelReq, ExecutionMode, LlmContext, ReactAttachmentRef, ReactEvent, ReactModelInfo, ReactModelsResp, ReactReasoningOptions, RunPayload, UpdateConnectionReq, UpdateContextCompactSettingReq, UpdateUserModelReq, UserInputOrigin, UserModelItem, VendorModelsResp, WsMessageType } from '../protocol/types';
 import { SessionManager } from '../session/session-manager';
 import type { AsyncTaskItem, HistoryEvent, QueueDeleteParams, QueueListParams, QueueListResp, QueueMutateResp, QueueReorderParams, QueueUpdateParams, SessionListParams, SessionListResp } from '../session/types';
 import type { SessionMeta } from '../storage/event-ledger';
@@ -328,6 +328,38 @@ export class AgentClient {
   /** 模型连通性检测（支持自定义接入面）。 */
   async checkModelConnectivity(params: CheckModelConnectivityReq): Promise<void> {
     return this.sessionManager.checkModelConnectivity(params);
+  }
+
+  // ─── LLM 连接管理（协议+接入地址+Key，模型配置的主体形态） ───────────────
+
+  /** 连接列表（key 脱敏 + 引用模型数）。 */
+  async listConnections(): Promise<ConnectionItem[]> {
+    return this.sessionManager.listConnections();
+  }
+
+  /** 创建连接。 */
+  async createConnection(params: CreateConnectionReq): Promise<void> {
+    return this.sessionManager.createConnection(params);
+  }
+
+  /** 编辑连接（apiKey 留空=保持原值）。 */
+  async updateConnection(params: UpdateConnectionReq): Promise<void> {
+    return this.sessionManager.updateConnection(params);
+  }
+
+  /** 删除连接（仍被模型引用时后端拒绝）。 */
+  async deleteConnection(id: number): Promise<void> {
+    return this.sessionManager.deleteConnection(id);
+  }
+
+  /** 连接连通性检测（/models + 最小对话，错误透传上游真因）。 */
+  async checkConnection(id: number): Promise<void> {
+    return this.sessionManager.checkConnection(id);
+  }
+
+  /** 拉取连接可用模型列表（服务端代理 GET {base}/models）。 */
+  async fetchConnectionModels(id: number): Promise<ConnectionModelsResp> {
+    return this.sessionManager.fetchConnectionModels(id);
   }
 
   /** 查询上下文压缩策略生效视图。 */

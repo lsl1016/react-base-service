@@ -31,7 +31,8 @@ func CheckConnectivity(ctx *gin.Context) {
 		return
 	}
 
-	if err := llmmodelService.CheckConnectivity(ctx, req.ModelKey, req.ModelVersion, req.ApiKey); err != nil {
+	// 透传表单里的接入地址：检测环境必须与保存后的运行环境一致（空=走 api.yaml 全局端点）。
+	if err := llmmodelService.CheckConnectivityWithEndpoint(ctx, req.ModelKey, req.ModelVersion, req.ApiKey, req.ApiURL); err != nil {
 		components.RenderJsonFail(ctx, err)
 		return
 	}

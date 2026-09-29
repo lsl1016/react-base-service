@@ -269,6 +269,27 @@ CREATE TABLE IF NOT EXISTS `tblLlmUserModel` (
     INDEX `idx_user_name` (`user_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM用户自定义模型表';
 
+-- LLM 连接表（协议+接入地址+Key 的自包含连接，模型配置的主体形态；见 docs/模型配置优化方案.md）
+CREATE TABLE IF NOT EXISTS `tblLlmConnection` (
+    `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `caller_key`   VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '所属caller(空=不限)',
+    `route_values` TEXT         NULL COMMENT '路由路径(JSON数组,[]=通用)',
+    `name`         VARCHAR(128) NOT NULL COMMENT '连接名称',
+    `protocol`     VARCHAR(16)  NOT NULL DEFAULT 'openai' COMMENT '协议: openai=OpenAI兼容 anthropic=Anthropic兼容',
+    `base_url`     VARCHAR(512) NOT NULL DEFAULT '' COMMENT '接入地址base url',
+    `api_key`      VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '密钥值(密文存储)',
+    `status`       TINYINT      NOT NULL DEFAULT 1 COMMENT '状态: 0=禁用 1=启用',
+    `created_by`   VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
+    `updated_by`   VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '更新人',
+    `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted_at`   BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
+    INDEX `idx_caller_route` (`caller_key`, `route_values`(255))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM连接表';
+
+-- 存量库升级：用户模型表补连接引用列（8.x ALTER 不支持 IF NOT EXISTS，由部署脚本幂等处理）
+-- ALTER TABLE `tblLlmUserModel` ADD COLUMN `connection_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '引用的LLM连接id(0=自包含模式)' AFTER `api_url`;
+
 -- 月度基础积分表（粒度：user_name × model_hash）
 CREATE TABLE IF NOT EXISTS `tblLlmUserBaseCredits` (
     `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',

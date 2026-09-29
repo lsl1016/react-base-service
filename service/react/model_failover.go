@@ -209,7 +209,13 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 				maxOutput = s.req.userModelMaxOutputTokens
 			}
 			var err error
-			client, err = llm.GetClientWithUserModelEndpoint(s.req.apiKey, target.ModelKey, endpointURL, maxOutput)
+			if target.ModelKey == s.req.resolvedModelKey && s.req.connProtocol != "" {
+				// LLM 连接路径：主模型按连接协议构建（gpt/claude client 由协议决定），
+				// 端点用连接 base url；互备模型仍走全局端点推导链。
+				client, err = llm.GetClientWithProtocol(s.req.apiKey, s.req.connProtocol, endpointURL, maxOutput)
+			} else {
+				client, err = llm.GetClientWithUserModelEndpoint(s.req.apiKey, target.ModelKey, endpointURL, maxOutput)
+			}
 			if err != nil {
 				lastResult = modelRoundResult{Model: target}
 				lastErr = components.ErrorLLMRequest.Sprintf(err.Error())
@@ -227,15 +233,32 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 		// 同模型重试内环：可重试失败退避后重试同一模型；不可重试或预算耗尽则跳出切互备。
 		var lastClass modelFailureClass
 		var lastReason string
+		// 能力门禁（P2 运行时接线，仅对主模型生效）：
+		// - 用户模型声明不支持 tools 时不下发工具 schema（模型按纯对话作答，ReAct 循环自然收敛）；
+		// - 能力声明挂入 llmCtx，由协议 client 门禁 thinking 参数与图片载荷。
+		// 互备模型是平台目录模型，不做门禁（沿用目录能力口径）。
+		effectiveTools := tools
+		isPrimaryTarget := target.ModelKey == s.req.resolvedModelKey
+		if isPrimaryTarget && s.req.capsKnown && !s.req.capsTools {
+			effectiveTools = nil
+		}
 		for attempt := 1; ; attempt++ {
 			// 思考程度三态随 run 注入（off/auto/custom）；各协议 client 自行翻译为
 			// reasoning_effort / thinking.budget_tokens。off 时表现为不请求思考块。
 			llmCtx := llm.WithReasoning(s.runCtx, s.req.reasoning)
+			if isPrimaryTarget && s.req.capsKnown {
+				llmCtx = llm.WithModelCapabilities(llmCtx, llm.ModelCapabilities{
+					Known:            true,
+					SupportTools:     s.req.capsTools,
+					SupportVision:    s.req.capsVision,
+					SupportThinking:  s.req.capsThinking,
+				})
+			}
 			llmCtx = llm.WithPrefixDebugRun(llmCtx, prefixDebugKey, step, s.runID)
 			// 尾部临时提醒不作为 prompt 缓存锚点（详见 WithCacheAnchorSkip）。
 			llmCtx = llm.WithCacheAnchorSkip(llmCtx, s.lastEphemeralTail)
 			llmCtx, cancel := context.WithCancel(llmCtx)
-			stream, err := client.ChatStreamWithTools(llmCtx, messagesForReactModel(s.contextMessages(), target), target.ModelVersion, tools)
+			stream, err := client.ChatStreamWithTools(llmCtx, messagesForReactModel(s.contextMessages(), target), target.ModelVersion, effectiveTools)
 			// classifyTarget 是分类依据：必须是未包装的原始错误（components 错误信封只做文本
 			// 拼接不保留 Unwrap 链，APIError 结构化字段只有原始错误才带）。
 			var classifyTarget error

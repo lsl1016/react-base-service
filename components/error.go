@@ -284,6 +284,32 @@ var ErrorModelNotPlatformDefault = base.Error{
 	ErrMsg: "仅支持平台默认模型",
 }
 
+// LLM 连接管理相关错误 608001x（见 docs/模型配置优化方案.md §3.2）
+var ErrorConnectionNotFound = base.Error{
+	ErrNo:  6080010,
+	ErrMsg: "连接不存在: %s",
+}
+var ErrorConnectionDuplicate = base.Error{
+	ErrNo:  6080011,
+	ErrMsg: "同一 caller+路由下已存在连接: %s",
+}
+var ErrorConnectionProtocolInvalid = base.Error{
+	ErrNo:  6080012,
+	ErrMsg: "不支持的协议类型: %s（可选 openai / anthropic）",
+}
+var ErrorConnectionInUse = base.Error{
+	ErrNo:  6080013,
+	ErrMsg: "连接仍被 %d 个模型引用，请先解除引用或删除这些模型",
+}
+var ErrorConnectionFetchModelsFailed = base.Error{
+	ErrNo:  6080014,
+	ErrMsg: "拉取模型列表失败: %s",
+}
+var ErrorConnectionCheckFailed = base.Error{
+	ErrNo:  6080015,
+	ErrMsg: "连接连通性检测失败: %s",
+}
+
 // 这两个错误在统一响应层映射为 HTTP 403，便于工具调用方和 Agent 识别权限失败。
 
 // Python 分析相关错误 6070xxx

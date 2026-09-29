@@ -193,8 +193,11 @@ func (g *GPTClient) ChatStream(ctx context.Context, messages []LLMMessage, model
 		Stream:              true,
 		StreamOptions:       &gptStreamOptions{IncludeUsage: true},
 	}
+	// 思考门禁（P2 运行时接线）：run 声明模型不支持 thinking 时不下发 reasoning_effort。
 	if reasoning := reasoningOptionsFromContext(ctx); reasoning.Enabled {
-		reqBody.ReasoningEffort = ReasoningEffortForGPT(reasoning)
+		if caps := ModelCapabilitiesFromContext(ctx); !caps.Known || caps.SupportThinking {
+			reqBody.ReasoningEffort = ReasoningEffortForGPT(reasoning)
+		}
 	}
 
 	bodyBytes, err := marshalRequestBodyGuard(ctx, reqBody)
@@ -202,7 +205,7 @@ func (g *GPTClient) ChatStream(ctx context.Context, messages []LLMMessage, model
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	apiURL := g.config.ApiUrl + "/v1/chat/completions"
+	apiURL := ChatCompletionsURL(g.config.ApiUrl)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -226,6 +229,7 @@ func (g *GPTClient) ChatStream(ctx context.Context, messages []LLMMessage, model
 }
 
 // ChatStreamWithFilePayloads 文件入模专用，不影响通用 ChatStream。
+// 能力门禁（P2 运行时接线）：run 声明模型不支持视觉时拒绝 image/* 载荷。
 func (g *GPTClient) ChatStreamWithFilePayloads(
 	ctx context.Context,
 	messages []LLMMessage,
@@ -234,6 +238,9 @@ func (g *GPTClient) ChatStreamWithFilePayloads(
 ) (<-chan StreamChunk, error) {
 	if len(files) == 0 {
 		return g.ChatStream(ctx, messages, model)
+	}
+	if err := rejectVisionFilesForCaps(ctx, files); err != nil {
+		return nil, err
 	}
 	if model == "" {
 		model = g.defaultModel
@@ -258,7 +265,7 @@ func (g *GPTClient) ChatStreamWithFilePayloads(
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	apiURL := g.config.ApiUrl + "/v1/chat/completions"
+	apiURL := ChatCompletionsURL(g.config.ApiUrl)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -572,8 +579,11 @@ func (g *GPTClient) ChatStreamWithTools(
 		Tools:               toGPTTools(tools),
 		ToolChoice:          toolChoiceFromContext(ctx),
 	}
+	// 思考门禁（P2 运行时接线）：run 声明模型不支持 thinking 时不下发 reasoning_effort。
 	if reasoning := reasoningOptionsFromContext(ctx); reasoning.Enabled {
-		reqBody.ReasoningEffort = ReasoningEffortForGPT(reasoning)
+		if caps := ModelCapabilitiesFromContext(ctx); !caps.Known || caps.SupportThinking {
+			reqBody.ReasoningEffort = ReasoningEffortForGPT(reasoning)
+		}
 	}
 
 	bodyBytes, err := marshalRequestBodyGuard(ctx, reqBody)
@@ -582,7 +592,7 @@ func (g *GPTClient) ChatStreamWithTools(
 	}
 	logLLMPrefixDebug(ctx, "GPT", bodyBytes)
 
-	apiURL := g.config.ApiUrl + "/v1/chat/completions"
+	apiURL := ChatCompletionsURL(g.config.ApiUrl)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)

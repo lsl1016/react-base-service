@@ -131,12 +131,17 @@ func EffortToThinkingBudget(effort string, maxTokens int) int {
 // claudeThinkingSettingsForModel 把 ReasoningOptions 翻译为 Anthropic thinking 参数：
 // off → 不请求；auto/custom → 按档位或显式预算推导 budget_tokens。
 // Anthropic 协议约束：1024 <= budget_tokens < max_tokens；越界时向下收口，收口后仍不合法则关闭。
+// 门禁优先级（P2 运行时接线）：run 携带的用户模型能力声明（声明不支持 thinking → 关闭）
+// > 模型目录声明（supports_thinking）> 旧启发式（模型名含 claude+4）。
 func claudeThinkingSettingsForModel(ctx context.Context, model string, maxTokens int) *claudeThinkingSettings {
 	opts := reasoningOptionsFromContext(ctx)
 	if !opts.Enabled || opts.Mode == ReasoningModeOff {
 		return nil
 	}
 	if maxTokens <= 1024 {
+		return nil
+	}
+	if caps := ModelCapabilitiesFromContext(ctx); caps.Known && !caps.SupportThinking {
 		return nil
 	}
 	if !modelCatalogSupportsThinking(model) {
@@ -195,7 +200,7 @@ func (c *ClaudeClient) ChatStream(ctx context.Context, messages []LLMMessage, mo
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	apiURL := c.config.ApiUrl + "/v1/messages"
+	apiURL := MessagesURL(c.config.ApiUrl)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -223,6 +228,7 @@ func (c *ClaudeClient) ChatStream(ctx context.Context, messages []LLMMessage, mo
 }
 
 // ChatStreamWithFilePayloads 文件入模专用，不影响通用 ChatStream。
+// 能力门禁（P2 运行时接线）：run 声明模型不支持视觉时拒绝 image/* 载荷。
 func (c *ClaudeClient) ChatStreamWithFilePayloads(
 	ctx context.Context,
 	messages []LLMMessage,
@@ -231,6 +237,9 @@ func (c *ClaudeClient) ChatStreamWithFilePayloads(
 ) (<-chan StreamChunk, error) {
 	if len(files) == 0 {
 		return c.ChatStream(ctx, messages, model)
+	}
+	if err := rejectVisionFilesForCaps(ctx, files); err != nil {
+		return nil, err
 	}
 	if model == "" {
 		model = c.defaultModel
@@ -267,7 +276,7 @@ func (c *ClaudeClient) ChatStreamWithFilePayloads(
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	apiURL := c.config.ApiUrl + "/v1/messages"
+	apiURL := MessagesURL(c.config.ApiUrl)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -759,7 +768,7 @@ func (c *ClaudeClient) ChatStreamWithTools(
 	}
 	logLLMPrefixDebug(ctx, "Claude", bodyBytes)
 
-	apiURL := c.config.ApiUrl + "/v1/messages"
+	apiURL := MessagesURL(c.config.ApiUrl)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)

@@ -419,6 +419,59 @@ func GetClientWithUserModelEndpoint(apiKey, modelKey, apiURL string, maxOutputTo
 	}
 }
 
+// 协议枚举（LLM 连接 tblLlmConnection.protocol）；与 modelKey（厂商枚举）解耦：
+// 连接路径下客户端类型由协议直接决定，不再经过厂商枚举推导。
+const (
+	ProtocolOpenAI    = "openai"
+	ProtocolAnthropic = "anthropic"
+)
+
+// IsValidProtocol 校验连接协议枚举。
+func IsValidProtocol(protocol string) bool {
+	return protocol == ProtocolOpenAI || protocol == ProtocolAnthropic
+}
+
+// ModelKeyForProtocol 把连接协议映射为等效的厂商枚举（供用户模型注册沿用
+// IsValidModelKey 校验口径；运行时解析仍以连接协议为准）。
+func ModelKeyForProtocol(protocol string) string {
+	switch protocol {
+	case ProtocolAnthropic:
+		return "Anthropic"
+	default:
+		return "OpenAI"
+	}
+}
+
+// ClientTypeForProtocol 把连接协议映射为 client 类型。
+func ClientTypeForProtocol(protocol string) string {
+	if protocol == ProtocolAnthropic {
+		return "claude"
+	}
+	return "gpt"
+}
+
+// GetClientWithProtocol 按显式协议构建客户端（LLM 连接路径）：
+// apiKey/baseURL 来自连接，协议直接决定 gpt/claude client，绕过厂商枚举与
+// api.yaml 端点推导。maxOutputTokens 为 0 时沿用内置默认。
+func GetClientWithProtocol(apiKey, protocol, apiURL string, maxOutputTokens int) (LLMClient, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("%w: empty apiKey", ErrApiKeyNotConfigured)
+	}
+	if !IsValidProtocol(protocol) {
+		return nil, fmt.Errorf("%w: %s", ErrModelNotSupported, protocol)
+	}
+
+	endpoint := conf.EndpointConfig{ApiUrl: strings.TrimSpace(apiURL)}
+	if maxOutputTokens > 0 {
+		endpoint.MaxTokens = maxOutputTokens
+	}
+
+	if ClientTypeForProtocol(protocol) == "claude" {
+		return NewClaudeClient(apiKey, "", endpoint), nil
+	}
+	return NewGPTClient(apiKey, "", endpoint), nil
+}
+
 // ResolveModelVersion 解析最终生效的模型版本：
 // 1) 优先使用请求显式传入版本；
 // 2) 未传时回退到配置中的 default_version。

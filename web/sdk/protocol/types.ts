@@ -291,6 +291,8 @@ export interface UserModelItem {
   modelVersion: string;
   apiKey: string;
   bizScenes: string[];
+  /** 非 0 表示引用 LLM 连接（凭证/端点以连接为准） */
+  connectionId?: number;
   apiUrl?: string;
   contextTokens?: number;
   maxOutputTokens?: number;
@@ -308,9 +310,11 @@ export interface CreateUserModelReq {
   modelName: string;
   modelKey: string;
   modelVersion: string;
+  /** 引用连接时可留空（凭证以连接为准） */
   apiKey: string;
   bizScenes: string[];
   isPlatformDefault?: number;
+  connectionId?: number;
   apiUrl?: string;
   contextTokens?: number;
   maxOutputTokens?: number;
@@ -321,6 +325,8 @@ export interface CreateUserModelReq {
 
 export interface UpdateUserModelReq extends CreateUserModelReq {
   id: number;
+  /** 编辑时连接引用始终以请求值为准（可传 0 清空回到自带 key） */
+  connectionId?: number;
 }
 
 export interface CheckModelConnectivityReq {
@@ -328,6 +334,63 @@ export interface CheckModelConnectivityReq {
   modelVersion: string;
   apiKey: string;
   apiUrl?: string;
+}
+
+// ─── LLM 连接（协议 + base url + key 的自包含接入单元）───
+
+/** 连接协议：openai=OpenAI 兼容，anthropic=Anthropic 兼容 */
+export type ConnectionProtocol = "openai" | "anthropic";
+
+/** /model/connection/list 返回的连接条目（key 脱敏占位） */
+export interface ConnectionItem {
+  id: number;
+  name: string;
+  protocol: ConnectionProtocol | string;
+  baseUrl: string;
+  apiKey: string;
+  callerKey: string;
+  routeValues: string[];
+  status: number;
+  createdAt: string;
+  updatedAt: string;
+  modelCount: number;
+}
+
+export interface CreateConnectionReq {
+  name: string;
+  protocol: ConnectionProtocol | string;
+  baseUrl: string;
+  apiKey: string;
+  callerKey?: string;
+  routeValues?: string[];
+}
+
+export interface UpdateConnectionReq {
+  id: number;
+  name?: string;
+  protocol?: ConnectionProtocol | string;
+  baseUrl?: string;
+  /** 留空 = 保持原值 */
+  apiKey?: string;
+  callerKey?: string;
+  routeValues?: string[];
+  status?: number;
+}
+
+/** /model/connection/fetch_models 返回的单个模型：能力位由本地能力目录自动填充 */
+export interface ConnectionModelItem {
+  id: string;
+  /** 1=支持（目录命中自动填充）；0=未声明/目录未命中（保守） */
+  supportTools: number;
+  supportThinking: number;
+  supportVision: number;
+  contextTokens?: number;
+  maxOutputTokens?: number;
+}
+
+/** /model/connection/fetch_models 返回的模型列表 */
+export interface ConnectionModelsResp {
+  models: ConnectionModelItem[];
 }
 
 /** /setting/context/get 返回的上下文压缩策略生效视图 */

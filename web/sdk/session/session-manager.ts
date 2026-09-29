@@ -12,7 +12,7 @@
  *
  * 构造函数接受可选的 fetch 函数注入，方便测试时 mock。
  */
-import type { ApiResponse, CheckModelConnectivityReq, ConfigSchemaResp, ContextCompactSettingResp, CreateUserModelReq, PlanExecutionDetailResp, PlanStepEventsResp, UpdateContextCompactSettingReq, UpdateUserModelReq, UserModelItem, VendorModelsResp } from '../protocol/types';
+import type { ApiResponse, CheckModelConnectivityReq, ConfigSchemaResp, ConnectionItem, ConnectionModelsResp, ContextCompactSettingResp, CreateConnectionReq, CreateUserModelReq, PlanExecutionDetailResp, PlanStepEventsResp, UpdateConnectionReq, UpdateContextCompactSettingReq, UpdateUserModelReq, UserModelItem, VendorModelsResp } from '../protocol/types';
 import type {
   AsyncTaskListParams,
   AsyncTaskListResp,
@@ -140,6 +140,38 @@ export class SessionManager {
   /** 模型连通性检测 → POST /model/check-connectivity */
   async checkModelConnectivity(params: CheckModelConnectivityReq): Promise<void> {
     await this.postAt<Record<string, unknown>>('/model/check-connectivity', params as unknown as Record<string, unknown>);
+  }
+
+  // ─── LLM 连接管理（协议+接入地址+Key 的自包含连接）───
+
+  /** 连接列表（key 脱敏 + 引用模型数）→ POST /model/connection/list */
+  async listConnections(): Promise<ConnectionItem[]> {
+    return this.postAt<ConnectionItem[]>('/model/connection/list', {});
+  }
+
+  /** 创建连接 → POST /model/connection/create */
+  async createConnection(params: CreateConnectionReq): Promise<void> {
+    await this.postAt<Record<string, unknown>>('/model/connection/create', params as unknown as Record<string, unknown>);
+  }
+
+  /** 编辑连接（apiKey 留空=保持原值）→ POST /model/connection/update */
+  async updateConnection(params: UpdateConnectionReq): Promise<void> {
+    await this.postAt<Record<string, unknown>>('/model/connection/update', params as unknown as Record<string, unknown>);
+  }
+
+  /** 删除连接（仍被模型引用时后端拒绝）→ POST /model/connection/delete */
+  async deleteConnection(id: number): Promise<void> {
+    await this.postAt<Record<string, unknown>>('/model/connection/delete', { id });
+  }
+
+  /** 连接连通性检测（/models + 最小对话，错误透传上游真因）→ POST /model/connection/check */
+  async checkConnection(id: number): Promise<void> {
+    await this.postAt<Record<string, unknown>>('/model/connection/check', { id });
+  }
+
+  /** 拉取连接可用模型列表（服务端代理 GET {base}/models）→ POST /model/connection/fetch_models */
+  async fetchConnectionModels(id: number): Promise<ConnectionModelsResp> {
+    return this.postAt<ConnectionModelsResp>('/model/connection/fetch_models', { id });
   }
 
   /** 查询上下文压缩策略 → POST /setting/context/get */

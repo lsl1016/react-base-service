@@ -34,11 +34,11 @@ func CheckConnectivityWithEndpoint(ctx *gin.Context, modelKey, modelVersion, api
 	client, err := llm.GetClientWithUserModelEndpoint(apiKey, modelKey, apiURL, 0)
 	if err != nil {
 		zlog.Errorf(ctx, "[user_model.CheckConnectivity] 构建客户端失败: modelKey=%s, err=%v", modelKey, err)
-		return components.ErrorUserModelConnectivityFailed.Sprintf(fmt.Sprintf("构建客户端失败"))
+		return components.ErrorUserModelConnectivityFailed.Sprintf(fmt.Sprintf("构建客户端失败: %s", summarizeUpstreamError(err)))
 	}
 
-	// 使用带超时的 context 防止长时间阻塞
-	testCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// 思考模型冷启动首 token 可能超过 15s，放宽到 30s。
+	testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	chunkCh, err := client.ChatStream(testCtx, []llm.LLMMessage{
@@ -46,14 +46,14 @@ func CheckConnectivityWithEndpoint(ctx *gin.Context, modelKey, modelVersion, api
 	}, modelVersion)
 	if err != nil {
 		zlog.Errorf(ctx, "[user_model.CheckConnectivity] ChatStream 请求失败: modelKey=%s, modelVersion=%s, err=%v", modelKey, modelVersion, err)
-		return components.ErrorUserModelConnectivityFailed.Sprintf(fmt.Sprintf("请求失败"))
+		return components.ErrorUserModelConnectivityFailed.Sprintf(fmt.Sprintf("请求失败: %s", summarizeUpstreamError(err)))
 	}
 
 	// 读取流式响应，收到首个有效内容即视为连通成功
 	for chunk := range chunkCh {
 		if chunk.Error != nil {
 			zlog.Errorf(ctx, "[user_model.CheckConnectivity] 响应错误: modelKey=%s, modelVersion=%s, err=%v", modelKey, modelVersion, chunk.Error)
-			return components.ErrorUserModelConnectivityFailed.Sprintf(fmt.Sprintf("响应错误"))
+			return components.ErrorUserModelConnectivityFailed.Sprintf(fmt.Sprintf("响应错误: %s", summarizeUpstreamError(chunk.Error)))
 		}
 		if chunk.Content != "" {
 			// 收到有效内容，连通成功
@@ -63,6 +63,16 @@ func CheckConnectivityWithEndpoint(ctx *gin.Context, modelKey, modelVersion, api
 
 	zlog.Errorf(ctx, "[user_model.CheckConnectivity] 未收到有效响应: modelKey=%s, modelVersion=%s", modelKey, modelVersion)
 	return components.ErrorUserModelConnectivityFailed.Sprintf("未收到有效响应")
+}
+
+// summarizeUpstreamError 把上游错误压成单行短文案用于前端透出（脱换行 + 截断），
+// 避免「请求失败」这类吞掉 401/404 真因的笼统提示。
+func summarizeUpstreamError(err error) string {
+	text := strings.Join(strings.Fields(err.Error()), " ")
+	if len(text) > 300 {
+		text = text[:300] + "..."
+	}
+	return text
 }
 
 // CreateUserModel 创建用户模型
@@ -110,12 +120,30 @@ func CreateUserModel(ctx *gin.Context, userName string, req params.CreateUserMod
 		return nil, err
 	}
 
-	// 连通性检测
-	if err := CheckConnectivityWithEndpoint(ctx, req.ModelKey, req.ModelVersion, req.ApiKey, req.ApiURL); err != nil {
-		return nil, err
+	// 连接引用模式：凭证/端点/协议以连接为准，key 可不填；校验连接并做连通性检测。
+	if req.ConnectionID > 0 {
+		conn, err := model.GetConnectionByID(ctx, req.ConnectionID)
+		if err != nil {
+			return nil, err
+		}
+		if conn == nil {
+			return nil, components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("%d", req.ConnectionID))
+		}
+		if err := checkConnectivityByProtocol(ctx, conn.Protocol, req.ModelVersion, conn.ApiKeyValue, conn.BaseURL); err != nil {
+			return nil, err
+		}
+	} else {
+		if strings.TrimSpace(req.ApiKey) == "" {
+			return nil, components.ErrorParamInvalid.Sprintf("apiKey 与 connectionId 至少填一项")
+		}
+		// 连通性检测
+		if err := CheckConnectivityWithEndpoint(ctx, req.ModelKey, req.ModelVersion, req.ApiKey, req.ApiURL); err != nil {
+			return nil, err
+		}
 	}
 
 	// 生成 model_hash 并创建记录
+	connectionID := req.ConnectionID
 	m := &model.UserModel{
 		ModelHash:         "model_" + strings.ReplaceAll(uuid.New().String(), "-", ""),
 		UserName:          userNameForDB,
@@ -125,6 +153,7 @@ func CreateUserModel(ctx *gin.Context, userName string, req params.CreateUserMod
 		ApiKey:            req.ApiKey,
 		BizScenes:         string(bizScenesJSON),
 		ApiURL:            strings.TrimSpace(req.ApiURL),
+		ConnectionID:      connectionID,
 		ContextTokens:     req.ContextTokens,
 		MaxOutputTokens:   req.MaxOutputTokens,
 		SupportThinking:   req.SupportThinking,
@@ -166,7 +195,7 @@ func UpdateUserModel(ctx *gin.Context, userName string, req params.UpdateUserMod
 	}
 
 	// 统一校验请求字段
-	if err := validateUpdateReq(req); err != nil {
+	if err := validateUpdateReq(req, record); err != nil {
 		return err
 	}
 
@@ -191,6 +220,20 @@ func UpdateUserModel(ctx *gin.Context, userName string, req params.UpdateUserMod
 	}
 	if req.ApiURL != record.ApiURL {
 		updates["api_url"] = strings.TrimSpace(req.ApiURL)
+		needConnCheck = true
+	}
+	// 连接引用变更：显式传值才更新（nil=前端未涉及，保持原值）。
+	if req.ConnectionID != nil && *req.ConnectionID != record.ConnectionID {
+		if *req.ConnectionID > 0 {
+			conn, err := model.GetConnectionByID(ctx, *req.ConnectionID)
+			if err != nil {
+				return err
+			}
+			if conn == nil {
+				return components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("%d", *req.ConnectionID))
+			}
+		}
+		updates["connection_id"] = *req.ConnectionID
 		needConnCheck = true
 	}
 	if req.ContextTokens != record.ContextTokens {
@@ -251,26 +294,44 @@ func UpdateUserModel(ctx *gin.Context, userName string, req params.UpdateUserMod
 		return nil
 	}
 
-	// 如果涉及 apiKey/modelKey/modelVersion/apiURL 变更，重新做连通性检测
+	// 如果涉及 apiKey/modelKey/modelVersion/apiURL/connectionId 变更，重新做连通性检测；
+	// 引用连接时按连接的凭证+端点+协议检测。
 	if needConnCheck {
-		checkKey := record.ModelKey
-		if _, ok := updates["model_key"]; ok {
-			checkKey = req.ModelKey
-		}
 		checkVersion := record.ModelVersion
 		if _, ok := updates["model_version"]; ok {
 			checkVersion = req.ModelVersion
 		}
-		checkApiKey := record.ApiKey
-		if _, ok := updates["api_key"]; ok {
-			checkApiKey = req.ApiKey
+		checkConnectionID := record.ConnectionID
+		if v, ok := updates["connection_id"].(uint); ok {
+			checkConnectionID = v
 		}
-		checkApiURL := record.ApiURL
-		if _, ok := updates["api_url"]; ok {
-			checkApiURL = req.ApiURL
-		}
-		if err := CheckConnectivityWithEndpoint(ctx, checkKey, checkVersion, checkApiKey, checkApiURL); err != nil {
-			return err
+		if checkConnectionID > 0 {
+			conn, err := model.GetConnectionByID(ctx, checkConnectionID)
+			if err != nil {
+				return err
+			}
+			if conn == nil {
+				return components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("%d", checkConnectionID))
+			}
+			if err := checkConnectivityByProtocol(ctx, conn.Protocol, checkVersion, conn.ApiKeyValue, conn.BaseURL); err != nil {
+				return err
+			}
+		} else {
+			checkKey := record.ModelKey
+			if _, ok := updates["model_key"]; ok {
+				checkKey = req.ModelKey
+			}
+			checkApiKey := record.ApiKey
+			if _, ok := updates["api_key"]; ok {
+				checkApiKey = req.ApiKey
+			}
+			checkApiURL := record.ApiURL
+			if _, ok := updates["api_url"]; ok {
+				checkApiURL = req.ApiURL
+			}
+			if err := CheckConnectivityWithEndpoint(ctx, checkKey, checkVersion, checkApiKey, checkApiURL); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -333,6 +394,7 @@ func GetUserModelDetail(ctx *gin.Context, userName string, id uint) (*params.Use
 		ModelVersion:      record.ModelVersion,
 		ApiKey:            record.ApiKey, // 不脱敏
 		BizScenes:         bizScenes,
+		ConnectionID:      record.ConnectionID,
 		ApiURL:            record.ApiURL,
 		ContextTokens:     record.ContextTokens,
 		MaxOutputTokens:   record.MaxOutputTokens,
@@ -397,6 +459,7 @@ func ListUserModels(ctx *gin.Context, userName string, req params.ListUserModels
 			ModelVersion:      m.ModelVersion,
 			ApiKey:            maskApiKey(m.ApiKey),
 			BizScenes:         bizScenes,
+			ConnectionID:      m.ConnectionID,
 			ApiURL:            m.ApiURL,
 			ContextTokens:     m.ContextTokens,
 			MaxOutputTokens:   m.MaxOutputTokens,
@@ -435,8 +498,9 @@ func ListUserModels(ctx *gin.Context, userName string, req params.ListUserModels
 	return items, nil
 }
 
-// validateUpdateReq 统一校验 UpdateUserModelReq 各字段
-func validateUpdateReq(req params.UpdateUserModelReq) error {
+// validateUpdateReq 统一校验 UpdateUserModelReq 各字段。
+// record 为当前记录：引用连接（connection_id>0）的模型凭证以连接为准，apiKey 允许为空。
+func validateUpdateReq(req params.UpdateUserModelReq, record *model.UserModel) error {
 	if req.ModelName == "" {
 		return components.ErrorParamInvalid.Sprintf("modelName 不能为空")
 	}
@@ -449,7 +513,12 @@ func validateUpdateReq(req params.UpdateUserModelReq) error {
 	if req.ModelVersion == "" {
 		return components.ErrorParamInvalid.Sprintf("modelVersion 不能为空")
 	}
-	if req.ApiKey == "" {
+	// 生效连接 = 请求显式值优先，否则沿用记录现值（「模型与参数」tab 不回传 connectionId）。
+	effectiveConnectionID := record.ConnectionID
+	if req.ConnectionID != nil {
+		effectiveConnectionID = *req.ConnectionID
+	}
+	if req.ApiKey == "" && effectiveConnectionID == 0 {
 		return components.ErrorParamInvalid.Sprintf("apiKey 不能为空")
 	}
 	if len(req.BizScenes) == 0 {

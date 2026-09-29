@@ -17,6 +17,7 @@ import (
 	"react-base-service/helpers"
 	model "react-base-service/models/llm"
 	apikeyService "react-base-service/service/apikey"
+	llmmodelService "react-base-service/service/llmmodel"
 	systempromptService "react-base-service/service/systemprompt"
 	toolService "react-base-service/service/tool"
 	"react-base-service/service/workspace"
@@ -512,6 +513,8 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	var apiKey, modelKey, modelVersion string
 	var userModelApiURL string
 	var userModelMaxOutputTokens, userModelContextTokens int
+	var connProtocol string
+	var capsKnown, capsTools, capsVision, capsThinking bool
 	if payload.ModelHash != "" {
 		userModel, err := model.GetUserModelByHash(ctx, payload.ModelHash)
 		if err != nil {
@@ -526,14 +529,45 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 		userModelApiURL = userModel.ApiURL
 		userModelMaxOutputTokens = userModel.MaxOutputTokens
 		userModelContextTokens = userModel.ContextTokens
+		// 用户模型能力声明（P2 运行时接线）：三项开关在「模型与参数」tab 编辑，
+		// 此处快照进 run——主模型轮据此门禁 tools 下发与 thinking 参数。
+		capsKnown = true
+		capsTools = userModel.SupportTools == 1
+		capsVision = userModel.SupportVision == 1
+		capsThinking = userModel.SupportThinking == 1
+		// 连接引用模式：凭证/端点/协议以连接为准（自带 key/接入地址不参与解析）。
+		if userModel.ConnectionID > 0 {
+			conn, err := llmmodelService.GetConnectionByID(ctx, userModel.ConnectionID)
+			if err != nil {
+				return nil, err
+			}
+			if conn == nil {
+				return nil, components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("%d", userModel.ConnectionID))
+			}
+			apiKey = conn.ApiKeyValue
+			userModelApiURL = conn.BaseURL
+			connProtocol = conn.Protocol
+		}
 	} else {
 		if payload.ModelKey == "" {
 			return nil, components.ErrorParamInvalid.Sprintf("modelKey 不能为空")
 		}
+		// 凭证解析顺序：LLM 连接（caller+route 前缀匹配）→ 旧 caller 级 API Key 兜底。
+		// 连接命中时端点与协议改由连接提供（无 ModelHash 契约路径的平台连接形态）。
 		var err error
-		apiKey, err = apikeyService.ResolveApiKey(ctx, payload.CallerKey, routeValues)
+		conn, err := llmmodelService.ResolveConnection(ctx, payload.CallerKey, routeValues)
 		if err != nil {
 			return nil, err
+		}
+		if conn != nil {
+			apiKey = conn.ApiKeyValue
+			userModelApiURL = conn.BaseURL
+			connProtocol = conn.Protocol
+		} else {
+			apiKey, err = apikeyService.ResolveApiKey(ctx, payload.CallerKey, routeValues)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if apiKey == "" {
 			return nil, components.ErrorApiKeyNotFound.Sprintf(payload.CallerKey)
@@ -623,6 +657,11 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 			userModelApiURL:          userModelApiURL,
 			userModelMaxOutputTokens: userModelMaxOutputTokens,
 			userModelContextTokens:   userModelContextTokens,
+			connProtocol:             connProtocol,
+			capsKnown:                capsKnown,
+			capsTools:                capsTools,
+			capsVision:               capsVision,
+			capsThinking:             capsThinking,
 		},
 		runtimeRequestCapabilities: runtimeRequestCapabilities{
 			systemPrompt:            systemPrompt,

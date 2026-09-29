@@ -79,7 +79,15 @@ type collectLLMStreamResult struct {
 // assistant_partial，避免“前端看过内容但历史里完全不存在”。
 func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequest, runID, sessionID string, emitter *runEventEmitter, readClient ClientMessageReader) error {
 	currentModel, failoverModels := configuredReactModelRouting(req)
-	client, err := llm.GetClientWithUserModel(req.apiKey, currentModel.ModelKey)
+	// 首轮 client 构建：连接路径（connProtocol 非空）按协议+连接 base url 构建；
+	// 自包含用户模型带自定义端点时同样优先（与 callModelRound 的互备构建口径一致）。
+	var client llm.LLMClient
+	var err error
+	if req.connProtocol != "" {
+		client, err = llm.GetClientWithProtocol(req.apiKey, req.connProtocol, req.userModelApiURL, req.userModelMaxOutputTokens)
+	} else {
+		client, err = llm.GetClientWithUserModel(req.apiKey, currentModel.ModelKey)
+	}
 	if err != nil {
 		return components.ErrorLLMRequest.Sprintf(err.Error())
 	}

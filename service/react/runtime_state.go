@@ -50,6 +50,17 @@ type runtimeRequestModel struct {
 	userModelApiURL          string
 	userModelMaxOutputTokens int
 	userModelContextTokens   int
+	// connProtocol 是 LLM 连接（tblLlmConnection）的协议（openai/anthropic）；
+	// 非空表示本 run 的凭证+端点来自连接：主模型 client 按协议构建、端点用
+	// userModelApiURL 携带的连接 base url。空=走旧推导链。
+	connProtocol string
+	// caps* 是用户模型（ModelHash 路径）的能力声明；capsKnown=false（无 ModelHash
+	// 或平台模型）时运行时不门禁，按目录/默认处理。声明关闭 tools 时主模型轮
+	// 不下发工具 schema；关闭 thinking 时不下发思考参数；关闭 vision 时拒绝图片载荷。
+	capsKnown    bool
+	capsTools    bool
+	capsVision   bool
+	capsThinking bool
 }
 
 // runtimeRequestCapabilities 是 Run 初始化阶段解析出的能力快照。

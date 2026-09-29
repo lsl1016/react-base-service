@@ -661,35 +661,9 @@ const resources = {
       ['name', '名称'], ['callerKey', '归属 caller', 'readonly'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['isDefault', '默认', 'defaultSelect'], ['description', '描述', 'textarea'], ['triggerCondition', '触发条件', 'textarea'], ['forbiddenCondition', '禁用条件', 'textarea'], ['executionSteps', '执行步骤', 'textarea'], ['businessContext', '业务上下文', 'textarea'], ['promptSupplement', '补充提示词', 'textarea'],
     ],
   },
-  apiKey: {
-    title: 'API Key 管理',
-    addText: '新增 API Key',
-    idKey: 'id',
-    listPath: '/apikey/list',
-    createPath: '/apikey/register',
-    updatePath: '/apikey/update',
-    deletePath: '/apikey/delete',
-    deleteBody: (item) => ({ id: item.id }),
-    columns: [
-      ['id', 'ID'], ['name', '名称'], ['apiKeyDisplay', 'API Key'], ['routeValues', '适用方'], ['status', '状态'], ['actions', '操作'],
-    ],
-    empty: () => ({ name: '', apiKey: '', routeText: createDefaultRouteText(), status: 1 }),
-    toDraft: (item) => ({ ...item, routeText: joinRouteValues(item.routeValues), apiKeyDisplay: item.apiKey || '******', apiKey: '' }),
-    toPayload: (draft, config, mode) => {
-      const payload = {
-        id: draft.id,
-        callerKey: draft.callerKey || config.callerKey,
-        routeValues: splitRouteText(draft.routeText),
-        name: draft.name,
-        status: Number(draft.status),
-      };
-      if (mode === 'create' || draft.apiKey) payload.apiKey = draft.apiKey;
-      return payload;
-    },
-    fields: (mode) => (mode === 'create'
-      ? [['name', '名称'], ['routeText', '适用路由（逗号分隔）'], ['apiKey', 'API Key', 'password']]
-      : [['name', '名称'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['apiKey', '新 API Key', 'password']]),
-  },
+  // 「API Key 管理」页已撤除（P1 Key 双轨消除）：caller 级凭证并入模型配置面板的
+  // 「连接与密钥」（tblLlmConnection，协议+地址+Key，无 ModelHash run 按 caller+路由
+  // 解析、优先于旧 tblLlmApiKey）；后端 /apikey/* 路由保留作为契约兼容层。
   planTemplate: {
     title: '模板列表',
     tabText: '模板列表',
