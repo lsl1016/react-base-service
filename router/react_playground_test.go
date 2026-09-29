@@ -140,11 +140,6 @@ func TestReactPlaygroundPublishesCallerApiKeyAndPlanTemplateManagement(t *testin
 			path: "/react-base-service/react/index.js",
 			contains: []string{
 				"title: 'API Key 管理'",
-				"title: '模板列表'",
-				"listPath: '/react/plan_template/list'",
-				"detailPath: '/react/plan_template/detail'",
-				"createPath: '/react/plan_template/create'",
-				"updatePath: '/react/plan_template/update'",
 				"await resource.loadDetail(item, this.config(), resource)",
 				"type === 'codeTextarea'",
 				"/caller/copy_config",

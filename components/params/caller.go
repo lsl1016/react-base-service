@@ -22,7 +22,6 @@ type CallerResourceStats struct {
 	Tools            int64 `json:"tools"`
 	ToolUserPolicies int64 `json:"toolUserPolicies"`
 	ApiKeys          int64 `json:"apiKeys"`
-	PlanTemplates    int64 `json:"planTemplates"`
 }
 
 // CopyCallerConfigResp Caller 配置复制结果。

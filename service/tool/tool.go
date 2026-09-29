@@ -52,11 +52,7 @@ var reservedToolNames = map[string]struct{}{
 	"memory_write":          {},
 	"graph_memory_search":   {},
 	"graph_memory_write":    {},
-	"get_plan_template":     {},
-	"start_template_plan":   {},
-	"resume_template_plan":  {},
 	"submit_step_result":    {},
-	"plan_template_builder": {},
 }
 
 // IsReservedToolName 判断工具名是否为内置 Meta Tool 保留名。

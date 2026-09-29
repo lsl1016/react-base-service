@@ -39,7 +39,6 @@ func BatchDelete(ctx *gin.Context, callerKey string) (*params.DeleteCallerResp, 
 			Tools:            stats["tools"],
 			ToolUserPolicies: stats["toolUserPolicies"],
 			ApiKeys:          stats["apiKeys"],
-			PlanTemplates:    stats["planTemplates"],
 		}
 		return nil
 	})
