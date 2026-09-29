@@ -123,7 +123,7 @@ llm:
       git_timeout_sec: 180               # 单次 git 子操作超时
       resolvers:                         # 静态服务解析白名单（真实链路后续接镜像中心）
         - service: react-base-service
-          repo_url: 'C:/Users/keke/Desktop/xm/react-base-service'  # 本地路径（开发自测；生产换 https/ssh）
+          repo_url: '/Users/admin/Desktop/xm/react-base-service'  # 本地路径（开发自测；生产换 https/ssh）
           default_ref: main
           refs:
             prod: main
@@ -156,7 +156,7 @@ llm:
     # 未配置默认关闭（不注册 delegate_agent、不解析 agent 资源，行为与历史版本一致）。
     subagent:
       enabled: true
-      max_parallel: 3        # 同一轮多个 delegate_agent 调用的并行上限（并行委派 + 泳道视图演示）
+      max_parallel: 6        # 同一轮多个 delegate_agent 调用的并行上限（并行委派 + 泳道视图演示）
       default_max_steps: 500 # agent 未配置 max_steps 时子 run 的步数上限（letta-code 学习测试临时调大）
       max_depth: 2           # 委派嵌套深度上限（子 Agent 再委派），防递归失控
 
@@ -173,7 +173,7 @@ mcp:
       env:
         # 代码检索镜像目录：要检索的外部项目 clone 到 data/repo-mirrors/（普通工作副本，
         # 非 bare mirror），检索工具只扫这里，不扫服务自身代码
-        REPO_ROOT: 'C:/Users/keke/Desktop/xm/react-base-service/data/repo-mirrors'
+        REPO_ROOT: '/Users/admin/Desktop/xm/react-base-service/data/repo-mirrors'
     # mcp-server 网关（本地进程经 127.0.0.1 直连；容器版在 deploy/compose/conf/mount 配
     # host.docker.internal——两份 yaml 各写各的 endpoint，工具同步进同一注册表，执行时
     # 各进程用自己的客户端。不用 DB 注册表是为了避开 host.docker.internal 在宿主机
