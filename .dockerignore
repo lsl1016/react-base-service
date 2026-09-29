@@ -17,6 +17,11 @@ Dockerfile
 web/sdk/node_modules
 web/sdk/dist
 
+# 环境特定配置不进构建上下文：custom.yaml 携带本地开发凭证/路径（mcpgw 凭证、
+# workspace resolver 等），且镜像本身不需要任何 conf/mount yaml——容器运行时
+# 配置统一由 deploy/compose/conf/mount 只读挂载到 /usr/local/bin/conf/mount。
+conf/mount/custom.yaml
+
 
 # netbeans project files
 nbproject
