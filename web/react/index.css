@@ -78,9 +78,13 @@
   background: var(--panel);
 }
 
+/* 右侧管理面板：flex 纵向布局。状态条/表格区/卡片区按场景 display:none 切换，
+   网格行会因隐藏项错位（隐式 auto 行高度不受限，被 rp-root overflow:hidden 裁掉且无处滚动）；
+   flex 下隐藏项不参与布局，可见的内容容器经 flex:1 + min-height:0 稳定占满剩余高度并内部滚动。 */
 .rp-right {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--panel-3);
 }
 
@@ -518,6 +522,7 @@
 
 .rp-table-wrap {
   min-width: 0;
+  flex: 1;
   min-height: 0;
   margin: 12px 16px 16px;
   overflow: auto;
@@ -900,7 +905,8 @@
    ============================================================ */
 
 #management-cards {
-  min-height: 160px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1000,6 +1006,10 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 8px;
+  align-content: start;
+  /* 展开卡片的工具清单限高内滚：大清单（如 70+ 工具）在卡内上下滑动，而不是把列表撑爆 */
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .rp-mcp-tool-item {
