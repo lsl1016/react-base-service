@@ -36,3 +36,24 @@ type BundleListItemResp struct {
 
 // BundleResp Bundle 安装结果（复用列表项形态）。
 type BundleResp = BundleListItemResp
+
+// BundleBrowseReq Bundle 来源目录浏览请求（安装表单的目录选择器）。
+type BundleBrowseReq struct {
+	// Path 为空 = 返回白名单根目录清单；非空 = 白名单内已存在的目录，返回其一层子目录。
+	Path string `json:"path"`
+}
+
+// BundleDirItem 可选目录项。
+type BundleDirItem struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// BundleBrowseResp Bundle 来源目录浏览结果。
+type BundleBrowseResp struct {
+	// Current 是当前所在目录（空 = 白名单根列表这一伪层级）。
+	Current string `json:"current"`
+	// Parent 是上一级目录（根列表层为空；等于根目录时为空，由前端隐藏返回按钮）。
+	Parent string `json:"parent"`
+	Dirs   []BundleDirItem `json:"dirs"`
+}

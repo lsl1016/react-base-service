@@ -85,3 +85,27 @@ func ListBundles(ctx *gin.Context) {
 	}
 	components.RenderJsonSucc(ctx, items)
 }
+
+// BrowseBundleSource 浏览白名单内可作安装来源的本地目录
+// @Summary      Bundle 来源目录浏览
+// @Description  供安装表单的目录选择器：path 为空返回白名单根目录，非空返回该目录的一层子目录（仅白名单本地前缀内，不跟随符号链接）。
+// @Tags         React
+// @Accept       json
+// @Produce      json
+// @Param        req  body     params.BundleBrowseReq  true  "浏览请求"
+// @Success      200  {object} components.DefaultRenderWithTrace{data=params.BundleBrowseResp}  "目录清单"
+// @Failure      400  {object} components.DefaultRenderWithTrace  "目录不在白名单内或不存在"
+// @Router       /bundle/browse [post]
+func BrowseBundleSource(ctx *gin.Context) {
+	var req params.BundleBrowseReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf(err.Error()))
+		return
+	}
+	resp, err := bundleService.BrowseSourceDirs(req.Path)
+	if err != nil {
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	components.RenderJsonSucc(ctx, resp)
+}

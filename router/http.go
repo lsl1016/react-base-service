@@ -124,6 +124,7 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/mcpapp/list_tools", react.ListMcpAppGrantableTools)
 		// Agent Bundle 插件包管理（P3：安装展开写入注册表、卸载回滚，见 controllers/http/react/bundle.go）
 		reactGroup.POST("/bundle/install", react.InstallBundle)
+		reactGroup.POST("/bundle/browse", react.BrowseBundleSource)
 		reactGroup.POST("/bundle/uninstall", react.UninstallBundle)
 		reactGroup.POST("/bundle/list", react.ListBundles)
 		// 代码工作区运行视图（P3：活跃 worktree 清单，只读）
