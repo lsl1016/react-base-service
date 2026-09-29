@@ -9,7 +9,7 @@
 | [Memory](memory.md) | `memory` | v1.0 | 2026-09-19 | 长期记忆作用域、分层注入、写入审计、管理接口与限制 |
 | [Graph Memory](graph_memory.md) | `graph_memory` | v1.0 | 2026-09-19 | Graphiti 时序事实图谱：作用域分区、run 启动注入、检索/写入 Meta Tool |
 | [Agent](agent.md) | `agent` | v1.0 | 2026-09-19 | 子 Agent 注册表、Markdown 导入、可见性解析与 delegate_agent 委派边界 |
-| [Workspace](workspace.md) | `workspace` | v1.0 | 2026-09-19 | 代码工作区静态解析、bare mirror 缓存、每 run worktree 分配释放 |
+| [Workspace](workspace.md) | `workspace` | v1.1 | 2026-09-29 | 代码工作区静态解析、bare mirror 缓存、每 run worktree 分配释放、端到端时序与存储形态 |
 | [Async Task](async_task.md) | `async_task` | v1.0 | 2026-09-19 | 异步任务记录、pending 提醒注入、resolve/get 元工具、TTL 与 Provider 同步框架 |
 | [MCP](mcp.md) | `mcp` | v1.0 | 2026-09-19 | MCP 服务器登记与连接管理、工具清单同步进 Business Tool 注册表 |
 | [Bundle](bundle.md) | `bundle` | v1.0 | 2026-09-19 | 插件包安装展开写入注册表、按快照逆序回滚卸载 |
