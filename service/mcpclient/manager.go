@@ -132,6 +132,15 @@ func Bootstrap(engine *gin.Engine) {
 
 	// 继续拉起管理接口登记的 MCP 连接（tblLlmMcpServer，跨 caller）。
 	bootstrapDBServers()
+
+	// 兜底清理孤儿 MCP 工具：来源服务器既不在 yaml 声明、也没有启用中的注册表记录
+	//（含从 yaml 移除、手动建后又删除等场景的残留），其工具不应再出现在工具列表；
+	// 软删行在同名服务器重新接入时由 upsertRegistryTool 自动恢复。
+	if removed, err := CleanupOrphanedRegistryTools(&gin.Context{}); err != nil {
+		zlog.Errorf(nil, "[MCP] 孤儿工具清理失败: %v", err)
+	} else if removed > 0 {
+		zlog.Infof(nil, "[MCP] 已软删 %d 个无来源服务器的孤儿 MCP 工具", removed)
+	}
 }
 
 // bootstrapDBServers 启动时按注册表记录拉起数据库登记的 MCP 连接。
@@ -441,6 +450,42 @@ func SyncServerRegistryScoped(callerKey, serverName string, primary bool) (int, 
 // 含属主与各绑定 caller 名下的副本）。供连接删除/停用时清理注册表；未匹配任何工具不是错误。
 func RemoveRegistryTools(ctx *gin.Context, serverName string) (int, error) {
 	return RemoveRegistryToolsForCaller(ctx, serverName, "")
+}
+
+// CleanupOrphanedRegistryTools 软删除"无来源服务器"的 MCP 注册工具：
+// 工具 config.mcpServer 既不在 yaml 静态声明（conf mcp.servers）中，也没有启用中的
+// 连接注册表记录（tblLlmMcpServer；连接删除/停用时已各自清理，此处兜底 yaml 移除等
+// 无清理钩子的路径）。软删行在同名服务器重新接入时由 upsertRegistryTool 自动恢复。
+func CleanupOrphanedRegistryTools(ctx *gin.Context) (int, error) {
+	live := make(map[string]bool)
+	for _, serverCfg := range conf.CustomConf.MCP.Servers {
+		live[serverCfg.Name] = true
+	}
+	registryServers, err := model.ListEnabledMcpServers(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, server := range registryServers {
+		live[server.Name] = true
+	}
+	tools, err := model.ListToolsByType(ctx, "mcp")
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, tool := range tools {
+		var cfg struct {
+			MCPServer string `json:"mcpServer"`
+		}
+		if err := json.Unmarshal([]byte(tool.Config), &cfg); err != nil || cfg.MCPServer == "" || live[cfg.MCPServer] {
+			continue
+		}
+		if err := model.SoftDeleteToolByToolID(ctx, tool.ToolID); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 // RemoveRegistryToolsForCaller 软删除服务器在某一个 caller 名下的工具副本；
