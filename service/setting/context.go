@@ -118,7 +118,7 @@ func validateContextCompactUpdate(req *params.UpdateContextCompactSettingReq) er
 			"outputReserveTokens", "bufferTokens", "microcompactEnabled", "microcompactKeepRecent":
 			clearing[strings.TrimSpace(field)] = true
 		default:
-			return components.ErrorRuntimeSettingInvalid.Sprintf("clearFields 含未知字段: %s", field)
+			return components.RuntimeSettingInvalidf("clearFields 含未知字段: %s", field)
 		}
 	}
 	check := func(field string, value, min, max int) error {
@@ -126,7 +126,7 @@ func validateContextCompactUpdate(req *params.UpdateContextCompactSettingReq) er
 			return nil
 		}
 		if value < min || value > max {
-			return components.ErrorRuntimeSettingInvalid.Sprintf("%s 取值范围 %d-%d", field, min, max)
+			return components.RuntimeSettingInvalidf("%s 取值范围 %d-%d", field, min, max)
 		}
 		return nil
 	}
@@ -250,6 +250,12 @@ func buildContextCompactSettingResp(override *contextCompactOverrideJSON, update
 	setSource("bufferTokens", overrideFieldHas(override, "bufferTokens"), yamlCfg.BufferTokens > 0, resp.Effective.BufferTokens)
 	setSource("microcompactEnabled", override != nil && override.MicrocompactEnabled != nil, yamlCfg.MicrocompactEnabled != nil, resp.Effective.MicrocompactEnabled)
 	setSource("microcompactKeepRecent", overrideFieldHas(override, "microcompactKeepRecent"), yamlCfg.MicrocompactKeepRecent > 0, resp.Effective.MicrocompactKeepRecent)
+	for _, field := range []string{"enabled", "tokenTrigger", "tokenTarget", "summaryLimit",
+		"outputReserveTokens", "bufferTokens", "microcompactEnabled", "microcompactKeepRecent"} {
+		src := resp.Sources[field]
+		src.Baseline = contextBaseline(override, field)
+		resp.Sources[field] = src
+	}
 
 	if override != nil {
 		resp.Override = &struct {
@@ -267,6 +273,55 @@ func buildContextCompactSettingResp(override *contextCompactOverrideJSON, update
 	resp.UpdatedBy = updatedBy
 	resp.UpdatedAt = updatedAt
 	return resp
+}
+
+// contextBaseline 计算单个字段清除覆盖后的回落值（yaml > 默认），
+// 供面板预览「关掉覆盖再保存」的结果。
+func contextBaseline(override *contextCompactOverrideJSON, field string) interface{} {
+	stripped := &contextCompactOverrideJSON{}
+	if override != nil {
+		*stripped = *override
+	}
+	switch field {
+	case "enabled":
+		stripped.Enabled = nil
+	case "tokenTrigger":
+		stripped.TokenTrigger = nil
+	case "tokenTarget":
+		stripped.TokenTarget = nil
+	case "summaryLimit":
+		stripped.SummaryLimit = nil
+	case "outputReserveTokens":
+		stripped.OutputReserveTokens = nil
+	case "bufferTokens":
+		stripped.BufferTokens = nil
+	case "microcompactEnabled":
+		stripped.MicrocompactEnabled = nil
+	case "microcompactKeepRecent":
+		stripped.MicrocompactKeepRecent = nil
+	default:
+		return nil
+	}
+	cfg := conf.EffectiveContextCompactConfig(toConfContextCompactOverride(stripped))
+	switch field {
+	case "enabled":
+		return cfg.Enabled != nil && *cfg.Enabled
+	case "tokenTrigger":
+		return cfg.TokenTrigger
+	case "tokenTarget":
+		return cfg.TokenTarget
+	case "summaryLimit":
+		return cfg.SummaryLimit
+	case "outputReserveTokens":
+		return cfg.OutputReserveTokens
+	case "bufferTokens":
+		return cfg.BufferTokens
+	case "microcompactEnabled":
+		return cfg.MicrocompactEnabled != nil && *cfg.MicrocompactEnabled
+	case "microcompactKeepRecent":
+		return cfg.MicrocompactKeepRecent
+	}
+	return nil
 }
 
 // overrideFieldHas 判断数字字段是否有 DB 覆盖。

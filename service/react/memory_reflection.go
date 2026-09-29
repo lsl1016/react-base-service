@@ -71,7 +71,8 @@ func executionProfileForRun(req *runtimeRequest) ExecutionProfile {
 // reflection 只暴露记忆三工具（执行侧由 ExecutionProfile 双重拦截）。
 func internalMetaToolDefinitionsForType(sessionType string) []llm.ToolDefinition {
 	if sessionType == model.ReactSessionTypeReflection {
-		if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
+		// 经 GetReactRuntimeConfig 合并管理面板「运行时配置」的 DB 覆盖（与外层注入同口径）。
+		if conf.GetReactRuntimeConfig().Memory.MemoryEnabled() {
 			return memoryToolDefinitions()
 		}
 		return nil

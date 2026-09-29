@@ -14,10 +14,12 @@ type UpdateSubAgentSettingReq struct {
 }
 
 // SubAgentSettingFieldResp 单个设置字段的生效视图：value 是当前生效值，
-// source 标识取值来源（override=DB 覆盖 / yaml=custom.yaml / default=内置默认）。
+// source 标识取值来源（override=DB 覆盖 / yaml=custom.yaml / default=内置默认），
+// baseline 是清除该字段覆盖后将生效的回落值（面板据此预览「关掉覆盖再保存」的结果）。
 type SubAgentSettingFieldResp struct {
-	Value  interface{} `json:"value"`
-	Source string      `json:"source"`
+	Value    interface{} `json:"value"`
+	Source   string      `json:"source"`
+	Baseline interface{} `json:"baseline,omitempty"`
 }
 
 // SubAgentSettingResp subagent 委派策略响应：effective 是合并后的生效值（与引擎实际消费口径一致），
@@ -80,6 +82,44 @@ type ContextCompactSettingResp struct {
 		BufferTokens           *int  `json:"bufferTokens"`
 		MicrocompactEnabled    *bool `json:"microcompactEnabled"`
 		MicrocompactKeepRecent *int  `json:"microcompactKeepRecent"`
+	} `json:"override"`
+	UpdatedBy string `json:"updatedBy"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// UpdateMemorySettingReq 长期记忆策略更新请求（/setting/memory/update）。
+// 字段级覆盖语义与 subagent 一致：指针为 nil = 不修改；清除覆盖走 ClearFields。
+type UpdateMemorySettingReq struct {
+	Enabled             *bool `json:"enabled"`
+	ResidentMaxItems    *int  `json:"residentMaxItems"`
+	ResidentBudgetChars *int  `json:"residentBudgetChars"`
+	IndexMaxItems       *int  `json:"indexMaxItems"`
+	DetachedMaxItems    *int  `json:"detachedMaxItems"`
+	AllowUserScope      *bool `json:"allowUserScope"`
+	// ClearFields 是要清除覆盖、回落 yaml/默认值的字段名列表
+	//（enabled/residentMaxItems/residentBudgetChars/indexMaxItems/detachedMaxItems/allowUserScope）。
+	ClearFields []string `json:"clearFields"`
+}
+
+// MemorySettingResp 长期记忆策略响应：effective 是合并后的生效值（与引擎实际消费口径一致），
+// override 是 DB 当前覆盖字段（null=未覆盖），另附审计信息供面板展示。
+type MemorySettingResp struct {
+	Effective struct {
+		Enabled             bool `json:"enabled"`
+		ResidentMaxItems    int  `json:"residentMaxItems"`
+		ResidentBudgetChars int  `json:"residentBudgetChars"`
+		IndexMaxItems       int  `json:"indexMaxItems"`
+		DetachedMaxItems    int  `json:"detachedMaxItems"`
+		AllowUserScope      bool `json:"allowUserScope"`
+	} `json:"effective"`
+	Sources map[string]SubAgentSettingFieldResp `json:"sources"`
+	Override *struct {
+		Enabled             *bool `json:"enabled"`
+		ResidentMaxItems    *int  `json:"residentMaxItems"`
+		ResidentBudgetChars *int  `json:"residentBudgetChars"`
+		IndexMaxItems       *int  `json:"indexMaxItems"`
+		DetachedMaxItems    *int  `json:"detachedMaxItems"`
+		AllowUserScope      *bool `json:"allowUserScope"`
 	} `json:"override"`
 	UpdatedBy string `json:"updatedBy"`
 	UpdatedAt string `json:"updatedAt"`

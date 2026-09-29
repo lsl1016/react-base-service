@@ -606,10 +606,12 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	}
 
 	// 长期记忆注入块：memory.enabled 时解析 caller(+user) 作用域并渲染常驻层与目录索引；
-	// 记忆为空返回空串（不注入，token 零增量）。
+	// 记忆为空返回空串（不注入，token 零增量）。经 GetReactRuntimeConfig 合并管理面板
+	//「运行时配置」的 DB 覆盖，与 AllowMemory 执行档案同口径。
+	memoryCfg := conf.GetReactRuntimeConfig().Memory
 	var memoryContext string
-	if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
-		memoryContext, err = services.memoryExecutor().BuildContext(ctx, payload.CallerKey, userName, conf.GetReactRuntimeConfig().Memory)
+	if memoryCfg.MemoryEnabled() {
+		memoryContext, err = services.memoryExecutor().BuildContext(ctx, payload.CallerKey, userName, memoryCfg)
 		if err != nil {
 			return nil, err
 		}

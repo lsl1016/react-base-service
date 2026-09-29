@@ -11,10 +11,11 @@ import "sync/atomic"
 // 覆盖粒度是「字段级」：指针为 nil = 该字段未覆盖，回落 custom.yaml（未配置再回落内置默认）；
 // 非 nil = 以 DB 值为准。写侧（service/setting）已做范围校验，此处不做重复校验。
 
-// RuntimeSettingOverride 是全部运行时设置的覆盖快照（subagent / context 两组）。
+// RuntimeSettingOverride 是全部运行时设置的覆盖快照（subagent / context / memory 三组）。
 type RuntimeSettingOverride struct {
 	SubAgent       *SubAgentSettingOverride       `json:"subagent,omitempty"`
 	ContextCompact *ContextCompactSettingOverride `json:"context,omitempty"`
+	Memory         *MemorySettingOverride         `json:"memory,omitempty"`
 }
 
 // SubAgentSettingOverride 是 subagent 委派策略的 DB 覆盖字段（与 ReactSubAgentConfig 一一对应）。
@@ -36,6 +37,17 @@ type ContextCompactSettingOverride struct {
 	BufferTokens           *int  `json:"bufferTokens,omitempty"`
 	MicrocompactEnabled    *bool `json:"microcompactEnabled,omitempty"`
 	MicrocompactKeepRecent *int  `json:"microcompactKeepRecent,omitempty"`
+}
+
+// MemorySettingOverride 是长期记忆策略的 DB 覆盖字段（与 ReactMemoryConfig 的运营期可调
+// 子集一一对应；reflection/extractor 嵌套策略仍归 yaml 管，不在面板暴露）。
+type MemorySettingOverride struct {
+	Enabled              *bool `json:"enabled,omitempty"`
+	ResidentMaxItems     *int  `json:"residentMaxItems,omitempty"`
+	ResidentBudgetChars  *int  `json:"residentBudgetChars,omitempty"`
+	IndexMaxItems        *int  `json:"indexMaxItems,omitempty"`
+	DetachedMaxItems     *int  `json:"detachedMaxItems,omitempty"`
+	AllowUserScope       *bool `json:"allowUserScope,omitempty"`
 }
 
 // runtimeSettingOverrideHolder 存 RuntimeSettingOverride 值；零值快照（nil 各字段）= 无覆盖。
@@ -164,4 +176,37 @@ func EffectiveContextCompactConfig(override *ContextCompactSettingOverride) Reac
 		cfg.Enabled = &enabled
 	}
 	return cfg
+}
+
+// applyMemoryOverride 把 DB 覆盖合并进 yaml 基线：仅覆盖非 nil 字段。
+// 在 GetReactRuntimeConfig 的默认值归一化之前调用。
+func applyMemoryOverride(base ReactMemoryConfig, override *MemorySettingOverride) ReactMemoryConfig {
+	if override == nil {
+		return base
+	}
+	if override.Enabled != nil {
+		base.Enabled = override.Enabled
+	}
+	if override.ResidentMaxItems != nil {
+		base.ResidentMaxItems = *override.ResidentMaxItems
+	}
+	if override.ResidentBudgetChars != nil {
+		base.ResidentBudgetChars = *override.ResidentBudgetChars
+	}
+	if override.IndexMaxItems != nil {
+		base.IndexMaxItems = *override.IndexMaxItems
+	}
+	if override.DetachedMaxItems != nil {
+		base.DetachedMaxItems = *override.DetachedMaxItems
+	}
+	if override.AllowUserScope != nil {
+		base.AllowUserScope = override.AllowUserScope
+	}
+	return base
+}
+
+// EffectiveMemoryConfig 返回长期记忆策略的最终生效值（DB 覆盖 > custom.yaml > 内置默认），
+// 归一化复用 GetReactRuntimeConfig 同一实现（normalizeReactMemoryConfig），面板与引擎口径恒一致。
+func EffectiveMemoryConfig(override *MemorySettingOverride) ReactMemoryConfig {
+	return normalizeReactMemoryConfig(applyMemoryOverride(CustomConf.LLM.React.Memory, override))
 }

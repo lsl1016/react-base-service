@@ -13,6 +13,12 @@ func ParamInvalidf(format string, v ...interface{}) base.Error {
 	return base.Error{ErrNo: ErrorParamInvalid.ErrNo, ErrMsg: fmt.Sprintf(format, v...)}
 }
 
+// RuntimeSettingInvalidf 返回带自定义提示语的运行时设置错误（错误码同 ErrorRuntimeSettingInvalid）。
+// 与 ParamInvalidf 同理：不要用 ErrorRuntimeSettingInvalid.Sprintf 传自定义消息。
+func RuntimeSettingInvalidf(format string, v ...interface{}) base.Error {
+	return base.Error{ErrNo: ErrorRuntimeSettingInvalid.ErrNo, ErrMsg: fmt.Sprintf(format, v...)}
+}
+
 // 4000000-4999999 参数检查错误
 var ErrorParamInvalid = base.Error{
 	ErrNo:  4000,

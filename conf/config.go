@@ -486,6 +486,55 @@ func (c ReactMemoryConfig) MemoryAllowUserScope() bool {
 	return true
 }
 
+// normalizeReactMemoryConfig 归一化长期记忆配置的默认值（GetReactRuntimeConfig 与
+// EffectiveMemoryConfig 共用，保证引擎消费口径与面板生效视图恒一致）。
+func normalizeReactMemoryConfig(memory ReactMemoryConfig) ReactMemoryConfig {
+	if memory.ResidentMaxItems <= 0 {
+		memory.ResidentMaxItems = defaultReactMemoryResidentMaxItems
+	}
+	if memory.ResidentBudgetChars <= 0 {
+		memory.ResidentBudgetChars = defaultReactMemoryResidentBudgetChars
+	}
+	if memory.IndexMaxItems <= 0 {
+		memory.IndexMaxItems = defaultReactMemoryIndexMaxItems
+	}
+	if memory.DetachedMaxItems <= 0 {
+		memory.DetachedMaxItems = defaultReactMemoryDetachedMaxItems
+	}
+	reflection := memory.Reflection
+	if reflection.CooldownMinutes <= 0 {
+		reflection.CooldownMinutes = defaultReactMemoryReflectionCooldownMin
+	}
+	if reflection.MaxWritesPerRun <= 0 {
+		reflection.MaxWritesPerRun = defaultReactMemoryReflectionMaxWrites
+	}
+	if reflection.TranscriptCharLimit <= 0 {
+		reflection.TranscriptCharLimit = defaultReactMemoryReflectionTranscript
+	}
+	memory.Reflection = reflection
+	extractor := memory.Extractor
+	if extractor.CooldownMinutes <= 0 {
+		extractor.CooldownMinutes = defaultReactMemoryExtractorCooldownMin
+	}
+	if extractor.MaxCandidatesPerRun <= 0 {
+		extractor.MaxCandidatesPerRun = defaultReactMemoryExtractorCandidates
+	}
+	if extractor.MaxWritesPerRun <= 0 {
+		extractor.MaxWritesPerRun = defaultReactMemoryExtractorWrites
+	}
+	if extractor.TranscriptCharLimit <= 0 {
+		extractor.TranscriptCharLimit = defaultReactMemoryExtractorTranscript
+	}
+	if extractor.SimilarTopK <= 0 {
+		extractor.SimilarTopK = defaultReactMemoryExtractorTopK
+	}
+	if extractor.MinConfidence <= 0 || extractor.MinConfidence >= 1 {
+		extractor.MinConfidence = defaultReactMemoryExtractorMinConf
+	}
+	memory.Extractor = extractor
+	return memory
+}
+
 // ReactGraphMemoryConfig 时序事实图谱记忆（Graphiti）配置。GroupID 由服务端按 run
 // 作用域强制注入，绝不暴露给模型入参（防跨组越权读写）。
 type ReactGraphMemoryConfig struct {
@@ -867,51 +916,10 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 	}
 	cfg.ToolResult = toolResult
 
-	memory := cfg.Memory
-	if memory.ResidentMaxItems <= 0 {
-		memory.ResidentMaxItems = defaultReactMemoryResidentMaxItems
-	}
-	if memory.ResidentBudgetChars <= 0 {
-		memory.ResidentBudgetChars = defaultReactMemoryResidentBudgetChars
-	}
-	if memory.IndexMaxItems <= 0 {
-		memory.IndexMaxItems = defaultReactMemoryIndexMaxItems
-	}
-	if memory.DetachedMaxItems <= 0 {
-		memory.DetachedMaxItems = defaultReactMemoryDetachedMaxItems
-	}
-	reflection := memory.Reflection
-	if reflection.CooldownMinutes <= 0 {
-		reflection.CooldownMinutes = defaultReactMemoryReflectionCooldownMin
-	}
-	if reflection.MaxWritesPerRun <= 0 {
-		reflection.MaxWritesPerRun = defaultReactMemoryReflectionMaxWrites
-	}
-	if reflection.TranscriptCharLimit <= 0 {
-		reflection.TranscriptCharLimit = defaultReactMemoryReflectionTranscript
-	}
-	memory.Reflection = reflection
-	extractor := memory.Extractor
-	if extractor.CooldownMinutes <= 0 {
-		extractor.CooldownMinutes = defaultReactMemoryExtractorCooldownMin
-	}
-	if extractor.MaxCandidatesPerRun <= 0 {
-		extractor.MaxCandidatesPerRun = defaultReactMemoryExtractorCandidates
-	}
-	if extractor.MaxWritesPerRun <= 0 {
-		extractor.MaxWritesPerRun = defaultReactMemoryExtractorWrites
-	}
-	if extractor.TranscriptCharLimit <= 0 {
-		extractor.TranscriptCharLimit = defaultReactMemoryExtractorTranscript
-	}
-	if extractor.SimilarTopK <= 0 {
-		extractor.SimilarTopK = defaultReactMemoryExtractorTopK
-	}
-	if extractor.MinConfidence <= 0 || extractor.MinConfidence >= 1 {
-		extractor.MinConfidence = defaultReactMemoryExtractorMinConf
-	}
-	memory.Extractor = extractor
-	cfg.Memory = memory
+	// memory 策略先应用管理面板「运行时配置」的 DB 覆盖（覆盖 > yaml > 内置默认），再统一
+	// 归一化；归一化与 /setting/memory 面板响应（EffectiveMemoryConfig）共用同一实现。
+	memory := applyMemoryOverride(cfg.Memory, GetRuntimeSettingOverride().Memory)
+	cfg.Memory = normalizeReactMemoryConfig(memory)
 
 	// subagent 策略统一经 EffectiveSubAgentConfig 合并管理面板「运行时配置」的 DB 覆盖
 	//（覆盖 > yaml > 内置默认），与 /setting/subagent 面板响应口径一致。

@@ -123,22 +123,22 @@ func validateSubAgentUpdate(req *params.UpdateSubAgentSettingReq) error {
 		case "enabled", "maxParallel", "defaultMaxSteps", "maxDepth":
 			clearing[strings.TrimSpace(field)] = true
 		default:
-			return components.ErrorRuntimeSettingInvalid.Sprintf("clearFields 含未知字段: %s", field)
+			return components.RuntimeSettingInvalidf("clearFields 含未知字段: %s", field)
 		}
 	}
 	if req.MaxParallel != nil && !clearing["maxParallel"] {
 		if *req.MaxParallel < subAgentMaxParallelMin || *req.MaxParallel > subAgentMaxParallelMax {
-			return components.ErrorRuntimeSettingInvalid.Sprintf("maxParallel 取值范围 %d-%d", subAgentMaxParallelMin, subAgentMaxParallelMax)
+			return components.RuntimeSettingInvalidf("maxParallel 取值范围 %d-%d", subAgentMaxParallelMin, subAgentMaxParallelMax)
 		}
 	}
 	if req.DefaultMaxSteps != nil && !clearing["defaultMaxSteps"] {
 		if *req.DefaultMaxSteps < subAgentDefaultMaxStepsMin || *req.DefaultMaxSteps > subAgentDefaultMaxStepsMax {
-			return components.ErrorRuntimeSettingInvalid.Sprintf("defaultMaxSteps 取值范围 %d-%d", subAgentDefaultMaxStepsMin, subAgentDefaultMaxStepsMax)
+			return components.RuntimeSettingInvalidf("defaultMaxSteps 取值范围 %d-%d", subAgentDefaultMaxStepsMin, subAgentDefaultMaxStepsMax)
 		}
 	}
 	if req.MaxDepth != nil && !clearing["maxDepth"] {
 		if *req.MaxDepth < subAgentMaxDepthMin || *req.MaxDepth > subAgentMaxDepthMax {
-			return components.ErrorRuntimeSettingInvalid.Sprintf("maxDepth 取值范围 %d-%d", subAgentMaxDepthMin, subAgentMaxDepthMax)
+			return components.RuntimeSettingInvalidf("maxDepth 取值范围 %d-%d", subAgentMaxDepthMin, subAgentMaxDepthMax)
 		}
 	}
 	return nil
@@ -193,6 +193,11 @@ func buildSubAgentSettingResp(override *subAgentOverrideJSON, updatedBy, updated
 	resp.Sources["maxParallel"] = subAgentNumericFieldSource(overrideFieldInt(override, "maxParallel"), yamlCfg.MaxParallel, effective.MaxParallel)
 	resp.Sources["defaultMaxSteps"] = subAgentNumericFieldSource(overrideFieldInt(override, "defaultMaxSteps"), yamlCfg.DefaultMaxSteps, effective.DefaultMaxSteps)
 	resp.Sources["maxDepth"] = subAgentNumericFieldSource(overrideFieldInt(override, "maxDepth"), yamlCfg.MaxDepth, effective.MaxDepth)
+	for _, field := range []string{"enabled", "maxParallel", "defaultMaxSteps", "maxDepth"} {
+		src := resp.Sources[field]
+		src.Baseline = subAgentBaseline(override, field)
+		resp.Sources[field] = src
+	}
 
 	if override != nil {
 		resp.Override = &struct {
@@ -205,6 +210,39 @@ func buildSubAgentSettingResp(override *subAgentOverrideJSON, updatedBy, updated
 	resp.UpdatedBy = updatedBy
 	resp.UpdatedAt = updatedAt
 	return resp
+}
+
+// subAgentBaseline 计算单个字段清除覆盖后的回落值（yaml > 默认）：
+// 复制覆盖并把该字段置 nil 后重算生效配置，供面板预览「关掉覆盖再保存」的结果。
+func subAgentBaseline(override *subAgentOverrideJSON, field string) interface{} {
+	stripped := &subAgentOverrideJSON{}
+	if override != nil {
+		*stripped = *override
+	}
+	switch field {
+	case "enabled":
+		stripped.Enabled = nil
+	case "maxParallel":
+		stripped.MaxParallel = nil
+	case "defaultMaxSteps":
+		stripped.DefaultMaxSteps = nil
+	case "maxDepth":
+		stripped.MaxDepth = nil
+	default:
+		return nil
+	}
+	cfg := conf.EffectiveSubAgentConfig(toConfOverride(stripped))
+	switch field {
+	case "enabled":
+		return cfg.SubAgentEnabled()
+	case "maxParallel":
+		return cfg.MaxParallel
+	case "defaultMaxSteps":
+		return cfg.DefaultMaxSteps
+	case "maxDepth":
+		return cfg.MaxDepth
+	}
+	return nil
 }
 
 // subAgentFieldSource 判定布尔字段来源（override > yaml > default），value 返回生效值。
@@ -259,7 +297,7 @@ func toConfOverride(override *subAgentOverrideJSON) *conf.SubAgentSettingOverrid
 	}
 }
 
-// refreshOverrideFromDB 读 DB 覆盖并注入 conf 内存快照（subagent + context 两组）。
+// refreshOverrideFromDB 读 DB 覆盖并注入 conf 内存快照（subagent + context + memory 三组）。
 func refreshOverrideFromDB(ctx *gin.Context) error {
 	subOverride, _, _, err := loadSubAgentOverride(ctx)
 	if err != nil {
@@ -269,9 +307,14 @@ func refreshOverrideFromDB(ctx *gin.Context) error {
 	if err != nil {
 		return err
 	}
+	memoryOverride, _, _, err := loadMemoryOverride(ctx)
+	if err != nil {
+		return err
+	}
 	snapshot := conf.RuntimeSettingOverride{
 		SubAgent:       toConfOverride(subOverride),
 		ContextCompact: toConfContextCompactOverride(contextOverride),
+		Memory:         toConfMemoryOverride(memoryOverride),
 	}
 	conf.SetRuntimeSettingOverride(snapshot)
 	return nil
