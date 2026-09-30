@@ -59,12 +59,6 @@ llm:
         - model_key: "claude"
           model_version: "glm-4.6"
           display_name: "GLM 4.6 (Anthropic 协议)"
-        - model_key: "deepseek"
-          model_version: "deepseek-flash"
-          display_name: "DeepSeek Flash (Anthropic 协议)"
-        - model_key: "deepseek"
-          model_version: "deepseek-v4-pro"
-          display_name: "DeepSeek V4 Pro (Anthropic 协议)"
       mutual_failover: false
     # 历史上下文自动压缩：高水位触发、低水位目标。
     context_compact:
@@ -135,7 +129,8 @@ llm:
       cache_dir: './data/bundle-cache'    # bundle 源仓库 bare mirror 缓存
       git_timeout_sec: 120                # 单次 git 子操作超时
       allowed_source_prefixes:            # 来源白名单（按前缀匹配）
-        - 'C:/Users/keke/Desktop/xm/'     # 本地开发/测试用；生产换内部 git 前缀
+        - 'C:/Users/keke/Desktop/xm/'     # 原作者本机（占位保留）；生产换内部 git 前缀
+        - '/Users/admin/Desktop/xm/notebook/插件/'  # 本机插件目录（Bundle 安装目录选择器的浏览根）
     # 内置 web_fetch 工具（WP4 前置）：URL 抓取 → 正文提取 → 按预算回填；未配置默认关闭。
     # 只允许公网 http/https（拒绝环回/私网字面量），完整正文经 resultRef 落库可分页续读。
     web_fetch:
@@ -146,9 +141,9 @@ llm:
     # 内置 web_search 工具（WP4）：经外部搜索服务检索，返回标题/链接/摘要清单；未配置默认关闭。
     # 自建 SearXNG 需在 settings.yml 的 formats 中开启 json；全文内容用 web_fetch 跟进抓取。
     web_search:
-      enabled: false
+      enabled: true
       kind: searxng            # 搜索服务适配器类型（当前仅支持 searxng）
-      base_url: 'http://searxng:8080'  # SearXNG 实例地址
+      base_url: 'http://127.0.0.1:8888'  # SearXNG 实例地址（本机开发连 react-base-searxng 容器映射端口，.env SEARXNG_HOST_PORT 固化）
       api_key: ''              # 可选请求凭证（托管实例需要时填写）
       timeout_sec: 20          # 单次检索超时
       max_results: 8           # 返回条数上限
@@ -157,7 +152,7 @@ llm:
     subagent:
       enabled: true
       max_parallel: 6        # 同一轮多个 delegate_agent 调用的并行上限（并行委派 + 泳道视图演示）
-      default_max_steps: 500 # agent 未配置 max_steps 时子 run 的步数上限（letta-code 学习测试临时调大）
+      default_max_steps: 100 # agent 未配置 max_steps 时子 run 的步数上限（运行时设置面板上限 64，改更大值须经此文件）
       max_depth: 2           # 委派嵌套深度上限（子 Agent 再委派），防递归失控
 
 # MCP 客户端：kind=repo 走 stdio 适配器白名单（可执行文件部署于 bin/，env 注入子进程）；
