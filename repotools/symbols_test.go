@@ -142,3 +142,37 @@ func TestListRepositories(t *testing.T) {
 		t.Fatalf("want [sub/ svc/], got %v", repos)
 	}
 }
+
+func TestOpenViaSymlinkedRoot(t *testing.T) {
+	// 回归：New 必须把 root 经 EvalSymlinks 归一化，否则 safeExisting 拿解析后的
+	// 候选路径与未解析 root 比较，root 前缀含软链时（macOS 的 /var、/tmp，或本用例
+	// 显式构造的别名）会被误判 "symlink escapes repository root"。
+	repo := setupSymbolRepo(t)
+	alias := filepath.Join(t.TempDir(), "alias-root")
+	if err := os.Symlink(repo.root, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	viaAlias, err := New(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := viaAlias.FileSymbols("svc/main.go"); err != nil {
+		t.Fatalf("FileSymbols via symlinked root: %v", err)
+	}
+	if got, err := viaAlias.FindReferences("maxRetry", ".", 50); err != nil {
+		t.Fatalf("FindReferences via symlinked root: %v", err)
+	} else if len(got) != 1 || got[0]["path"] != "svc/main.go" {
+		t.Fatalf("maxRetry refs via symlinked root: %v", got)
+	}
+	// 反向约束不变：仓库内部指向外部的软链仍必须被拒绝。
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	if err := os.WriteFile(outside, []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo.root, "svc", "escape.go")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := viaAlias.FileSymbols("svc/escape.go"); err == nil {
+		t.Fatal("symlink escaping repository root should still be rejected")
+	}
+}

@@ -16,6 +16,8 @@ import (
 type Repo struct{ root string }
 
 // New 打开并校验仓库根目录。
+// root 经 EvalSymlinks 归一化后再保存：safeExisting 会把候选路径解析到底层真实路径，
+// 若 root 保留未解析形式（如 macOS 的 /var → /private/var），解析后的路径会被误判逃逸。
 func New(root string) (*Repo, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -24,7 +26,11 @@ func New(root string) (*Repo, error) {
 	if _, err := os.Stat(abs); err != nil {
 		return nil, fmt.Errorf("repo root:%s: %w", abs, err)
 	}
-	return &Repo{root: abs}, nil
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root:%s: %w", abs, err)
+	}
+	return &Repo{root: resolved}, nil
 }
 
 // ListFiles 列出某子目录下的直接条目（忽略 .git/node_modules 等）。
