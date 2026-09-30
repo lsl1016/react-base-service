@@ -2,9 +2,11 @@
  * SessionList - 会话列表组件
  *
  * 展示历史会话列表，支持在会话之间切换。
+ * 多会话架构：statuses 提供各会话 runtime 的运行状态（后台运行中/等待输入徽标）。
  */
 
 import { For, Show } from "solid-js";
+import type { SessionStatusInfo } from "../../runtime/agent-client";
 import type { SessionMeta } from "../../storage/event-ledger";
 import { ScrollArea } from "./ScrollArea";
 
@@ -15,10 +17,27 @@ export interface SessionListProps {
   activeSessionId: string | null;
   /** 是否禁用新会话入口 */
   newSessionDisabled?: boolean;
+  /** 各会话运行时状态（后台运行徽标）；缺省时不渲染徽标 */
+  statuses?: SessionStatusInfo[];
   /** 选中会话时的回调 */
   onSelectSession: (sessionId: string) => void;
   /** 创建新会话时的回调 */
   onNewSession: () => void;
+}
+
+/** 会话运行徽标文案：空串表示不显示。 */
+function sessionBadgeText(status?: SessionStatusInfo["status"]): string {
+  switch (status) {
+    case "running":
+    case "compacting":
+      return "运行中";
+    case "waiting_client_tool":
+      return "等待输入";
+    case "recovering":
+      return "恢复中";
+    default:
+      return "";
+  }
 }
 
 export function SessionList(props: SessionListProps) {
@@ -37,11 +56,16 @@ export function SessionList(props: SessionListProps) {
     if (diffMins < 60) return `${diffMins}分钟前`;
     if (diffHours < 24) return `${diffHours}小时前`;
     if (diffDays < 7) return `${diffDays}天前`;
-    
+
     return date.toLocaleDateString("zh-CN", {
       month: "short",
       day: "numeric",
     });
+  };
+
+  const badgeFor = (sessionId: string): string => {
+    const info = props.statuses?.find((item) => item.sessionId === sessionId);
+    return info ? sessionBadgeText(info.status) : "";
   };
 
   return (
@@ -75,6 +99,9 @@ export function SessionList(props: SessionListProps) {
             >
               <div class="agent-ui-session-item-title">
                 {session.title || "未命名会话"}
+                <Show when={badgeFor(session.sessionId)}>
+                  <span class="agent-ui-session-item-badge">{badgeFor(session.sessionId)}</span>
+                </Show>
               </div>
               <Show when={session.lastMessage}>
                 <div class="agent-ui-session-item-preview">

@@ -74,6 +74,8 @@ describe('WsClient offline grace', () => {
     vi.useFakeTimers();
     MockWebSocket.instances = [];
     vi.stubGlobal('WebSocket', MockWebSocket);
+    // 重连退避带 ±20% 抖动（多会话防同步重连风暴）：本组用例依赖确定性延迟，固定随机数
+    vi.spyOn(Math, 'random').mockReturnValue(0);
   });
 
   afterEach(() => {

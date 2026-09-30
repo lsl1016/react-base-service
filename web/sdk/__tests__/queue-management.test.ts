@@ -188,6 +188,8 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_server');
+    // 多会话架构：切换后新会话连接异步建立，等就绪再发送
+    await waitForConnected(client);
 
     client.sendQueuedMessage('pend_9');
     const send = sentMessages.at(-1);
@@ -201,6 +203,7 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_server');
+    await waitForConnected(client);
 
     client.run('第一条');
     expect(client.getState().status).toBe('running');
@@ -213,6 +216,7 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_server');
+    await waitForConnected(client);
 
     client.run('第一条');
     expect(client.getState().status).toBe('running');
@@ -227,6 +231,7 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_server');
+    await waitForConnected(client);
 
     client.run('第一条');
     const state1 = client.getState();

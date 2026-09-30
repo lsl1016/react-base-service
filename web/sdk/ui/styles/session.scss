@@ -96,6 +96,21 @@
   margin-bottom: $agent-ui-spacing-xs;
   @include agent-ui-text-ellipsis;
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: $agent-ui-spacing-xs;
+}
+
+// 多会话运行徽标：后台会话 run 运行中/等待输入/恢复中的提示。
+.agent-ui-session-item-badge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: $agent-ui-radius-full;
+  background: $agent-ui-primary-light;
+  color: $agent-ui-primary;
+  font-size: 10px;
+  font-weight: $agent-ui-font-weight-medium;
+  line-height: 16px;
 }
 
 .agent-ui-session-item-preview {

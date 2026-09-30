@@ -228,6 +228,11 @@ export class WsClient {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
+  /** 连接是否建立中（OPEN 或 CONNECTING）：调用方可据此区分「首次/切换建连」与「断线」。 */
+  get isConnecting(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING;
+  }
+
   /** 建立 WebSocket 连接（如果已连接或正在连接中则跳过） */
   connect(): void {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
@@ -496,12 +501,15 @@ export class WsClient {
     }, this.options.heartbeatTimeout);
   }
 
-  /** 指数退避重连：delay = min(1000 * 2^attempts, maxDelay) */
+  /** 指数退避重连：delay = min(1000 * 2^attempts, maxDelay)，叠加 ±20% 抖动。
+   *  多会话架构下每个会话各持一条连接，网络整体抖动时若不抖动化退避，
+   *  所有连接会在同一时刻同步重连（重连风暴）。 */
   private scheduleReconnect(): void {
-    const delay = Math.min(
+    const baseDelay = Math.min(
       INITIAL_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts),
       this.options.reconnectMaxDelay,
     );
+    const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
     this.reconnectAttempts++;
     const reconnectAttempt = this.reconnectAttempts;
     this.log('reconnect:scheduled', {

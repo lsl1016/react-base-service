@@ -15,7 +15,7 @@ import IconMdiClose from "~icons/mdi/close";
 import IconMdiCog from "~icons/mdi/cog";
 import IconMdiHistory from "~icons/mdi/history";
 import IconMdiPlus from "~icons/mdi/plus";
-import type { AgentClient } from "../../runtime/agent-client";
+import type { AgentClient, SessionStatusInfo } from "../../runtime/agent-client";
 import type { AskQuestionAnswerContent, ExecutionMode, ReactAttachmentRef, ReactModelInfo, ReactReasoningOptions, UserInputOrigin, UserModelItem } from "../../protocol/types";
 import type { RunFeedbackPayload, RunFeedbackState } from "../../runtime/types";
 import type { AsyncTaskItem } from "../../session/types";
@@ -451,6 +451,20 @@ export function AgentPanel(props: AgentPanelProps) {
       console.error("Failed to load sessions:", error);
     }
   };
+
+  // 多会话徽标：各会话 runtime 的运行状态（后台运行中/等待输入）。
+  // 在列表打开、当前会话状态翻转、会话归属变化时刷新。
+  const [sessionStatuses, setSessionStatuses] = createSignal<SessionStatusInfo[]>([]);
+  const refreshSessionStatuses = () => {
+    if (typeof props.client.getSessionStatuses !== "function") return;
+    setSessionStatuses(props.client.getSessionStatuses());
+  };
+  createEffect(() => {
+    void showSessionHistory();
+    void isRunning();
+    void store.state.sessionId;
+    refreshSessionStatuses();
+  });
 
   createEffect(() => {
     if (showSessionHistory()) {
@@ -946,7 +960,7 @@ export function AgentPanel(props: AgentPanelProps) {
               <SessionList
                 sessions={sessions()}
                 activeSessionId={store.state.sessionId}
-                newSessionDisabled={isRunning()}
+                statuses={sessionStatuses()}
                 onSelectSession={handleSelectSession}
                 onNewSession={handleNewSession}
               />
