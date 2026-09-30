@@ -45,6 +45,8 @@ export interface InputAreaProps {
   selectedModel?: ReactModelInfo | null;
   /** 切换模型 */
   onModelChange?: (model: ReactModelInfo) => void;
+  /** 模型下拉打开（focus）时触发懒刷新，带 TTL 防抖 */
+  onModelDropdownRefresh?: () => void;
   /** 当前思考程度三态 */
   reasoning?: ReactReasoningOptions;
   /** 切换思考程度 */
@@ -278,6 +280,7 @@ export function InputArea(props: InputAreaProps) {
                   value={modelOptionValue(selected())}
                   disabled={props.disabled || props.isRunning}
                   aria-label="选择模型"
+                  onFocus={() => props.onModelDropdownRefresh?.()}
                   onChange={(event) => {
                     const next = props.models?.find((item) => modelOptionValue(item) === event.currentTarget.value);
                     if (next) props.onModelChange?.(next);

@@ -544,6 +544,9 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 			if conn == nil {
 				return nil, components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("%d", userModel.ConnectionID))
 			}
+			if conn.Status != 1 {
+				return nil, components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("连接 %s 已停用（id=%d）", conn.Name, conn.ID))
+			}
 			apiKey = conn.ApiKeyValue
 			userModelApiURL = conn.BaseURL
 			connProtocol = conn.Protocol

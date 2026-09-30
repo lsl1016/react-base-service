@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -247,12 +248,39 @@ func fetchUpstreamModels(baseURL, protocol, apiKey string) ([]string, error) {
 		return nil, components.ErrorConnectionFetchModelsFailed.Sprintf("接入地址为空")
 	}
 
+	models, err := fetchModelsFromURL(modelsURL, apiKey)
+	if err == nil {
+		return models, nil
+	}
+	// 部分厂商的 Anthropic 兼容面挂在子路径（如 DeepSeek https://api.deepseek.com/anthropic）
+	// 只实现 /v1/messages，模型发现仅在 OpenAI 面提供；首选 404 时回退同 host 根 /v1/models。
+	// 首选能通（或非 404 类故障）的厂商不受影响。
+	if fallbackURL := hostRootModelsURL(modelsURL); fallbackURL != "" && fallbackURL != modelsURL {
+		if fallbackModels, fallbackErr := fetchModelsFromURL(fallbackURL, apiKey); fallbackErr == nil {
+			return fallbackModels, nil
+		}
+	}
+	return nil, components.ErrorConnectionFetchModelsFailed.Sprintf("%s", summarizeUpstreamError(err))
+}
+
+// hostRootModelsURL 取 modelsURL 同 host 根下的 /v1/models（子路径兼容面的回退地址）。
+func hostRootModelsURL(modelsURL string) string {
+	parsed, err := url.Parse(modelsURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/v1/models"
+}
+
+// fetchModelsFromURL GET OpenAI 风格模型发现接口（GET /models），解析去重排序后的模型
+// ID 列表。非 200 / 解析失败时返回携带 URL 的错误，供上层决定是否回退与透传真因。
+func fetchModelsFromURL(modelsURL, apiKey string) ([]string, error) {
 	reqCtx, cancel := context.WithTimeout(context.Background(), connectionFetchTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, modelsURL, nil)
 	if err != nil {
-		return nil, components.ErrorConnectionFetchModelsFailed.Sprintf(summarizeUpstreamError(err))
+		return nil, err
 	}
 	// 鉴权头双发：OpenAI 兼容网关认 Authorization Bearer，Anthropic 兼容面认 x-api-key；
 	// 同时携带不影响只认其一的一侧。
@@ -262,16 +290,16 @@ func fetchUpstreamModels(baseURL, protocol, apiKey string) ([]string, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, components.ErrorConnectionFetchModelsFailed.Sprintf(summarizeUpstreamError(err))
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, components.ErrorConnectionFetchModelsFailed.Sprintf(summarizeUpstreamError(err))
+		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, components.ErrorConnectionFetchModelsFailed.Sprintf(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncateBody(body)))
+		return nil, fmt.Errorf("HTTP %d (%s): %s", resp.StatusCode, modelsURL, truncateBody(body))
 	}
 
 	var payload struct {
@@ -280,7 +308,7 @@ func fetchUpstreamModels(baseURL, protocol, apiKey string) ([]string, error) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, components.ErrorConnectionFetchModelsFailed.Sprintf(fmt.Sprintf("响应解析失败: %s", summarizeUpstreamError(err)))
+		return nil, fmt.Errorf("响应解析失败 (%s): %s", modelsURL, err)
 	}
 
 	models := make([]string, 0, len(payload.Data))

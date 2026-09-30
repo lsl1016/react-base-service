@@ -444,6 +444,18 @@ func ListUserModels(ctx *gin.Context, userName string, req params.ListUserModels
 		list = filtered
 	}
 
+	// 引用连接的启用状态：连接停用/不存在 → 条目标记 disabled（输入框下拉过滤，配置面板仍全量）。
+	connIDs := make([]uint, 0, len(list))
+	for _, m := range list {
+		if m.ConnectionID > 0 {
+			connIDs = append(connIDs, m.ConnectionID)
+		}
+	}
+	connStatus, err := model.MapConnectionStatusByIDs(ctx, connIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	// 组装响应
 	items := make([]params.UserModelItem, 0, len(list))
 	for _, m := range list {
@@ -469,6 +481,9 @@ func ListUserModels(ctx *gin.Context, userName string, req params.ListUserModels
 			IsPlatformDefault: m.IsPlatformDefault,
 			CreatedAt:         m.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt:         m.UpdatedAt.Format("2006-01-02 15:04:05"),
+		}
+		if m.ConnectionID > 0 && connStatus[m.ConnectionID] != 1 {
+			item.Disabled = true
 		}
 
 		// 平台默认模型返回积分信息

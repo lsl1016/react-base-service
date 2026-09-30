@@ -62,4 +62,24 @@ describe('InputArea model selector', () => {
     expect(host.querySelector<HTMLSelectElement>('[aria-label="选择模型"]')?.disabled).toBe(true);
     dispose();
   });
+
+  it('triggers dropdown refresh callback on focus', () => {
+    const host = document.createElement('div');
+    const onModelDropdownRefresh = vi.fn();
+    const dispose = render(
+      () => createComponent(InputArea, {
+        isRunning: false,
+        onSend: vi.fn(),
+        onCancel: vi.fn(),
+        models,
+        selectedModel: models[0],
+        onModelDropdownRefresh,
+      }),
+      host,
+    );
+    host.querySelector<HTMLSelectElement>('[aria-label="选择模型"]')!
+      .dispatchEvent(new Event('focus', { bubbles: true }));
+    expect(onModelDropdownRefresh).toHaveBeenCalledTimes(1);
+    dispose();
+  });
 });

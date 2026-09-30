@@ -101,6 +101,9 @@ type UserModelItem struct {
 	UpdatedAt         string   `json:"updatedAt"`
 	BaseCredits       *int     `json:"baseCredits,omitempty"`
 	BonusCredits      *int     `json:"bonusCredits,omitempty"`
+	// Disabled 表示当前不可选用：引用的连接已被停用或不存在（自包含模型恒为可用）。
+	// 配置面板仍展示全量条目，输入框模型下拉据此过滤。
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // ========== 连接管理接口 DTO ==========

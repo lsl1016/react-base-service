@@ -470,10 +470,12 @@ export function AgentPanel(props: AgentPanelProps) {
   });
 
   // 合并用户/平台自建模型（携带 modelHash，run 走自带 Key/端点）；保留平台模型列表在前。
+  // 引用连接已停用的模型（disabled）不进下拉：模型配置面板仍展示全量条目供管理。
   const mergeUserModels = (platformModels: ReactModelInfo[], userModels: UserModelItem[]): ReactModelInfo[] => {
     const merged = [...platformModels];
     const seen = new Set(merged.map((item) => `${item.modelKey}\u0000${item.modelVersion}`));
     for (const item of userModels) {
+      if (item.disabled) continue;
       const key = `${item.modelKey}\u0000${item.modelVersion}`;
       if (seen.has(key)) continue;
       merged.push(userModelToModelInfo(item));
@@ -533,6 +535,38 @@ export function AgentPanel(props: AgentPanelProps) {
     }).catch((error) => {
       console.warn('[AgentPanel] 刷新用户模型列表失败:', error);
     });
+  });
+
+  // 模型下拉打开时懒刷新（TTL 防抖）：配置面板之外的入口（管理后台、API、多端）改动
+  // 模型/连接后，点开下拉即可见到最新列表；频繁焦点切换不会连打接口。
+  const MODELS_DROPDOWN_REFRESH_TTL_MS = 8000;
+  let modelsRefreshedAt = 0;
+  let modelsRefreshing = false;
+  const refreshModelsOnDropdownOpen = () => {
+    if (modelsRefreshing) return;
+    if (Date.now() - modelsRefreshedAt < MODELS_DROPDOWN_REFRESH_TTL_MS) return;
+    if (typeof props.client.listModels !== 'function') return;
+    modelsRefreshing = true;
+    void props.client.listModels().then(async (response) => {
+      await loadUserModels(response.models ?? []);
+    }).catch(() => {
+      // 刷新失败保留当前列表，不打断选择。
+    }).finally(() => {
+      modelsRefreshedAt = Date.now();
+      modelsRefreshing = false;
+    });
+  };
+
+  // 下拉数据变化后校正选中模型：被停用/删除的模型自动回退到列表首个可用项。
+  const modelIdentityKey = (model: ReactModelInfo): string => model.modelHash
+    ? `${model.modelKey}\u0000${model.modelVersion}\u0000${model.modelHash}`
+    : `${model.modelKey}\u0000${model.modelVersion}`;
+  createEffect(() => {
+    const current = models();
+    const selected = selectedModel();
+    if (!selected || current.length === 0) return;
+    if (current.some((item) => modelIdentityKey(item) === modelIdentityKey(selected))) return;
+    setSelectedModel(current[0] ?? null);
   });
 
   createEffect(() => {
@@ -952,6 +986,7 @@ export function AgentPanel(props: AgentPanelProps) {
           models={models()}
           selectedModel={selectedModel()}
           onModelChange={setSelectedModel}
+          onModelDropdownRefresh={refreshModelsOnDropdownOpen}
           reasoning={reasoning()}
           onReasoningChange={setReasoning}
           onCancel={handleCancel}

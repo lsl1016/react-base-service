@@ -111,6 +111,26 @@ func ListConnections(ctx *gin.Context) ([]Connection, error) {
 	return conns, nil
 }
 
+// MapConnectionStatusByIDs 批量查连接启用状态（id → status）；软删/不存在的 id 不出现在结果里。
+func MapConnectionStatusByIDs(ctx *gin.Context, ids []uint) (map[uint]int, error) {
+	statusByID := make(map[uint]int, len(ids))
+	if len(ids) == 0 {
+		return statusByID, nil
+	}
+	var conns []Connection
+	err := helpers.MysqlClientLLM.Model(&Connection{}).WithContext(ctx).
+		Select("id", "status").
+		Where("id IN ?", ids).
+		Find(&conns).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	for _, conn := range conns {
+		statusByID[conn.ID] = conn.Status
+	}
+	return statusByID, nil
+}
+
 // FindConnectionsByCallerAndRoutes 查询启用中的连接：caller 精确命中 + 空 caller（全局）
 // 两类候选都返回，按 route_values 前缀匹配；调用方先取 caller 精确命中、再取全局兜底
 //（各取 route_values 最长者，与旧 tblLlmApiKey 解析口径一致）。
