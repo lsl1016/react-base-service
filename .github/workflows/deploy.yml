@@ -3,8 +3,10 @@
 # 说明：
 # - ECS 不再执行 git pull（国内直连 github.com 不稳定，443 经常超时），
 #   改为 runner 侧 checkout 后 tar 打包、scp 直传，服务器全程不需要出网；
-# - deploy/compose/conf/mount 不在打包范围内，服务器上的 api.yaml（含真实 key）不会被覆盖；
-# - 注意：仓库里删除的文件不会同步从服务器删除，历史文件堆积时手动清理或重新 clone。
+# - deploy/compose/conf/mount 不在打包范围内（服务器独有，含真实 key），
+#   换目录部署时从旧目录整体搬迁，不会丢失；
+# - 每次解压到全新目录再换名启用（旧目录在部署成功后删除），保证仓库里
+#   已删除的文件真正从服务器下线（覆盖式解压曾导致残留 .go 与新代码重复声明、镜像构建失败）。
 # 仅由 push/workflow_dispatch 触发，不响应 pull_request，避免公开仓库被恶意 PR 利用。
 name: deploy
 
@@ -47,12 +49,24 @@ jobs:
           scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
             /tmp/src.tar.gz "$ECS_USER@$ECS_HOST:/tmp/src.tar.gz"
 
+          # 全新目录解压后换名启用，保证删除的文件同步下线；服务器独有的
+          # deploy/compose/conf/mount（真实 key，不进 tar 与镜像）从旧目录搬入新目录。
           $SSH "set -e
-            mkdir -p $DEPLOY_DIR
-            cd $DEPLOY_DIR
-            tar -xzf /tmp/src.tar.gz
+            NEW=/opt/react-base-service.incoming
+            OLD=/opt/react-base-service.previous
+            rm -rf \$NEW \$OLD
+            mkdir -p \$NEW
+            tar -xzf /tmp/src.tar.gz -C \$NEW
             rm -f /tmp/src.tar.gz
+            if [ -d $DEPLOY_DIR/deploy/compose/conf/mount ]; then
+              mkdir -p \$NEW/deploy/compose/conf
+              cp -a $DEPLOY_DIR/deploy/compose/conf/mount \$NEW/deploy/compose/conf/mount
+            fi
+            if [ -d $DEPLOY_DIR ]; then mv $DEPLOY_DIR \$OLD; fi
+            mv \$NEW $DEPLOY_DIR
+            cd $DEPLOY_DIR
             docker compose up -d --build
-            docker image prune -f"
+            docker image prune -f
+            rm -rf \$OLD"
 
           rm -f /tmp/deploy_key
