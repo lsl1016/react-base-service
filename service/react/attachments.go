@@ -78,35 +78,6 @@ func validateReactAttachmentTotalSize(totalSize int64) error {
 	return nil
 }
 
-// resolveAttachmentRecord 按 fileId 读取并校验附件记录（归属、状态、类型、大小），供注入校验、
-// read_attachment、inspect_attachment 和 python_exec 附件源共用。
-func resolveAttachmentRecord(ctx context.Context, owner, fileID string) (*model.ChatFileRecord, error) {
-	fileID = strings.TrimSpace(fileID)
-	if fileID == "" {
-		return nil, components.ErrorParamInvalid.Sprintf("attachments.fileId 不能为空")
-	}
-	record, err := model.GetChatFileRecordByFileIDWithContext(ctx, fileID)
-	if err != nil {
-		return nil, err
-	}
-	if record == nil {
-		return nil, components.ErrorParamInvalid.Sprintf("附件不存在: %s", fileID)
-	}
-	if strings.TrimSpace(record.Owner) != strings.TrimSpace(owner) {
-		return nil, components.ErrorUserNameMismatch
-	}
-	if record.Status != model.ChatFileStatusParsed {
-		return nil, components.ErrorParamInvalid.Sprintf("附件状态不可用: %s", fileID)
-	}
-	if !skillchatfile.IsSupportedChatFileExtension(record.Ext) {
-		return nil, components.ErrorParamInvalid.Sprintf("仅支持 csv / md / txt 文件")
-	}
-	if record.Size > skillchatfile.ChatFileUploadMaxBytes {
-		return nil, components.ParamInvalidf("文件大小不能超过 50MB")
-	}
-	return record, nil
-}
-
 // downloadDecodeAttachment 下载并按记录的 charset 解码成 UTF-8 文本，供 read_attachment/inspect_attachment 使用。
 func downloadDecodeAttachment(ctx context.Context, record *model.ChatFileRecord) (string, error) {
 	if err := helpers.EnsureCos(); err != nil {

@@ -29,11 +29,9 @@ import (
 	"react-base-service/conf"
 	model "react-base-service/models/llm"
 
-	"react-base-service/golib/zlog"
 	"github.com/gin-gonic/gin"
+	"react-base-service/golib/zlog"
 )
-
-const metaToolWaitAgent = "wait_agent"
 
 // waitAgentPollInterval 是子 run 状态轮询间隔；等待是父循环内的 DB 轻查询，2s 足够。
 const waitAgentPollInterval = 2 * time.Second
@@ -241,7 +239,7 @@ func waitAgentEntryForRun(run *model.ReactRun, runID, parentRunID string, ctx *g
 	switch {
 	case terminal:
 		if status == subRunStatusCompleted {
-			if final, err := subAgentFinalResponse(ctx, runID); err == nil {
+			if final, err := SubAgentFinalResponse(ctx, runID); err == nil {
 				entry.FinalResponse = final
 			} else {
 				entry.ErrorMessage = "未产生最终回复"

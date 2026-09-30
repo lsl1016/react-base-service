@@ -2,6 +2,7 @@ package react
 
 import (
 	"context"
+	core "react-base-service/service/react/internal/core"
 	"testing"
 	"time"
 
@@ -80,8 +81,17 @@ func TestCollectLLMStreamTreatsEOFWithoutDoneAsRetryable(t *testing.T) {
 	state := &reactEngineState{runCtx: context.Background()}
 
 	_, err := state.collectLLMStreamWithEmitter(stream, 0, func() {}, time.Second, false)
-	retryable, ok := retryableModelErrorInfo(err)
-	if !ok || retryable.reason != "upstream_eof" {
+	reason, ok := core.RetryableModelErrorInfo(err)
+	if !ok || reason != "upstream_eof" {
 		t.Fatalf("expected retryable upstream_eof, got %T %v", err, err)
+	}
+}
+
+func TestSleepModelRetryBackoffReturnsOnCancel(t *testing.T) {
+	runCtx, cancel := context.WithCancelCause(context.Background())
+	state := &reactEngineState{runCtx: runCtx}
+	cancel(ErrReactRunCancelled)
+	if err := state.sleepModelRetryBackoff(time.Hour); !core.IsReactRunCancelled(err) {
+		t.Fatalf("cancel during backoff must return immediately with cancel error, got %v", err)
 	}
 }

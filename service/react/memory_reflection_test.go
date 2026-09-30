@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"react-base-service/conf"
 	llm "react-base-service/api/llm"
+	"react-base-service/conf"
 	model "react-base-service/models/llm"
 )
 
@@ -31,12 +31,12 @@ func TestReflectionExecutionProfileOnlyAllowsMemory(t *testing.T) {
 		t.Fatalf("reflection profile must disable everything except memory: %+v", profile)
 	}
 	for _, tool := range []string{metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite} {
-		if !profile.allowsInternalTool(tool) {
+		if !profile.AllowsInternalTool(tool) {
 			t.Fatalf("reflection profile should allow %s", tool)
 		}
 	}
 	for _, tool := range []string{metaToolGetTool, metaToolExecuteTool, metaToolTodoWrite, metaToolPythonExec, metaToolCreatePlan, metaToolGetSkill} {
-		if profile.allowsInternalTool(tool) {
+		if profile.AllowsInternalTool(tool) {
 			t.Fatalf("reflection profile should deny %s", tool)
 		}
 	}
@@ -141,7 +141,6 @@ func deleteReflectionCooldownForTest(sessionID string) {
 	delete(memoryReflectionCooldown.last, sessionID)
 }
 
-
 func TestPlanScopedRunDisablesCreatePlan(t *testing.T) {
 	original := conf.CustomConf.LLM.React.AllowPlan
 	defer func() { conf.CustomConf.LLM.React.AllowPlan = original }()
@@ -154,7 +153,7 @@ func TestPlanScopedRunDisablesCreatePlan(t *testing.T) {
 	if profile.AllowPlan {
 		t.Fatalf("plan scoped run must not expose create_plan")
 	}
-	if profile.allowsInternalTool(metaToolCreatePlan) {
+	if profile.AllowsInternalTool(metaToolCreatePlan) {
 		t.Fatalf("plan scoped run must deny create_plan at execution boundary")
 	}
 }

@@ -14,10 +14,10 @@ import (
 
 func TestSteerAdmissionDecision(t *testing.T) {
 	cases := []struct {
-		name         string
-		in           steerAdmissionInput
-		wantKind     string
-		wantReason   string
+		name       string
+		in         steerAdmissionInput
+		wantKind   string
+		wantReason string
 	}{
 		// run 处于 running、无附件、非软着陆 → guide（最高优先路径）。
 		{"running_clean_guide", steerAdmissionInput{ActiveRunState: model.ReactRunStateRunning}, steerDecisionGuide, ""},

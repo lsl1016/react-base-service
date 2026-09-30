@@ -96,7 +96,7 @@ func TestClassifyContextMessages(t *testing.T) {
 	}
 
 	// 序列化往返稳定。
- encoded := computeContextBreakdownJSON(messages, 1, tools, activeTools)
+	encoded := computeContextBreakdownJSON(messages, 1, tools, activeTools)
 	if encoded == "" {
 		t.Fatal("computeContextBreakdownJSON 不应返回空串")
 	}

@@ -21,24 +21,10 @@ import (
 )
 
 const (
-	EventToolUseStart       = "tool_use_start"
-	EventToolUseEnd         = "tool_use_end"
-	EventClientToolUseStart = "client_tool_use_start"
-	EventClientToolUseEnd   = "client_tool_use_end"
-	EventCompactStart       = "compact_start"
-	EventCompactEnd         = "compact_end"
-	EventTodoUpdate         = "todo_update"
-	EventModelFallback      = "model_fallback"
-	EventModelRetry         = "model_retry"
-	EventSoftLanding        = "soft_landing"
-	EventTimeout            = "timeout"
-
 	executedByServer   = "server"
 	executedByClient   = "client"
 	executedByInternal = "internal"
 )
-
-type ClientMessageReader func() (params.ReactWSMessage, error)
 
 type reactClientToolCall struct {
 	index int
@@ -62,14 +48,14 @@ type collectLLMStreamResult struct {
 // executeReactLoop 是 ReAct Runtime 的核心状态机。
 //
 // 每一轮严格按以下顺序推进：
-//   1. 判定软着陆边界（步数/预算/时间临近耗尽时进入收尾窗口），持久化 stepIndex，
-//      并在需要时做微压缩与全量压缩；
-//   2. 只向模型暴露稳定 Meta Tool，业务 Tool Schema 通过 get_tool 按需加载；
-//   3. 流式调用模型（失败先同模型退避重试，预算耗尽再互备），收集正文/思考/tool_calls/usage；
-//   4. 持久化 assistant 消息；
-//   5. 无 tool_use 时收敛为最终回答（max_tokens 截断时先自动续写）；
-//   6. 有 tool_use 时执行工具（软着陆窗口内限流为只读）、持久化 tool_result，
-//      并把结果追加到下一轮模型上下文。
+//  1. 判定软着陆边界（步数/预算/时间临近耗尽时进入收尾窗口），持久化 stepIndex，
+//     并在需要时做微压缩与全量压缩；
+//  2. 只向模型暴露稳定 Meta Tool，业务 Tool Schema 通过 get_tool 按需加载；
+//  3. 流式调用模型（失败先同模型退避重试，预算耗尽再互备），收集正文/思考/tool_calls/usage；
+//  4. 持久化 assistant 消息；
+//  5. 无 tool_use 时收敛为最终回答（max_tokens 截断时先自动续写）；
+//  6. 有 tool_use 时执行工具（软着陆窗口内限流为只读）、持久化 tool_result，
+//     并把结果追加到下一轮模型上下文。
 //
 // 终止边界治理（docs/plan/20260925_AgentLoop终止边界与循环治理优化方案.md）：
 // maxSteps 只是防御性最后闸门；正常终止由用户取消、软着陆收尾、run 预算/超时、
@@ -971,15 +957,6 @@ func marshalStoredToolResultContent(results []llm.ToolResultContent) ([]byte, er
 		storedContent["toolMeta"] = toolMeta
 	}
 	return json.Marshal(storedContent)
-}
-
-// requestCookies 提取当前 HTTP 请求 Cookie，透传给后端 HTTP 工具保持调用态一致。
-func requestCookies(ctx *gin.Context) map[string]string {
-	cookies := make(map[string]string)
-	for _, cookie := range ctx.Request.Cookies() {
-		cookies[cookie.Name] = cookie.Value
-	}
-	return cookies
 }
 
 // reactToolCallNames 提取本轮工具调用名列表，用于日志排查。

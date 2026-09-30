@@ -60,7 +60,7 @@ func sendMessageActiveRunStates() map[string]bool {
 
 // chooseSendMessageTarget 从候选子 run（创建序，升序）中选择消息投递目标（纯函数）：
 // 优先活跃 run（同路径多委派时自然取最新活跃）；无活跃 run 时返回最新的终态 run
-//（供上层给出明确的"已结束"报错）。cancelling 不算可投递（取消收尾中的 run 不再接受新输入）。
+// （供上层给出明确的"已结束"报错）。cancelling 不算可投递（取消收尾中的 run 不再接受新输入）。
 func chooseSendMessageTarget(runs []model.ReactRun) *model.ReactRun {
 	var active, latest *model.ReactRun
 	for i := range runs {

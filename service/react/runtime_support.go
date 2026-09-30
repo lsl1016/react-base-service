@@ -18,17 +18,11 @@ import (
 	model "react-base-service/models/llm"
 	toolService "react-base-service/service/tool"
 
-	"react-base-service/golib/zlog"
 	"github.com/gin-gonic/gin"
+	"react-base-service/golib/zlog"
 )
 
-const (
-	toolExecutionStatusRunning   = "running"
-	toolExecutionStatusWaiting   = "waiting"
-	toolExecutionStatusSuccess   = "success"
-	toolExecutionStatusError     = "error"
-	toolExecutionStatusCancelled = "cancelled"
-)
+const ()
 
 // NormalizedToolResult 是写入模型上下文和事件流的工具结果，避免把大结果直接塞回上下文。
 type NormalizedToolResult struct {
@@ -161,78 +155,6 @@ func storeResultRef(ctx *gin.Context, sessionID, runID, toolUseID, resultRef, co
 		Content: content, SizeBytes: sizeBytes,
 		ExpireAt: &expireAt,
 	})
-}
-
-// readResultRef 只允许当前 session/run 读取自己的大结果，过期或不存在统一按未命中处理。
-func readResultRef(ctx *gin.Context, sessionID, runID, resultRef string) (string, bool, error) {
-	resultRef = strings.TrimSpace(resultRef)
-	if resultRef == "" {
-		return "", false, nil
-	}
-	stored, err := model.GetReactToolResultByResultRef(ctx, resultRef)
-	if err != nil {
-		return "", false, err
-	}
-	if stored == nil {
-		return "", false, nil
-	}
-	if stored.SessionID != sessionID {
-		return "", false, fmt.Errorf("resultRef forbidden")
-	}
-	if stored.ExpireAt != nil && time.Now().After(*stored.ExpireAt) {
-		return "", false, nil
-	}
-	return stored.Content, true, nil
-}
-
-// sliceResultContent 按 rune 维度切分 resultRef 内容，避免中文等多字节字符被截断。
-func sliceResultContent(content string, offset, limit int) (string, bool, int) {
-	toolResultCfg := conf.GetReactRuntimeConfig().ToolResult
-	if offset < 0 {
-		offset = 0
-	}
-	if limit <= 0 {
-		limit = toolResultCfg.ReadLimit
-	}
-	if limit > toolResultCfg.MaxReadLimit {
-		limit = toolResultCfg.MaxReadLimit
-	}
-	runes := []rune(content)
-	if offset >= len(runes) {
-		return "", false, len(runes)
-	}
-	end := offset + limit
-	if end > len(runes) {
-		end = len(runes)
-	}
-	return string(runes[offset:end]), end < len(runes), end
-}
-
-// truncateRunes 去掉首尾空白后按 rune 截断，保证摘要字段不会破坏 UTF-8 内容。
-func truncateRunes(content string, limit int) string {
-	runes := []rune(strings.TrimSpace(content))
-	if len(runes) <= limit {
-		return string(runes)
-	}
-	return string(runes[:limit])
-}
-
-// headRunes 直接取原始内容的前 limit 个 rune，不做 TrimSpace。
-// 与 truncateRunes 的区别：truncateRunes 面向摘要展示（去空白、可读性优先），
-// headRunes 面向可续读预览——保持与原始内容同一套 rune 坐标，使 read_tool_result
-// 能从 len([]rune(preview)) 处无缝续读，避免首尾空白导致的偏移错位。
-func headRunes(content string, limit int) string {
-	if limit <= 0 {
-		return ""
-	}
-	runeCount := 0
-	for byteIndex := range content {
-		if runeCount == limit {
-			return content[:byteIndex]
-		}
-		runeCount++
-	}
-	return content
 }
 
 // executedBy 返回工具实际执行端，用于 thought_end 和 tool_use 事件标识执行边界。

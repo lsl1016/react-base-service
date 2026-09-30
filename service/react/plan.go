@@ -71,7 +71,7 @@ var (
 
 func createPlanToolDefinition() llm.ToolDefinition {
 	return llm.ToolDefinition{
-		Name: metaToolCreatePlan,
+		Name:        metaToolCreatePlan,
 		Description: "提交一份分步执行计划，等待用户在前端确认后才开始执行。适用于步骤较多（建议不少于3步）、包含不可逆或高风险操作（删除、覆盖、外部副作用），或用户明确要求先给方案再动手的任务。调用本工具后本轮立即结束：返回 planId 与 pending 状态，页面向用户展示计划卡片；用户点击「开始任务」后你会收到「开始执行刚才的计划」的新消息，届时再按计划顺序逐项执行，执行进度用 todo_write 维护。用户未确认前不得执行任何步骤；如果用户在后续消息中要求调整计划，先按反馈修订再重新提交。简单任务（一两步、无副作用）不要使用本工具，直接用 todo_write 拆解并执行即可。",
 		Parameters: map[string]interface{}{
 			"type": "object",
@@ -146,9 +146,9 @@ func executeCreatePlan(sessionID, runID string, input json.RawMessage) (string, 
 
 	result := map[string]interface{}{
 		"planId":    planID,
-		"status":   planStatusPending,
+		"status":    planStatusPending,
 		"stepCount": len(steps),
-		"message":  "计划已提交，等待用户确认。用户点击「开始任务」后会发送新消息指示执行；在此之前不要执行任何步骤，也不要再调用 create_plan。",
+		"message":   "计划已提交，等待用户确认。用户点击「开始任务」后会发送新消息指示执行；在此之前不要执行任何步骤，也不要再调用 create_plan。",
 	}
 	data, err := json.Marshal(result)
 	if err != nil {

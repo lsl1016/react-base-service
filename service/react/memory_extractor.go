@@ -141,10 +141,10 @@ func runMemoryExtractionOnce(ctx *gin.Context, spec extractionRunSpec, summary s
 	}
 
 	candidates, err := extractor.Extract(ctx, invoker, extractor.ExtractInput{
-		Summary:     summary,
-		Transcript:  renderMemoryReflectionTranscript(compacted, cfg.Extractor.TranscriptCharLimit),
-		Manifest:    extractor.BuildManifest(items),
-		CurrentDate: time.Now().Format("2006-01-02"),
+		Summary:       summary,
+		Transcript:    renderMemoryReflectionTranscript(compacted, cfg.Extractor.TranscriptCharLimit),
+		Manifest:      extractor.BuildManifest(items),
+		CurrentDate:   time.Now().Format("2006-01-02"),
 		MaxCandidates: cfg.Extractor.MaxCandidatesPerRun,
 	})
 	if err != nil {

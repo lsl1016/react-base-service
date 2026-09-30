@@ -29,19 +29,6 @@ import (
 )
 
 const (
-	EventRun                   = "run"
-	EventCancel                = "cancel"
-	EventToolUseAnswer         = "tool_use_answer"
-	EventThoughtStart          = "thought_start"
-	EventThoughtDelta          = "thought_delta"
-	EventThoughtEnd            = "thought_end"
-	EventContentStart          = "content_start"
-	EventContentDelta          = "content_delta"
-	EventContentEnd            = "content_end"
-	EventDone                  = "done"
-	EventError                 = "error"
-	EventCancelled             = "cancelled"
-	EventHeartbeat             = "heartbeat"
 	defaultReactSessionType    = model.ReactSessionTypeChat
 	maxReactSessionTitleLength = 20
 )
@@ -187,12 +174,12 @@ func RunWithClientReaderContext(ctx *gin.Context, parent context.Context, payloa
 // run 是一次外层 ReAct Run 的生命周期编排入口。
 //
 // 主流程：
-//   1. prepareRuntimeRequest：解析调用方、用户、模型和各类能力快照；
-//   2. 入口 token 校验：在创建 Run 前拒绝明显超出上下文窗口的请求；
-//   3. createReactRunContext：事务内创建/锁定 Session、创建 Run、持久化用户输入；
-//   4. 创建 clientMessageHub 与可取消 context，并注册运行中取消句柄；
-//   5. executeReactLoop：进入“模型 -> Tool -> 结果回填 -> 下一轮”的核心循环；
-//   6. 统一收敛 finished / error / cancelled，并释放本 Run 的 Workspace。
+//  1. prepareRuntimeRequest：解析调用方、用户、模型和各类能力快照；
+//  2. 入口 token 校验：在创建 Run 前拒绝明显超出上下文窗口的请求；
+//  3. createReactRunContext：事务内创建/锁定 Session、创建 Run、持久化用户输入；
+//  4. 创建 clientMessageHub 与可取消 context，并注册运行中取消句柄；
+//  5. executeReactLoop：进入“模型 -> Tool -> 结果回填 -> 下一轮”的核心循环；
+//  6. 统一收敛 finished / error / cancelled，并释放本 Run 的 Workspace。
 //
 // 这里负责 Run 生命周期，不实现 Tool、Memory、Agent 等领域能力本身。
 //
@@ -471,6 +458,7 @@ func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, ses
 // 主要用于：
 //   - 子 Agent Run 继承父 Run 的同一组 Tool/Agent/Memory Runtime，避免递归执行时切换实现；
 //   - 单元测试注入 fake runtime，只验证 ReAct 编排逻辑。
+//
 // 这里采用依赖注入，是后续扩展 Plan Runtime / Durable Runtime 时保持核心循环稳定的重要边界。
 func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRunPayload, sessionID string, services runtimeServices) (*runtimeRequest, error) {
 	payload.CallerKey = strings.TrimSpace(payload.CallerKey)

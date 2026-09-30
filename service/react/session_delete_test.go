@@ -34,10 +34,10 @@ func TestDeleteReactSessionE2E(t *testing.T) {
 	helpers.InitMysql()
 
 	const (
-		userName   = "e2e-delete-user"
-		callerKey  = "e2e-delete-caller"
-		sessionID  = "session_e2e_delete_test"
-		routeJSON  = `["r1"]`
+		userName  = "e2e-delete-user"
+		callerKey = "e2e-delete-caller"
+		sessionID = "session_e2e_delete_test"
+		routeJSON = `["r1"]`
 	)
 	ctx := newHeadlessGinContext(userName)
 

@@ -1,6 +1,8 @@
 package react
 
 import (
+	core "react-base-service/service/react/internal/core"
+
 	"context"
 	"errors"
 	"fmt"
@@ -27,26 +29,6 @@ type reactModelTarget struct {
 type modelRoundResult struct {
 	Stream collectLLMStreamResult
 	Model  reactModelTarget
-}
-
-type retryableModelError struct {
-	reason string
-	err    error
-}
-
-func (e *retryableModelError) Error() string { return e.err.Error() }
-func (e *retryableModelError) Unwrap() error { return e.err }
-
-func newRetryableModelError(reason string, err error) error {
-	return &retryableModelError{reason: reason, err: err}
-}
-
-func retryableModelErrorInfo(err error) (*retryableModelError, bool) {
-	var target *retryableModelError
-	if !errors.As(err, &target) {
-		return nil, false
-	}
-	return target, true
 }
 
 func messagesForReactModel(messages []llm.ChatMessage, target reactModelTarget) []llm.ChatMessage {
@@ -182,7 +164,7 @@ func (s *reactEngineState) terminalModelContextError(err error) error {
 // callModelRound 在同一个逻辑 ReAct Step 内完成"同模型重试 + 模型互备"。
 //
 // 失败处理顺序（终止边界治理 Phase 2）：可重试失败先在当前模型上指数退避重试
-//（react.model_retry.max_attempts 预算），预算耗尽后才切换互备模型；取消/断连/超时
+// （react.model_retry.max_attempts 预算），预算耗尽后才切换互备模型；取消/断连/超时
 // 原样上抛绝不重试。模型切换不会增加 stepIndex，也不会执行任何 Tool；只有某个模型
 // 完整返回本轮结果后，ReAct 才继续。成功的备选模型会提升为后续轮次的 currentModel。
 func (s *reactEngineState) callModelRound(step int, prefixDebugKey string, tools []llm.ToolDefinition) (modelRoundResult, error) {
@@ -248,10 +230,10 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 			llmCtx := llm.WithReasoning(s.runCtx, s.req.reasoning)
 			if isPrimaryTarget && s.req.capsKnown {
 				llmCtx = llm.WithModelCapabilities(llmCtx, llm.ModelCapabilities{
-					Known:            true,
-					SupportTools:     s.req.capsTools,
-					SupportVision:    s.req.capsVision,
-					SupportThinking:  s.req.capsThinking,
+					Known:           true,
+					SupportTools:    s.req.capsTools,
+					SupportVision:   s.req.capsVision,
+					SupportThinking: s.req.capsThinking,
 				})
 			}
 			llmCtx = llm.WithPrefixDebugRun(llmCtx, prefixDebugKey, step, s.runID)
@@ -314,10 +296,7 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 		}
 
 		if index+1 >= len(attempts) {
-			if retryable, ok := retryableModelErrorInfo(lastErr); ok {
-				return lastResult, retryable.err
-			}
-			return lastResult, lastErr
+			return lastResult, core.UnwrapRetryableModelError(lastErr)
 		}
 
 		next := attempts[index+1]

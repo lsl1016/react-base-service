@@ -2,15 +2,12 @@ package react
 
 import (
 	"context"
-	"errors"
 	"sync"
+
+	core "react-base-service/service/react/internal/core"
 )
 
-var (
-	ErrReactRunCancelled       = errors.New("react run cancelled")
-	ErrReactClientDisconnected = errors.New("react client disconnected")
-	activeRunCancels           sync.Map // runID -> context.CancelCauseFunc
-)
+var activeRunCancels sync.Map // runID -> context.CancelCauseFunc
 
 func registerReactRunCancel(runID string, cancel context.CancelCauseFunc) {
 	activeRunCancels.Store(runID, cancel)
@@ -29,10 +26,5 @@ func getActiveReactRunCancel(runID string) (context.CancelCauseFunc, bool) {
 	return cancel, ok
 }
 
-func IsReactRunCancelled(err error) bool {
-	return errors.Is(err, ErrReactRunCancelled) || errors.Is(err, context.Canceled)
-}
-
-func IsReactClientDisconnected(err error) bool {
-	return errors.Is(err, ErrReactClientDisconnected)
-}
+func IsReactRunCancelled(err error) bool       { return core.IsReactRunCancelled(err) }
+func IsReactClientDisconnected(err error) bool { return core.IsReactClientDisconnected(err) }

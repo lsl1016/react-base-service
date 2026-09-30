@@ -57,8 +57,8 @@ func graphMemorySearchToolDefinition() llm.ToolDefinition {
 	return objectTool(metaToolGraphMemorySearch,
 		"检索长期事实图谱：实体间关系、历史事件、随时间变化的状态。适用于『A 和 B 什么关系』『过去发生过什么』『某个状态什么时候变的』这类需要关系与时间线的问题；偏好与约定看 <memory> 块（以它为准），文档原文用知识库检索。返回带时间窗的事实，可能包含已失效的历史事实（注意 valid/invalid 时间）。",
 		map[string]interface{}{
-			"query":  stringSchema("自然语言查询，必填。"),
-			"limit":  numberSchema("返回事实条数上限，默认 10，最大 30。"),
+			"query": stringSchema("自然语言查询，必填。"),
+			"limit": numberSchema("返回事实条数上限，默认 10，最大 30。"),
 		})
 }
 
@@ -70,8 +70,8 @@ func graphMemoryWriteToolDefinition() llm.ToolDefinition {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"description": stringSchema("本次工具调用的简短描述，用于向用户说明为什么调用该内部工具或正在做什么。"),
-				"name":    stringSchema("事件短标题（≤64字），必填。"),
-				"content": stringSchema("事件或事实的自然语言描述（≤4000字），必填。写清涉及的对象、关系和时间。"),
+				"name":        stringSchema("事件短标题（≤64字），必填。"),
+				"content":     stringSchema("事件或事实的自然语言描述（≤4000字），必填。写清涉及的对象、关系和时间。"),
 			},
 			"required":             []string{"description", "name", "content"},
 			"additionalProperties": false,

@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	llm "react-base-service/api/llm"
-	agentService "react-base-service/service/agent"
 	model "react-base-service/models/llm"
+	agentService "react-base-service/service/agent"
 	toolService "react-base-service/service/tool"
 )
 
@@ -49,35 +49,35 @@ const (
 // metaToolRegistry 是内置 Meta Tool 的元数据注册表；isInternalMetaTool 清单内的每个工具都必须登记。
 var metaToolRegistry = map[string]ToolMeta{
 	// 只读检索类：可并发、软着陆窗口放行。
-	metaToolGetTool:            {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolGetSkill:           {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolReadToolResult:     {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolInspectData:        {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolInspectAttachment:  {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolReadAttachment:     {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolGetAsyncTask:       {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolMemoryList:         {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolMemoryRead:         {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolGraphMemorySearch:  {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelLow},
-	metaToolListTools:          {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolListSkills:         {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolWebFetch:           {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelMedium, TimeoutMs: 60000, MaxOutputBytes: 20 * 1024},
-	metaToolWebSearch:          {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelLow, TimeoutMs: 30000, MaxOutputBytes: 8 * 1024},
+	metaToolGetTool:           {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolGetSkill:          {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolReadToolResult:    {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolInspectData:       {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolInspectAttachment: {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolReadAttachment:    {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolGetAsyncTask:      {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolMemoryList:        {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolMemoryRead:        {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolGraphMemorySearch: {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelLow},
+	metaToolListTools:         {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolListSkills:        {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolWebFetch:          {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelMedium, TimeoutMs: 60000, MaxOutputBytes: 20 * 1024},
+	metaToolWebSearch:         {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelLow, TimeoutMs: 30000, MaxOutputBytes: 8 * 1024},
 	// 会话状态类：只影响本 run 状态，不改外部世界。
-	metaToolTodoWrite:          {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
-	metaToolDisplayFiles:       {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
-	metaToolCreatePlan:         {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
-	metaToolResolveAsyncTask:   {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
-	metaToolMemoryWrite:        {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelMedium},
-	metaToolGraphMemoryWrite:   {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelMedium},
-	metaToolDelegateAgent:      {ReadOnly: false, ConcurrentSafe: true, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
-	metaToolSendMessage:        {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
-	metaToolWaitAgent:          {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolLoadRuntimeCode:    {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
+	metaToolTodoWrite:        {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
+	metaToolDisplayFiles:     {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
+	metaToolCreatePlan:       {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
+	metaToolResolveAsyncTask: {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
+	metaToolMemoryWrite:      {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelMedium},
+	metaToolGraphMemoryWrite: {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelMedium},
+	metaToolDelegateAgent:    {ReadOnly: false, ConcurrentSafe: true, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
+	metaToolSendMessage:      {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
+	metaToolWaitAgent:        {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolLoadRuntimeCode:  {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
 	// 交互/执行类：阻塞等待或改变外部世界，串行执行。
-	metaToolAskQuestion:        {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolPythonExec:         {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSystem, RiskLevel: toolRiskLevelMedium},
-	metaToolExecuteTool:        {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSystem, RiskLevel: toolRiskLevelMedium},
+	metaToolAskQuestion: {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
+	metaToolPythonExec:  {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSystem, RiskLevel: toolRiskLevelMedium},
+	metaToolExecuteTool: {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSystem, RiskLevel: toolRiskLevelMedium},
 }
 
 // toolMetaForName 返回内置 Meta Tool 的元数据；未登记工具返回零值（保守视为非只读、不可并发）。

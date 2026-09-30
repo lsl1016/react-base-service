@@ -26,8 +26,10 @@ const maxClientToolMetaBytes = 1 << 20
 // executeClientToolCalls 批量执行同一模型轮次中的 Client Tool。
 //
 // Client Tool 的真实副作用发生在浏览器/宿主应用，而不是服务端，因此服务端流程是：
-//   发 client_tool_use_start -> ReactRun 进入 waiting_client_message -> 等待前端回填
-//   -> 归一化结果并持久化 -> ReactRun 恢复 running。
+//
+//	发 client_tool_use_start -> ReactRun 进入 waiting_client_message -> 等待前端回填
+//	-> 归一化结果并持久化 -> ReactRun 恢复 running。
+//
 // 等待期间不占用新的模型轮次，但当前 executeReactLoop 会暂停在这里。
 func (s *reactEngineState) executeClientToolCalls(calls []reactClientToolCall, step int, description string) (map[int]llm.ToolResultContent, error) {
 	if s.readClient == nil {

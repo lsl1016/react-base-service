@@ -266,8 +266,8 @@ func newReactEngineState(
 			messageRefs:            req.historyMessageRefs,
 			activeTools:            make(map[string]model.Tool),
 			prevToolDefFingerprint: make(map[string]string),
-			loadedSkillID:           make(map[string]bool),
-			todoStateJSON:           req.todoStateJSON,
+			loadedSkillID:          make(map[string]bool),
+			todoStateJSON:          req.todoStateJSON,
 		},
 	}
 }

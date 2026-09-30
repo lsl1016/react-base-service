@@ -47,7 +47,7 @@ func TestPlanQueueReorder(t *testing.T) {
 // 供队列列表回显与前端禁用注入按钮；快照缺失/损坏按无附件处理。
 func TestQueuedItemHasAttachments(t *testing.T) {
 	withAttachment, err := json.Marshal(params.ReactRunPayload{
-		CallerKey: "report-editor",
+		CallerKey:   "report-editor",
 		Attachments: []params.ReactAttachmentRef{{FileID: "file_1", FileName: "a.pdf"}},
 	})
 	if err != nil {

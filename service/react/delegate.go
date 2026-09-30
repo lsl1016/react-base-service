@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	hub "react-base-service/service/react/internal/hub"
 	"strings"
 	"time"
 
@@ -31,8 +32,8 @@ import (
 	"react-base-service/components/params"
 	"react-base-service/conf"
 	"react-base-service/helpers"
-	agentService "react-base-service/service/agent"
 	model "react-base-service/models/llm"
+	agentService "react-base-service/service/agent"
 	"react-base-service/service/workspace"
 
 	"github.com/gin-gonic/gin"
@@ -120,7 +121,7 @@ func delegateAgentToolDefinition(agents []model.Agent) llm.ToolDefinition {
 }
 
 // renderAgentToolRefs 把 agent 工具白名单渲染为面向模型的描述：约定 token 翻译为可读语义
-//（@readonly→只读业务工具，@none→无业务工具），普通工具名原样保留。
+// （@readonly→只读业务工具，@none→无业务工具），普通工具名原样保留。
 func renderAgentToolRefs(toolRefs []string) []string {
 	rendered := make([]string, 0, len(toolRefs))
 	for _, ref := range toolRefs {
@@ -227,7 +228,7 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 		return s.subAgentErrorResult(agent.AgentKey, subRunID, loopErr.Error()), true, nil
 	}
 
-	finalResponse, err := subAgentFinalResponse(s.ctx, subRunID)
+	finalResponse, err := SubAgentFinalResponse(s.ctx, subRunID)
 	if err != nil {
 		metrics.ReactDelegationsTotal.WithLabelValues(agent.AgentKey, "no_response").Inc()
 		return s.subAgentErrorResult(agent.AgentKey, subRunID, fmt.Sprintf("未产生最终回复: %v", err)), true, nil
@@ -352,7 +353,7 @@ func (s *reactEngineState) deliverBackgroundNotification(ctx *gin.Context, outco
 			summary = "client disconnected"
 		}
 	} else {
-		final, err := subAgentFinalResponse(ctx, outcome.SubRunID)
+		final, err := SubAgentFinalResponse(ctx, outcome.SubRunID)
 		if err != nil {
 			status = "error"
 			summary = fmt.Sprintf("子 Agent 未产生最终回复: %v", err)
@@ -374,7 +375,7 @@ func (s *reactEngineState) deliverBackgroundNotification(ctx *gin.Context, outco
 		Kind:      model.ReactPendingKindNotification,
 		Delivery:  model.ReactPendingDeliveryGuide,
 		Status:    model.ReactPendingStatusAdmitted,
-		Content:   renderTaskNotificationEnvelope(runtimeNotification{
+		Content: hub.RenderTaskNotificationEnvelope(runtimeNotification{
 			SubRunID:     outcome.SubRunID,
 			AgentKey:     outcome.AgentKey,
 			AgentPath:    outcome.AgentPath,
@@ -392,7 +393,7 @@ func (s *reactEngineState) deliverBackgroundNotification(ctx *gin.Context, outco
 			return err
 		}
 		if parentRun == nil || !shouldDeliverBackgroundNotification(parentRun.State) {
-			return errBackgroundParentInactive
+			return hub.ErrBackgroundParentInactive
 		}
 		seq, err := model.GetReactPendingInputMaxSeqBySessionIDWithDB(ctx, tx, s.sessionID)
 		if err != nil {
@@ -401,7 +402,7 @@ func (s *reactEngineState) deliverBackgroundNotification(ctx *gin.Context, outco
 		row.Seq = seq + 1
 		return model.CreateReactPendingInputWithDB(ctx, tx, row)
 	})
-	if errors.Is(err, errBackgroundParentInactive) {
+	if errors.Is(err, hub.ErrBackgroundParentInactive) {
 		zlog.Infof(ctx, "[React.Notify] 父 run 已终态，后台完成通知不回灌(结果见子 run 记录): parentRun=%s, subRun=%s, agent=%s, status=%s", s.runID, outcome.SubRunID, outcome.AgentKey, status)
 		return
 	}
@@ -428,7 +429,7 @@ func (s *reactEngineState) deliverBackgroundNotification(ctx *gin.Context, outco
 // 返回空串 = 通过；否则返回面向模型的失败原因（isError 工具结果）。
 // 规则：run 必须存在、必须是本 run 委派的子 run（parent_run_id 匹配，防跨 run 窥探）、
 // 目标 agent_key 必须与原 run 一致（续跑语义是"同一个专家接着干"）、原 run 已到终态
-//（运行中→先用 wait_agent 等；HITL 等待→用 send_message 催办）。
+// （运行中→先用 wait_agent 等；HITL 等待→用 send_message 催办）。
 func validateContinueRun(prior *model.ReactRun, runID, parentRunID, agentKey string, queryFailed bool) string {
 	if queryFailed {
 		return fmt.Sprintf("continue_run_id %s 查询失败，无法续跑", runID)
@@ -637,8 +638,8 @@ func (s *reactEngineState) finalizeSubAgentRunError(ctx *gin.Context, subRunID s
 	})
 }
 
-// subAgentFinalResponse 取子 run 最后一条有正文的 assistant 消息作为最终回复。
-func subAgentFinalResponse(ctx *gin.Context, subRunID string) (string, error) {
+// SubAgentFinalResponse 取子 run 最后一条有正文的 assistant 消息作为最终回复。
+func SubAgentFinalResponse(ctx *gin.Context, subRunID string) (string, error) {
 	messages, err := model.GetReactMessagesByRunID(ctx, subRunID)
 	if err != nil {
 		return "", err

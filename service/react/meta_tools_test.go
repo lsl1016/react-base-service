@@ -530,66 +530,6 @@ func TestInspectDataToolDefinitionGuidesPythonExecPreflight(t *testing.T) {
 	}
 }
 
-func TestInspectJSONValueBuildsPathSummary(t *testing.T) {
-	var value interface{}
-	if err := json.Unmarshal([]byte(`{"data":[{"id":1,"name":"a"},{"id":2,"extra":true}],"summary":{"total":2}}`), &value); err != nil {
-		t.Fatalf("unmarshal fixture failed: %v", err)
-	}
-	acc := make(map[string]*jsonPathAccumulator)
-	samples := make(map[string]interface{})
-	inspectJSONValue(value, "$", acc, samples, 1)
-	summaries := buildJSONPathSummaries(acc)
-	byPath := make(map[string]jsonPathSummary, len(summaries))
-	for _, item := range summaries {
-		byPath[item.Path] = item
-	}
-	for _, path := range []string{"$", "$.data", "$.data[]", "$.data[].id", "$.data[].name", "$.data[].extra", "$.summary.total"} {
-		if _, ok := byPath[path]; !ok {
-			t.Fatalf("expected path %s in summaries: %#v", path, summaries)
-		}
-	}
-	if got := byPath["$.data[].id"].Types; len(got) != 1 || got[0] != "number" {
-		t.Fatalf("expected id number type, got %#v", got)
-	}
-	if sample, ok := samples["$.data[]"].([]interface{}); !ok || len(sample) != 1 {
-		t.Fatalf("expected one sampled array item, got %#v", samples["$.data[]"])
-	}
-}
-
-func TestNormalizedToolResultUsesRuneCoordinatesForPreviewAndRead(t *testing.T) {
-	cfg := conf.GetReactRuntimeConfig().ToolResult
-	repeatCount := cfg.InlineLimitBytes
-	if repeatCount < cfg.PreviewLimit+16 {
-		repeatCount = cfg.PreviewLimit + 16
-	}
-	content := " \n" + strings.Repeat("中", repeatCount)
-
-	result := normalizeToolResult("tool_rune_coordinate", content, false, executedByInternal)
-	if !result.Truncated {
-		t.Fatalf("expected oversized content to be truncated")
-	}
-
-	contentRunes := []rune(content)
-	previewRunes := []rune(result.Content)
-	if len(previewRunes) != cfg.PreviewLimit {
-		t.Fatalf("expected preview rune count %d, got %d", cfg.PreviewLimit, len(previewRunes))
-	}
-	if result.Content != string(contentRunes[:cfg.PreviewLimit]) {
-		t.Fatalf("preview should preserve original rune coordinates")
-	}
-	if result.OmittedChars != len(contentRunes)-len(previewRunes) {
-		t.Fatalf("expected omitted chars %d, got %d", len(contentRunes)-len(previewRunes), result.OmittedChars)
-	}
-
-	part, _, nextOffset := sliceResultContent(content, len(previewRunes), 8)
-	if part != string(contentRunes[len(previewRunes):len(previewRunes)+8]) {
-		t.Fatalf("read continuation should start immediately after preview, got %q", part)
-	}
-	if nextOffset != len(previewRunes)+8 {
-		t.Fatalf("expected next offset %d, got %d", len(previewRunes)+8, nextOffset)
-	}
-}
-
 func stringSliceContains(items []string, target string) bool {
 	for _, item := range items {
 		if item == target {
@@ -606,7 +546,6 @@ func makeReactTestMessages(count int, content string) []llm.ChatMessage {
 	}
 	return messages
 }
-
 func TestInternalMetaToolNamesAreReservedInToolService(t *testing.T) {
 	names := []string{metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolDisplayFiles, metaToolWebFetch, metaToolWebSearch, metaToolDelegateAgent, metaToolSendMessage, metaToolWaitAgent, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolLoadRuntimeCode}
 	for _, name := range names {

@@ -30,12 +30,7 @@ import (
 	"react-base-service/golib/zlog"
 )
 
-const (
-	EventToolConfirmRequest = "tool_confirm_request"
-	EventToolConfirmAnswer  = "tool_confirm_answer"
-)
-
-const toolExecutionStatusRejected = "rejected"
+const ()
 
 // defaultToolRiskPatterns 是 confirm_risky 模式的内置风险正则（大小写不敏感，
 // 匹配目标为工具名 + 序列化入参）；工具 config.riskPatterns 非空时取而代之。

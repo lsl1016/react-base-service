@@ -58,7 +58,7 @@ func TestFilterToolIndexSnapshot(t *testing.T) {
 	}
 	// 按 name 过滤
 	got := (agentService.RuntimePolicy{ToolRefs: []string{"query_schema", "explain_sql"}}).FilterToolIndexSnapshot(snapshot, nil)
-	var items []reactToolIndexItem
+	var items []ReactToolIndexItem
 	if err := json.Unmarshal([]byte(got), &items); err != nil {
 		t.Fatalf("过滤结果非法 JSON: %v", err)
 	}
@@ -205,5 +205,66 @@ func TestHistoryBuilderNestedRunTerminal(t *testing.T) {
 	}
 	if parentDoneIndex < subDoneIndex {
 		t.Fatalf("父 run done 必须在子 run done 之后（父 run 会继续产生消息）: parent=%d, sub=%d", parentDoneIndex, subDoneIndex)
+	}
+}
+
+// TestValidateContinueRun：continue_run_id 的可续跑性校验（存在性/归属/agent 一致/终态）。
+func TestValidateContinueRun(t *testing.T) {
+	const parentID = "parent-1"
+
+	// 查询失败
+	if reason := validateContinueRun(nil, "r1", parentID, "echo-agent", true); reason == "" {
+		t.Fatalf("查询失败应拒绝续跑")
+	}
+	// run 不存在
+	if reason := validateContinueRun(nil, "r1", parentID, "echo-agent", false); reason == "" || !strings.Contains(reason, "不存在") {
+		t.Fatalf("run 不存在应拒绝: %q", reason)
+	}
+	// 不是本 run 委派的子 run（防跨 run 窥探）
+	other := &model.ReactRun{ParentRunID: "other-parent", AgentPath: "main/echo-agent", State: model.ReactRunStateFinished}
+	if reason := validateContinueRun(other, "r1", parentID, "echo-agent", false); reason == "" || !strings.Contains(reason, "不允许跨 run") {
+		t.Fatalf("跨 run 应拒绝: %q", reason)
+	}
+	// agent_key 不一致（run 属于本 run，但 agentPath 是别的 agent）
+	mismatch := &model.ReactRun{ParentRunID: parentID, AgentPath: "main/echo-agent", State: model.ReactRunStateFinished}
+	if reason := validateContinueRun(mismatch, "r1", parentID, "dba-agent", false); reason == "" || !strings.Contains(reason, "同一个子 Agent") {
+		t.Fatalf("agent 不一致应拒绝: %q", reason)
+	}
+	// 仍在运行
+	running := &model.ReactRun{ParentRunID: parentID, AgentPath: "main/echo-agent", State: model.ReactRunStateRunning}
+	if reason := validateContinueRun(running, "r1", parentID, "echo-agent", false); reason == "" || !strings.Contains(reason, "wait_agent") {
+		t.Fatalf("运行中应引导 wait_agent: %q", reason)
+	}
+	// HITL 等待
+	waiting := &model.ReactRun{ParentRunID: parentID, AgentPath: "main/echo-agent", State: model.ReactRunStateWaitingClientMessage}
+	if reason := validateContinueRun(waiting, "r1", parentID, "echo-agent", false); reason == "" || !strings.Contains(reason, "send_message") {
+		t.Fatalf("HITL 等待应引导 send_message: %q", reason)
+	}
+	// 已终态 → 通过
+	finished := &model.ReactRun{ParentRunID: parentID, AgentPath: "main/echo-agent", State: model.ReactRunStateFinished}
+	if reason := validateContinueRun(finished, "r1", parentID, "echo-agent", false); reason != "" {
+		t.Fatalf("已终态应允许续跑: %q", reason)
+	}
+	if reason := validateContinueRun(&model.ReactRun{ParentRunID: parentID, AgentPath: "main/echo-agent", State: model.ReactRunStateTimeout}, "r1", parentID, "echo-agent", false); reason != "" {
+		t.Fatalf("timeout 终态应允许续跑: %q", reason)
+	}
+}
+
+// delegate_agent 工具 schema 必须暴露 background 参数，模型才有可能选择后台模式。
+func TestDelegateAgentToolDefinitionIncludesBackground(t *testing.T) {
+	def := delegateAgentToolDefinition([]model.Agent{{AgentKey: "ops-agent", Name: "OPS", Description: "ops"}})
+	properties, ok := def.Parameters["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters.properties 缺失: %+v", def.Parameters)
+	}
+	background, ok := properties["background"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("properties.background 缺失: %+v", properties)
+	}
+	if background["type"] != "boolean" {
+		t.Fatalf("background 应为 boolean: %+v", background)
+	}
+	if !strings.Contains(def.Description, "background") {
+		t.Fatalf("工具描述应说明后台模式: %s", def.Description)
 	}
 }

@@ -11,8 +11,8 @@ import (
 	"react-base-service/service/asynctask"
 	toolService "react-base-service/service/tool"
 
-	"react-base-service/golib/zlog"
 	"github.com/gin-gonic/gin"
+	"react-base-service/golib/zlog"
 )
 
 const (
@@ -48,7 +48,6 @@ func truncateAsyncSnapshot(content string, limit int) string {
 // 当前 Async Task 仍属于“跨 Run 提醒 + 显式查询/resolve”模型：它能跨会话轮次保存任务快照，
 // 但不会因为外部任务完成而自动唤醒原 Run。真正的自动暂停/恢复应由后续 Durable Runtime 负责。
 // 因此这里的职责是记录、提醒和查询，不承担后台长期执行编排。
-//
 //
 // submit_input 存提交入参快照：历史被压缩后，模型仍能凭它把查询结果关联回任务的业务语义。
 // rawContent 是工具原始响应，落库存全文（列为 MEDIUMTEXT），供 get_async_task 回读完整内容。
@@ -95,7 +94,6 @@ func (s *reactEngineState) recordAsyncSubmit(tool model.Tool, submitInput json.R
 // Provider 成功识别后可补充 schedulerType/taskKey/nextSyncAt 等结构化信息；识别失败时仍保留旧的
 // 模型提醒模式，因此“异步任务 Provider”是增强能力，不是 Tool 调用成功的必要条件。
 //
-//
 // 识别失败只降级为旧的模型提醒模式，不影响 Tool 结果和当前 ReAct run。
 func (s *reactEngineState) applyManagedAsyncTaskFields(task *model.ReactAsyncTask, cfg *toolService.ToolConfig, tool model.Tool, submitInput json.RawMessage, rawContent string) {
 	if task == nil || cfg == nil || cfg.AsyncTask == nil {
@@ -137,7 +135,6 @@ func loadPendingReactAsyncTasks(ctx *gin.Context, sessionID string) ([]model.Rea
 
 // renderReactAsyncTaskReminder 把未完结任务渲染为临时模型上下文，而不是永久写入聊天历史。
 // 这样提醒只在需要时动态生成，不会随着每次 Run 重复落库造成历史膨胀。
-//
 //
 // 每个字段按 maxReactAsyncTaskRenderRunes 截断，截断内容可通过 get_async_task 回读完整记录。
 func renderReactAsyncTaskReminder(tasks []model.ReactAsyncTask, hasMore bool) string {

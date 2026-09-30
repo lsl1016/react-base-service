@@ -14,8 +14,9 @@ import (
 // executeToolInput 是稳定 Meta Tool execute_tool 的输入信封。
 //
 // ReAct 不把所有业务 Tool 的完整 Schema 一次性暴露给模型，而采用两阶段协议：
-//   1. get_tool(name/toolId)：按需加载目标 Tool 的 parameters/outputSchema；
-//   2. execute_tool(...)：仅执行已经加载过且定义仍有效的 Tool。
+//  1. get_tool(name/toolId)：按需加载目标 Tool 的 parameters/outputSchema；
+//  2. execute_tool(...)：仅执行已经加载过且定义仍有效的 Tool。
+//
 // 这样在 MCP/HTTP Tool 数量较多时，可以显著降低 System Prompt 和 Provider Tool Schema 的上下文占用。
 type executeToolInput struct {
 	Description string          `json:"description"`
@@ -26,7 +27,7 @@ type executeToolInput struct {
 	Arguments   json.RawMessage `json:"arguments"`
 }
 
-type reactToolIndexItem struct {
+type ReactToolIndexItem struct {
 	ToolID      string `json:"toolId"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -34,9 +35,9 @@ type reactToolIndexItem struct {
 
 // buildToolIndexSnapshotJSON 构建当前 run 可用 Business Tool 的轻量索引快照，在 run 初始化阶段注入 system 前缀，替代 list_tools 工具。
 func buildToolIndexSnapshotJSON(tools []model.Tool) string {
-	items := make([]reactToolIndexItem, 0, len(tools))
+	items := make([]ReactToolIndexItem, 0, len(tools))
 	for _, tool := range tools {
-		items = append(items, reactToolIndexItem{
+		items = append(items, ReactToolIndexItem{
 			ToolID:      tool.ToolID,
 			Name:        tool.Name,
 			Description: tool.Description,
@@ -52,7 +53,7 @@ func renderToolIndexSummary(snapshotJSON string) string {
 	if snapshotJSON == "" || snapshotJSON == "null" || snapshotJSON == "[]" {
 		return ""
 	}
-	var items []reactToolIndexItem
+	var items []ReactToolIndexItem
 	if err := json.Unmarshal([]byte(snapshotJSON), &items); err != nil || len(items) == 0 {
 		return ""
 	}
@@ -130,6 +131,7 @@ func (s *reactEngineState) activateBusinessTool(tool model.Tool, definition llm.
 //   - 解析并校验 execute_tool 信封；
 //   - 用 InputSchema 校验真实业务参数；
 //   - 再次查询最新可见 Tool，并比较 definition fingerprint。
+//
 // 如果管理员在 Run 期间修改了 Tool Schema，旧上下文里的定义立即失效，模型必须重新 get_tool。
 func (s *reactEngineState) executeLoadedBusinessTool(call llm.ToolCall, step int) (llm.ToolResultContent, error) {
 	var req executeToolInput

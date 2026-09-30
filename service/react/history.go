@@ -8,14 +8,11 @@ import (
 	llm "react-base-service/api/llm"
 	"react-base-service/components"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 	"react-base-service/helpers"
 	model "react-base-service/models/llm"
 
 	"github.com/gin-gonic/gin"
 )
-
-const historyTimeFormat = "2006-01-02 15:04:05"
 
 type historyUserInputContent struct {
 	Content        string                    `json:"content"`
@@ -106,15 +103,6 @@ func GetHistoryEvents(ctx *gin.Context, req params.ReactSessionEventsReq) (param
 	return params.ReactSessionEventsResp{SessionID: session.SessionID, Title: session.Title, Events: events}, nil
 }
 
-// canViewReactSessionHistory 判定历史回放可见性：会话本人始终可见，跨用户查看需登录用户在 playground 白名单内。
-func canViewReactSessionHistory(loginUserName, sessionUserName string) bool {
-	loginUserName = strings.TrimSpace(loginUserName)
-	if loginUserName != "" && loginUserName == strings.TrimSpace(sessionUserName) {
-		return true
-	}
-	return conf.IsReactPlaygroundWhitelisted(loginUserName)
-}
-
 type historyEventBuilder struct {
 	sessionID                  string
 	seq                        int
@@ -130,13 +118,13 @@ type historyEventBuilder struct {
 	closedRunTerminal          map[string]bool
 	// ToolMeta 徽标回放支持：历史事件由消息记录重建（原始 WS payload 不落库），
 	// 内置工具查注册表、业务工具按会话 caller 查库，解析结果按工具名缓存。
-	historyCtx      *gin.Context
-	historyCallerKey string
-	toolMetaCache   map[string]ToolMeta
-	contextMessages            []llm.ChatMessage
-	contextMessageRefs         [][]reactMessageRef
-	contextUsedTokensByRunID   map[string]int
-	events                     []params.ReactHistoryEvent
+	historyCtx               *gin.Context
+	historyCallerKey         string
+	toolMetaCache            map[string]ToolMeta
+	contextMessages          []llm.ChatMessage
+	contextMessageRefs       [][]reactMessageRef
+	contextUsedTokensByRunID map[string]int
+	events                   []params.ReactHistoryEvent
 }
 
 func newHistoryEventBuilder(sessionID string, runs []model.ReactRun, messages []model.ReactMessage) *historyEventBuilder {
@@ -474,7 +462,7 @@ func (b *historyEventBuilder) buildToolUseStartInput(runID string, part llm.Cont
 }
 
 func buildHistoryToolDisplayNameByID(snapshotJSON string) map[string]string {
-	var items []reactToolIndexItem
+	var items []ReactToolIndexItem
 	if err := json.Unmarshal([]byte(snapshotJSON), &items); err != nil || len(items) == 0 {
 		return nil
 	}
@@ -807,14 +795,6 @@ func parseRouteValues(routeValuesJSON string) []string {
 	}
 	return routeValues
 }
-
-func formatHistoryTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.Format(historyTimeFormat)
-}
-
 
 // GetRunHistoryEvents 将单个 ReactRun 的持久化消息还原为事件。
 // Plan Runtime 用它懒加载 StepAttempt 详情；不会混入同 Session 的父/兄弟 Run。

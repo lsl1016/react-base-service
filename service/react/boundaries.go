@@ -15,7 +15,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -27,22 +26,6 @@ import (
 
 	"react-base-service/golib/zlog"
 )
-
-var (
-	// ErrReactRunTimeout run 触达 wall-clock 上限；按 timeout 终态优雅收敛（区别于取消与错误）。
-	ErrReactRunTimeout = errors.New("react run timeout")
-	// ErrInteractionTimeout 交互等待（ask_question / client tool / 工具确认）超过配置时限；
-	// 以错误工具结果回灌模型继续循环，不终止 run。
-	ErrInteractionTimeout = errors.New("react interaction wait timeout")
-)
-
-func IsReactRunTimeout(err error) bool {
-	return errors.Is(err, ErrReactRunTimeout)
-}
-
-func IsErrInteractionTimeout(err error) bool {
-	return errors.Is(err, ErrInteractionTimeout)
-}
 
 // logWarnf / logInfof 是 engine state 的 nil 安全日志包装：
 // 单测构造的最小 state 没有 gin ctx，zlog 取 logID 需要非空 ctx。

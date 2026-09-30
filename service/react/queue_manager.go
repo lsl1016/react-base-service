@@ -22,13 +22,12 @@ import (
 	model "react-base-service/models/llm"
 
 	"github.com/gin-gonic/gin"
-	"react-base-service/golib/zlog"
 	"gorm.io/gorm"
+	"react-base-service/golib/zlog"
 )
 
 // EventQueueSend 是 WS 上行的显式发送消息类型（S3）：客户端指定一条排队输入，
 // 服务端 claim-once 晋升并在当前连接开新 run（实时事件流与 S2 自动续跑一致）。
-const EventQueueSend = "queue_send"
 
 // validateQueueRequest 校验队列管理请求的会话归属（当前登录用户 + caller + 路由五元组），
 // 返回校验通过的会话行。各 queue API 共用。
@@ -85,7 +84,7 @@ func ListSessionQueue(ctx *gin.Context, req params.ReactQueueListReq) (params.Re
 }
 
 // UpdateQueuedItem 编辑一条排队输入的内容：事务内锁定读确认仍是 queued 后无条件改写
-//（避免 MySQL"值未变化时 RowsAffected=0"误报）；输入已被晋升/作废时 claimed=false。
+// （避免 MySQL"值未变化时 RowsAffected=0"误报）；输入已被晋升/作废时 claimed=false。
 func UpdateQueuedItem(ctx *gin.Context, req params.ReactQueueUpdateReq) (params.ReactQueueMutateResp, error) {
 	sessionID := strings.TrimSpace(req.SessionID)
 	if _, err := validateQueueRequest(ctx, sessionID, req.CallerKey, req.RouteValues); err != nil {
@@ -117,7 +116,7 @@ func UpdateQueuedItem(ctx *gin.Context, req params.ReactQueueUpdateReq) (params.
 
 // ReorderSessionQueue 按请求顺序重排全部排队输入：
 // 事务内锁定读当前 queued 集合并重新校验（IDList 必须恰为排列），随后无条件改写账本 seq
-//（从当前最小 seq 起连续分配），防冷热事实分叉；并发晋升/删除时锁定读可见最新状态并整体拒绝。
+// （从当前最小 seq 起连续分配），防冷热事实分叉；并发晋升/删除时锁定读可见最新状态并整体拒绝。
 func ReorderSessionQueue(ctx *gin.Context, req params.ReactQueueReorderReq) (params.ReactQueueMutateResp, error) {
 	sessionID := strings.TrimSpace(req.SessionID)
 	if _, err := validateQueueRequest(ctx, sessionID, req.CallerKey, req.RouteValues); err != nil {
@@ -179,7 +178,7 @@ func s3MutateResp(ctx *gin.Context, sessionID string, claimed bool) (params.Reac
 
 // planQueueReorder 校验重排请求并生成 seq 分配（纯函数）：
 // requestedIDs 必须恰好是当前 queued 集合的排列；新 seq 从当前最小 seq 起按请求顺序连续分配
-//（保持与更晚准入输入的相对先后，只压缩队列内部的序号）。
+// （保持与更晚准入输入的相对先后，只压缩队列内部的序号）。
 func planQueueReorder(queued []model.ReactPendingInput, requestedIDs []uint) (map[uint]int, error) {
 	if len(requestedIDs) != len(queued) {
 		return nil, fmt.Errorf("idList 数量(%d)与队列长度(%d)不一致", len(requestedIDs), len(queued))
@@ -373,7 +372,7 @@ func marshalRouteValuesForValidate(routeValues []string) string {
 
 // queuedItemHasAttachments 从排队输入的 payload 快照解析是否携带附件：
 // 注入（inject）只支持纯文本，前端据此禁用注入按钮。快照缺失/解析失败按无附件处理
-//（快照只是回显加速，不构成注入校验——注入路径会再次从行锁快照校验）。
+// （快照只是回显加速，不构成注入校验——注入路径会再次从行锁快照校验）。
 func queuedItemHasAttachments(payloadJSON string) bool {
 	if strings.TrimSpace(payloadJSON) == "" {
 		return false

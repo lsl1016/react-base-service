@@ -1,6 +1,9 @@
 package react
 
 import (
+	netcap "react-base-service/service/react/internal/netcap"
+	pyexec "react-base-service/service/react/internal/pyexec"
+
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -14,54 +17,8 @@ import (
 	model "react-base-service/models/llm"
 )
 
-const (
-	metaToolListTools      = "list_tools"
-	metaToolGetTool        = "get_tool"
-	metaToolExecuteTool    = "execute_tool"
-	metaToolListSkills     = "list_skills"
-	metaToolGetSkill       = "get_skill"
-	metaToolReadToolResult = "read_tool_result"
-	metaToolInspectData    = "inspect_data"
-	metaToolPythonExec     = "python_exec"
-	metaToolTodoWrite      = "todo_write"
-	metaToolAskQuestion    = "ask_question"
-	metaToolDisplayFiles   = "displayFiles"
-	// metaToolResolveAsyncTask 标记异步任务已完结，是 pending 提醒的唯一清除入口（TTL 过期兜底）。
-	metaToolResolveAsyncTask = "resolve_async_task"
-	// metaToolGetAsyncTask 回读异步任务完整记录，用于提醒内容被截断时取全量提交参数/响应。
-	metaToolGetAsyncTask = "get_async_task"
-	// metaToolReadAttachment 读取上传附件文本内容到上下文（理解类任务）。
-	metaToolReadAttachment = "read_attachment"
-	// metaToolInspectAttachment 探查 csv 附件的表结构（写分析代码前的准备）。
-	metaToolInspectAttachment = "inspect_attachment"
-	// metaToolCreatePlan 提交分步执行计划，等待用户在前端确认后执行（第一期：确认交互闭环）。
-	metaToolCreatePlan = "create_plan"
-	// metaToolLoadRuntimeCode 加载服务线上代码到本 run 专属工作区并挂载只读检索工具（P2-1）。
-	metaToolLoadRuntimeCode = "load_runtime_code"
-	// metaToolDelegateAgent 把子任务委派给注册表中的专家子 Agent（隔离子 run 执行，结果回填父循环）。
-	// 描述按 caller 可见 agent 清单动态渲染，主 LLM 由此"发现"子代理（OH TaskToolSet 模式）。
-	metaToolDelegateAgent = "delegate_agent"
-	// metaToolSendMessage 向已委派的子代理发送补充消息（A2 父→子通道，见 send_message.go；
-	// 复用 S1 guide 注入机制，对齐 ZCode messageSink）。
-	metaToolSendMessage = "send_message"
-	// 长期记忆三工具：memory.enabled 开启时注册（见 memory.go）。
-	metaToolMemoryList  = "memory_list"
-	metaToolMemoryRead  = "memory_read"
-	metaToolMemoryWrite = "memory_write"
-	// 时序事实图谱记忆工具：graph_memory.enabled 开启时注册（见 graph_memory.go）。
-	metaToolGraphMemorySearch = "graph_memory_search"
-	metaToolGraphMemoryWrite  = "graph_memory_write"
-)
-
 // isInternalMetaTool 判断工具名是否属于 Runtime 内置 Meta Tool，内置工具不走外部工具注册表。
-func isInternalMetaTool(name string) bool {
-	switch name {
-	case metaToolListTools, metaToolGetTool, metaToolExecuteTool, metaToolListSkills, metaToolGetSkill, metaToolReadToolResult, metaToolInspectData, metaToolPythonExec, metaToolTodoWrite, metaToolAskQuestion, metaToolDisplayFiles, metaToolResolveAsyncTask, metaToolGetAsyncTask, metaToolReadAttachment, metaToolInspectAttachment, metaToolCreatePlan, metaToolDelegateAgent, metaToolSendMessage, metaToolLoadRuntimeCode, metaToolMemoryList, metaToolMemoryRead, metaToolMemoryWrite, metaToolGraphMemorySearch, metaToolGraphMemoryWrite, metaToolWebFetch, metaToolWaitAgent, metaToolWebSearch:
-		return true
-	default:
-		return false
-	}
-}
+// 常量与判定已下沉 internal/core（metatool.go），本包经 core_bridge.go 以私有名复用。
 
 // internalMetaToolDefinitions 定义 Runtime 内置工具（稳定 Meta Tool 集合）。
 // allow_plan=false 时 create_plan 不进工具列表（模型不可见）。
@@ -92,11 +49,11 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 	}
 	// web_fetch.enabled=true 时注册网页抓取工具（WP4，URL→正文提取→按预算回填）。
 	if conf.GetReactRuntimeConfig().WebFetch.WebFetchEnabled() {
-		definitions = append(definitions, webFetchToolDefinition())
+		definitions = append(definitions, netcap.WebFetchToolDefinition())
 	}
 	// web_search.enabled 且服务配置完整时注册网页检索工具（WP4，SearXNG 适配器）。
 	if searchCfg := conf.GetReactRuntimeConfig().WebSearch; searchCfg.WebSearchEnabled() && searchCfg.WebSearchConfigured() {
-		definitions = append(definitions, webSearchToolDefinition())
+		definitions = append(definitions, netcap.WebSearchToolDefinition())
 	}
 	// memory.enabled=true 时注册长期记忆三工具（list/read/write），关闭时模型不可见。
 	if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
@@ -254,35 +211,6 @@ func todoWriteToolDefinition() llm.ToolDefinition {
 	}
 }
 
-// objectTool 快速构造 object 参数类型的工具定义，供内置工具声明复用。
-func objectTool(name, description string, properties map[string]interface{}) llm.ToolDefinition {
-	mergedProperties := map[string]interface{}{
-		"description": stringSchema("本次工具调用的简短描述，用于向用户说明为什么调用该内部工具或正在做什么。"),
-	}
-	for key, value := range properties {
-		mergedProperties[key] = value
-	}
-	return llm.ToolDefinition{
-		Name:        name,
-		Description: description,
-		Parameters: map[string]interface{}{
-			"type":       "object",
-			"properties": mergedProperties,
-			"required":   []string{"description"},
-		},
-	}
-}
-
-// stringSchema 构造字符串字段 schema，保持内置工具参数声明写法简洁。
-func stringSchema(description string) map[string]interface{} {
-	return map[string]interface{}{"type": "string", "description": description}
-}
-
-// numberSchema 构造数字字段 schema，用于 offset、limit 等分页参数声明。
-func numberSchema(description string) map[string]interface{} {
-	return map[string]interface{}{"type": "number", "description": description}
-}
-
 type toolDescriptionInput struct {
 	Description string `json:"description"`
 }
@@ -361,9 +289,9 @@ func (s *reactEngineState) executeInternalToolContent(call llm.ToolCall, step in
 	case metaToolReadToolResult:
 		return noToolMeta(s.readToolResult(call.Input))
 	case metaToolInspectData:
-		return noToolMeta(s.inspectData(call.Input))
+		return noToolMeta(pyexec.InspectData(s.pyexecRunContext(), call.Input))
 	case metaToolPythonExec:
-		return s.executePythonExec(call.ID, call.Input)
+		return pyexec.ExecutePythonExec(s.pyexecRunContext(), call.ID, call.Input)
 	case metaToolTodoWrite:
 		return noToolMeta(s.updateTodos(call, step))
 	case metaToolCreatePlan:
@@ -393,9 +321,9 @@ func (s *reactEngineState) executeInternalToolContent(call llm.ToolCall, step in
 	case metaToolGraphMemoryWrite:
 		return noToolMeta(s.executeGraphMemoryWrite(call.Input))
 	case metaToolWebFetch:
-		return noToolMeta(s.executeWebFetch(call.Input))
+		return noToolMeta(netcap.ExecuteWebFetch(s.ctx, s.runID, call.Input))
 	case metaToolWebSearch:
-		return s.executeWebSearch(call.Input)
+		return netcap.ExecuteWebSearch(s.ctx, s.runID, call.Input)
 	case metaToolWaitAgent:
 		return noToolMeta(s.executeWaitAgent(call, step))
 	default:

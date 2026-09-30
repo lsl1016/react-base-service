@@ -336,7 +336,7 @@ func renderAskQuestionTimeoutResult() string {
 }
 
 // recordAskQuestionCancelledResult 在等待作答被取消或断线时登记一条"未作答"tool_result
-//（由引擎层本轮收口统一落库）：一是让历史消息能看出「问题未作答」，二是避免下一轮
+// （由引擎层本轮收口统一落库）：一是让历史消息能看出「问题未作答」，二是避免下一轮
 // LLM 上下文出现悬空 tool_use。取消时连接仍在，额外补发 tool_use_end 让实时 UI 的提问卡片收敛。
 func (s *reactEngineState) recordAskQuestionCancelledResult(call llm.ToolCall, input askQuestionInput, step int, start time.Time, waitErr error) {
 	status, _, interrupted := classifyToolInterruption(s.runCtx, waitErr)

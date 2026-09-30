@@ -114,7 +114,7 @@ func TestGraphMemoryReflectionProfileDeniesTools(t *testing.T) {
 		t.Fatalf("reflection profile must deny graph memory tools")
 	}
 	for _, tool := range []string{metaToolGraphMemorySearch, metaToolGraphMemoryWrite} {
-		if profile.allowsInternalTool(tool) {
+		if profile.AllowsInternalTool(tool) {
 			t.Fatalf("reflection profile should deny %s", tool)
 		}
 	}
@@ -147,7 +147,7 @@ func TestGraphMemorySearchForcesServerSideGroups(t *testing.T) {
 		ctx:    nil,
 		runCtx: context.Background(),
 		req: &runtimeRequest{
-			payload: params.ReactRunPayload{CallerKey: "demo-app"},
+			payload:                params.ReactRunPayload{CallerKey: "demo-app"},
 			runtimeRequestIdentity: runtimeRequestIdentity{userName: "alice"},
 		},
 	}

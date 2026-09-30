@@ -202,9 +202,10 @@ func (s *reactEngineState) metricToolName(call llm.ToolCall) string {
 
 // executeToolCall 执行单个工具调用；保留给非批量路径和后续扩展复用。
 // executeToolCall 根据 ToolCall 名称分发到三类执行路径：
-//   1. 内置 Meta Tool：Memory、Todo、SubAgent、Workspace 等 Runtime 能力；
-//   2. execute_tool：执行已通过 get_tool 激活的 Business Tool；
-//   3. Client Tool：需要前端实际执行并通过 WebSocket 回填。
+//  1. 内置 Meta Tool：Memory、Todo、SubAgent、Workspace 等 Runtime 能力；
+//  2. execute_tool：执行已通过 get_tool 激活的 Business Tool；
+//  3. Client Tool：需要前端实际执行并通过 WebSocket 回填。
+//
 // 所有路径最终都归一为 llm.ToolResultContent，供下一轮模型统一消费。
 func (s *reactEngineState) executeToolCall(call llm.ToolCall, step int) (llm.ToolResultContent, error) {
 	s.logToolCallInput(call, step)
@@ -216,7 +217,7 @@ func (s *reactEngineState) executeToolCall(call llm.ToolCall, step int) (llm.Too
 		}
 	}
 	if isInternalMetaTool(call.Name) {
-		if !s.profile.allowsInternalTool(call.Name) {
+		if !s.profile.AllowsInternalTool(call.Name) {
 			return llm.ToolResultContent{ToolUseID: call.ID, Content: fmt.Sprintf("internal tool %s is not allowed by execution profile", call.Name), IsError: true}, nil
 		}
 		return s.executeInternalTool(call, step)

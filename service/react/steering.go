@@ -32,14 +32,7 @@ import (
 )
 
 // WS 回执与事件词汇（方案 §2.1：steer_queued/guided/drained/rejected/discarded）。
-const (
-	EventSteerGuided         = "steer_guided"
-	EventSteerQueued         = "steer_queued"
-	EventSteerDrained        = "steer_drained"
-	EventSteerRejected       = "steer_rejected"
-	EventSteerDiscarded      = "steer_discarded"
-	EventSteerDeliveryChange = "steer_delivery_changed"
-)
+const ()
 
 // 准入决策结论（内部词汇；回执层映射为 guided/queued/rejected）。
 const (

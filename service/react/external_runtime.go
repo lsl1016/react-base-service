@@ -128,17 +128,17 @@ func RestoreExternalRun(ctx *gin.Context, runID string) (*PreparedExternalRun, e
 		return nil, fmt.Errorf("outer run user input not found")
 	}
 	payload := params.ReactRunPayload{
-		CallerKey: run.CallerKey,
-		RouteValues: parseRouteValues(run.RouteValues),
-		Type: model.ReactSessionTypeChat,
-		UserPrompt: prompt,
-		Attachments: attachments,
+		CallerKey:      run.CallerKey,
+		RouteValues:    parseRouteValues(run.RouteValues),
+		Type:           model.ReactSessionTypeChat,
+		UserPrompt:     prompt,
+		Attachments:    attachments,
 		ControlContext: json.RawMessage(run.ControlContextJSON),
-		LLMContext: json.RawMessage(run.LLMContextJSON),
-		ModelKey: run.ModelKey,
-		ModelVersion: run.ModelVersion,
-		MaxSteps: run.MaxSteps,
-		ExecutionMode: params.ReactExecutionModePlan,
+		LLMContext:     json.RawMessage(run.LLMContextJSON),
+		ModelKey:       run.ModelKey,
+		ModelVersion:   run.ModelVersion,
+		MaxSteps:       run.MaxSteps,
+		ExecutionMode:  params.ReactExecutionModePlan,
 	}
 	req, err := prepareRuntimeRequest(ctx, payload, run.SessionID)
 	if err != nil {
@@ -231,7 +231,7 @@ func CompleteStructured(ctx *gin.Context, runCtx context.Context, prepared *Prep
 	}
 	return StructuredCompletionResult{
 		Arguments: append(json.RawMessage(nil), args...),
-		ModelKey: result.Model.ModelKey, ModelVersion: result.Model.ModelVersion,
+		ModelKey:  result.Model.ModelKey, ModelVersion: result.Model.ModelVersion,
 		InputTokens: result.Stream.InputTokens, OutputTokens: result.Stream.OutputTokens,
 		CacheReadTokens: result.Stream.CacheReadTokens, CacheCreateTokens: result.Stream.CacheCreateTokens,
 	}, nil
@@ -260,7 +260,7 @@ func RunScopedStep(ctx *gin.Context, runCtx context.Context, prepared *PreparedE
 	}
 	attachmentText := renderAttachmentManifest(base.attachments)
 	base.modelUserMessage = llm.ChatMessage{
-		Role: model.ReactMessageRoleUser,
+		Role:    model.ReactMessageRoleUser,
 		Content: buildUserMessageContent(base.payload.UserPrompt, nil, attachmentText),
 	}
 
@@ -301,7 +301,7 @@ func RunScopedStep(ctx *gin.Context, runCtx context.Context, prepared *PreparedE
 		_ = model.UpdateReactRunByRunID(ctx, stepRunID, map[string]any{"state": state, "error_message": err.Error()})
 		return ScopedStepResult{RunID: stepRunID}, err
 	}
-	final, err := subAgentFinalResponse(ctx, stepRunID)
+	final, err := SubAgentFinalResponse(ctx, stepRunID)
 	if err != nil {
 		return ScopedStepResult{RunID: stepRunID}, err
 	}
@@ -316,12 +316,12 @@ func AddExternalRunUsage(ctx *gin.Context, prepared *PreparedExternalRun, inputT
 	return model.GetLLMDB().WithContext(ctx).Model(&model.ReactRun{}).
 		Where("run_id = ?", prepared.RunID).
 		Updates(map[string]any{
-			"total_input_tokens":   gorm.Expr("total_input_tokens + ?", inputTokens),
-			"total_output_tokens":  gorm.Expr("total_output_tokens + ?", outputTokens),
-			"cache_read_tokens":    gorm.Expr("cache_read_tokens + ?", cacheReadTokens),
-			"cache_create_tokens":  gorm.Expr("cache_create_tokens + ?", cacheCreateTokens),
-			"last_input_tokens":    inputTokens,
-			"last_output_tokens":   outputTokens,
+			"total_input_tokens":  gorm.Expr("total_input_tokens + ?", inputTokens),
+			"total_output_tokens": gorm.Expr("total_output_tokens + ?", outputTokens),
+			"cache_read_tokens":   gorm.Expr("cache_read_tokens + ?", cacheReadTokens),
+			"cache_create_tokens": gorm.Expr("cache_create_tokens + ?", cacheCreateTokens),
+			"last_input_tokens":   inputTokens,
+			"last_output_tokens":  outputTokens,
 		}).Error
 }
 
@@ -341,7 +341,7 @@ func PersistExternalFinalAnswer(ctx *gin.Context, prepared *PreparedExternalRun,
 		return err
 	}
 	return model.UpdateReactSessionBySessionID(ctx, prepared.SessionID, map[string]any{
-		"last_run_id": prepared.RunID,
+		"last_run_id":  prepared.RunID,
 		"last_message": trimRunLastMessage(content),
 	})
 }
