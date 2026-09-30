@@ -124,7 +124,9 @@ def _apply_limits() -> None:
         (resource.RLIMIT_CPU, (cpu, cpu)),
         (resource.RLIMIT_AS, (MEM_LIMIT_BYTES, MEM_LIMIT_BYTES)),
         (resource.RLIMIT_FSIZE, (fsize, fsize)),
-        (resource.RLIMIT_NPROC, (64, 64)),
+        # NPROC 按 UID 统计：常驻 server 线程 + 并发 python 子进程 + 线程库共享该配额，
+        # 64 会被 OpenBLAS 等多线程库的正常 workload 撞上；128 保留防 fork 炸弹语义。
+        (resource.RLIMIT_NPROC, (128, 128)),
         (resource.RLIMIT_CORE, (0, 0)),
     ]
     for which, value in limits:
@@ -166,6 +168,13 @@ def run_isolated(python_code: str, data: str, log_id: str) -> dict:
         "MPLCONFIGDIR": os.path.join(workdir, "mpl"),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONHASHSEED": "0",
+        # BLAS/OMP 单线程：容器 cpus 限额 1.5，多线程 BLAS 只会争抢；
+        # 且 RLIMIT_NPROC 按 UID 统计（含常驻 server 自身线程），OpenBLAS 默认按核起 8 线程
+        # 会撞 NPROC 上限导致 numpy import 阶段 pthread_create 失败。
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
         "X_SANDBOX_LOG_ID": log_id,
     }
 
