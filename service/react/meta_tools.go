@@ -91,11 +91,11 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 		definitions = append(definitions, loadRuntimeCodeDefinition())
 	}
 	// web_fetch.enabled=true 时注册网页抓取工具（WP4，URL→正文提取→按预算回填）。
-	if conf.CustomConf.LLM.React.WebFetch.WebFetchEnabled() {
+	if conf.GetReactRuntimeConfig().WebFetch.WebFetchEnabled() {
 		definitions = append(definitions, webFetchToolDefinition())
 	}
 	// web_search.enabled 且服务配置完整时注册网页检索工具（WP4，SearXNG 适配器）。
-	if searchCfg := conf.CustomConf.LLM.React.WebSearch; searchCfg.WebSearchEnabled() && searchCfg.WebSearchConfigured() {
+	if searchCfg := conf.GetReactRuntimeConfig().WebSearch; searchCfg.WebSearchEnabled() && searchCfg.WebSearchConfigured() {
 		definitions = append(definitions, webSearchToolDefinition())
 	}
 	// memory.enabled=true 时注册长期记忆三工具（list/read/write），关闭时模型不可见。

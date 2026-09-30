@@ -55,7 +55,8 @@ func outerExecutionProfile() ExecutionProfile {
 		// 经 GetReactRuntimeConfig 取值以合并管理面板「运行时配置」的 DB 覆盖（与 delegate/装配同口径）。
 		AllowSubagent:           conf.GetReactRuntimeConfig().SubAgent.SubAgentEnabled(),
 		AllowWorkspace:          conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled(),
-		AllowWebFetch:           conf.CustomConf.LLM.React.WebFetch.WebFetchEnabled(),
+		// 经 GetReactRuntimeConfig 取值以合并管理面板「运行时配置」的 DB 覆盖（与工具注册门控同口径）。
+		AllowWebFetch:           conf.GetReactRuntimeConfig().WebFetch.WebFetchEnabled(),
 		AllowWebSearch:          webSearchProfileEnabled(),
 		AllowAnalysisTools:      true,
 		InjectAsyncTaskReminder: true,

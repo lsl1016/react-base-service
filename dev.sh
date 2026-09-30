@@ -20,21 +20,21 @@ cd "$(dirname "$0")"
 cmd="${1:-up}"
 case "$cmd" in
   up)
-    docker compose up -d mysql redis sandbox
+    docker compose up -d mysql redis sandbox searxng
     echo "依赖容器已就绪。本地服务启动：http://127.0.0.1:8180/react-base-service/react/playground"
     echo "（Ctrl+C 退出服务；依赖容器保持运行）"
     exec go run main.go
     ;;
   deps)
-    docker compose up -d mysql redis sandbox
-    docker compose ps mysql redis sandbox
+    docker compose up -d mysql redis sandbox searxng
+    docker compose ps mysql redis sandbox searxng
     ;;
   stop)
-    docker compose stop mysql redis sandbox
+    docker compose stop mysql redis sandbox searxng
     ;;
   status)
-    docker compose ps mysql redis sandbox
-    echo "本机应监听: MySQL=3317 Redis=16379 Sandbox=18190（由 .env 固化）"
+    docker compose ps mysql redis sandbox searxng
+    echo "本机应监听: MySQL=3317 Redis=16379 Sandbox=18190 SearXNG=8888（由 .env 固化）"
     ;;
   *)
     echo "usage: ./dev.sh [up|deps|stop|status]" >&2

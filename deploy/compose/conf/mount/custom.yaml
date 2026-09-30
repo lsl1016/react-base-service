@@ -77,6 +77,15 @@ llm:
       max_parallel: 1        # 同一轮多个 delegate_agent 调用的并行上限（1=串行，需要稳定 HITL 保持 1）
       default_max_steps: 8   # agent 未配置 max_steps 时子 run 的步数上限
       max_depth: 2           # 委派嵌套深度上限（子 Agent 再委派），防递归失控
+    # 内置 web_fetch 工具：URL 抓取 → 正文提取 → 按预算回填；未配置默认关闭。
+    web_fetch:
+      enabled: true
+    # 内置 web_search 工具：经 SearXNG 检索（compose 内网 DNS），返回标题/链接/摘要清单。
+    # 自建 SearXNG 需在 deploy/searxng/settings.yml 的 formats 中开启 json（仓库已配好）。
+    web_search:
+      enabled: true
+      kind: searxng
+      base_url: 'http://searxng:8080'  # compose 内网 DNS，与 searxng 服务同网络
     # 时序事实图谱记忆（Graphiti，Layer2）：读写均走宿主机上的 Graphiti REST 服务。
     # group_id 由服务端按 caller(+user) 强制生成（不含连字符，FalkorDB 全文检索兼容）。
     graph_memory:

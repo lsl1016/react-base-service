@@ -28,10 +28,10 @@ import (
 
 const metaToolWebSearch = "web_search"
 
-// webSearchProfileEnabled 是执行档案侧的门控：conf 开关与配置完整性同时满足才允许执行
-//（与 internalMetaToolDefinitions 的注册门控同口径，半配置状态不注册也不可执行）。
+// webSearchProfileEnabled 是执行档案侧的门控：生效开关（合并管理面板 DB 覆盖）与配置完整性
+// 同时满足才允许执行（与 internalMetaToolDefinitions 的注册门控同口径，半配置状态不注册也不可执行）。
 func webSearchProfileEnabled() bool {
-	cfg := conf.CustomConf.LLM.React.WebSearch
+	cfg := conf.GetReactRuntimeConfig().WebSearch
 	return cfg.WebSearchEnabled() && cfg.WebSearchConfigured()
 }
 
@@ -60,7 +60,8 @@ func (s *reactEngineState) executeWebSearch(input json.RawMessage) (string, json
 	if query == "" {
 		return "", nil, true, fmt.Errorf("query is required")
 	}
-	cfg := conf.CustomConf.LLM.React.WebSearch
+	// 取运行时生效配置（合并管理面板「运行时配置」的 DB 覆盖，与注册门控同口径）。
+	cfg := conf.GetReactRuntimeConfig().WebSearch
 	if !cfg.WebSearchConfigured() {
 		return "", nil, true, fmt.Errorf("web_search 未配置或配置不完整（kind=searxng + base_url 必填）")
 	}

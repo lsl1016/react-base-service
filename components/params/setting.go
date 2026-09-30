@@ -124,3 +124,29 @@ type MemorySettingResp struct {
 	UpdatedBy string `json:"updatedBy"`
 	UpdatedAt string `json:"updatedAt"`
 }
+
+// UpdateWebSettingReq 联网能力总开关更新请求（/setting/web/update）。
+// 一枚开关同时作用于 web_fetch 与 web_search；字段级覆盖语义与 subagent 一致：
+// 布尔显式传 false 即关闭，清除覆盖回落 yaml 走 ClearFields。
+type UpdateWebSettingReq struct {
+	Enabled *bool `json:"enabled"`
+	// ClearFields 是要清除覆盖、回落 yaml/默认值的字段名列表（enabled）。
+	ClearFields []string `json:"clearFields"`
+}
+
+// WebSettingResp 联网能力响应：effective 是合并后的生效值（与引擎实际消费口径一致，
+// enabled 为 web_fetch / web_search 共用的开关值）；Configured 标识 web_search 连接参数
+//（kind=searxng + base_url）是否完整——开关开启但 Configured=false 时 web_search 不会注册
+//（半配置状态，web_fetch 不受影响），面板据此展示警示。
+type WebSettingResp struct {
+	Effective struct {
+		Enabled    bool `json:"enabled"`
+		Configured bool `json:"configured"`
+	} `json:"effective"`
+	Sources map[string]SubAgentSettingFieldResp `json:"sources"`
+	Override *struct {
+		Enabled *bool `json:"enabled"`
+	} `json:"override"`
+	UpdatedBy string `json:"updatedBy"`
+	UpdatedAt string `json:"updatedAt"`
+}

@@ -76,7 +76,8 @@ func (s *reactEngineState) executeWebFetch(input json.RawMessage) (string, bool,
 		return "", true, fmt.Errorf("web_fetch 拒绝访问内网/环回地址: %s", parsed.Hostname())
 	}
 
-	cfg := conf.CustomConf.LLM.React.WebFetch
+	// 取运行时生效配置（合并管理面板「运行时配置」的 DB 覆盖，与工具注册门控同口径）。
+	cfg := conf.GetReactRuntimeConfig().WebFetch
 	if content, ok := webFetchCacheGet(rawURL, cfg.EffectiveCacheTTLSec()); ok {
 		return content, false, nil
 	}

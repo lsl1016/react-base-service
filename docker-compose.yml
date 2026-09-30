@@ -63,6 +63,22 @@ services:
       retries: 12
       start_period: 10s
 
+  searxng:
+    image: searxng/searxng:latest
+    container_name: react-base-searxng
+    # 宿主机端口映射供本地开发（go run）的 web_search 调用；
+    # 容器形态的 service 走内网 DNS http://searxng:8080（deploy/compose 配置）
+    ports:
+      - "${SEARXNG_HOST_PORT:-8888}:8080"
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
   service:
     build:
       context: .

@@ -204,6 +204,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		settingGroup.POST("/context/update", setting.UpdateContextCompactSetting)
 		settingGroup.POST("/memory/get", setting.GetMemorySetting)
 		settingGroup.POST("/memory/update", setting.UpdateMemorySetting)
+		settingGroup.POST("/web/get", setting.GetWebSetting)
+		settingGroup.POST("/web/update", setting.UpdateWebSetting)
 	}
 
 	// Tool 管理接口

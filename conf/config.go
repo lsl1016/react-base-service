@@ -925,6 +925,12 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 	//（覆盖 > yaml > 内置默认），与 /setting/subagent 面板响应口径一致。
 	cfg.SubAgent = EffectiveSubAgentConfig(GetRuntimeSettingOverride().SubAgent)
 
+	// 联网能力总开关（web_fetch / web_search 共用一枚开关）经 apply*Override 合并管理面板
+	//「运行时配置」的 DB 覆盖（覆盖 > yaml > 内置默认），与 /setting/web 面板响应口径一致；
+	// 数字参数默认值由 Effective* 方法按需兜底，此处无需归一化。
+	cfg.WebFetch = applyWebFetchOverride(cfg.WebFetch, GetRuntimeSettingOverride().Web)
+	cfg.WebSearch = applyWebSearchOverride(cfg.WebSearch, GetRuntimeSettingOverride().Web)
+
 	workspace := cfg.Workspace
 	if strings.TrimSpace(workspace.RootDir) == "" {
 		workspace.RootDir = defaultReactWorkspaceRootDir
