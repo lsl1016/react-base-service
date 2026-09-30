@@ -961,22 +961,10 @@ const management = {
       this.updateBatchControls();
     });
     $('management-modal-body').addEventListener('click', (event) => {
-      // Bundle 目录选择器：打开浏览器 / 进入子目录 / 上一级 / 选定当前目录。
-      if (event.target.closest('[data-open-source-browser]')) {
-        this.openSourceBrowser();
-        return;
-      }
-      const browseDir = event.target.closest('[data-browse-dir]')?.dataset.browseDir;
-      if (browseDir !== undefined && browseDir !== '') {
-        this.loadBundleBrowse(browseDir);
-        return;
-      }
-      if (event.target.closest('[data-browse-up]')) {
-        this.loadBundleBrowse(this.browseState?.data?.parent || '');
-        return;
-      }
-      if (event.target.closest('[data-browse-use]')) {
-        this.useBundleBrowseCurrent();
+      // Bundle 选择本地目录：转发给同行的隐藏 file input（webkitdirectory）打开系统目录选择框。
+      if (event.target.closest('[data-bundle-local-dir]')) {
+        if (this.uploadingBundle) return;
+        event.target.closest('.rp-source-path-row')?.querySelector('[data-bundle-dir]')?.click();
         return;
       }
       const logsAction = event.target.closest('[data-logs-action]')?.dataset.logsAction;
@@ -991,6 +979,12 @@ const management = {
         $('management-modal-body').querySelectorAll('[data-grant-tool]').forEach((box) => {
           box.checked = grantsAction === 'all';
         });
+      }
+    });
+    $('management-modal-body').addEventListener('change', (event) => {
+      // Bundle 选择本地目录：file input（webkitdirectory）选定后立即上传暂存并回填 source。
+      if (event.target.closest('[data-bundle-dir]')) {
+        this.uploadBundleDir(event.target);
       }
     });
     $('management-modal-close').addEventListener('click', () => this.closeModal());
@@ -1801,6 +1795,7 @@ const management = {
   },
   openBundleInstall() {
     this.mode = 'bundleInstall';
+    this.setModalNotice('');
     this.draft = {
       source: '',
       ref: '',
@@ -1810,33 +1805,53 @@ const management = {
     };
     this.renderModal();
   },
-  // ===== Bundle 来源目录选择器（/react/bundle/browse 白名单内逐级浏览）=====
-  async openSourceBrowser() {
-    // 安装草稿暂存：取消/返回时恢复，选定目录后回填 source。
-    this.browseState = { returnDraft: this.draft, data: null, error: '' };
-    this.mode = 'bundleBrowse';
-    this.renderModal();
-    await this.loadBundleBrowse('');
-  },
-  async loadBundleBrowse(path) {
-    try {
-      const data = await post('/react/bundle/browse', { path });
-      if (!this.browseState) return;
-      this.browseState.data = data;
-      this.browseState.error = '';
-    } catch (error) {
-      if (!this.browseState) return;
-      this.browseState.error = error?.message || '目录读取失败';
+  // ===== Bundle 本地目录安装（webkitdirectory 选目录 → /react/bundle/upload 暂存 → 回填 source 走既有安装）=====
+  async uploadBundleDir(input) {
+    const picked = input.files ? [...input.files] : [];
+    // 先清空再取引用：同名目录重复选择也能再次触发 change。
+    input.value = '';
+    if (!picked.length || this.uploadingBundle) return;
+    // 客户端先滤掉 macOS 目录垃圾与服务端必拒的超大文件，减少无效传输。
+    const isJunk = (rel) => rel.split('/').some((segment) => segment === '__MACOSX' || segment === '.DS_Store' || segment.startsWith('._'));
+    const files = picked.filter((file) => {
+      const rel = file.webkitRelativePath || file.name;
+      return !isJunk(rel) && file.size <= 8 * 1024 * 1024;
+    });
+    if (!files.length) {
+      this.setModalNotice('所选目录里没有可上传的文件（已过滤系统垃圾文件与超过 8MB 的文件）。', true);
+      this.renderModal();
+      return;
     }
-    if (this.mode === 'bundleBrowse') this.renderModal();
-  },
-  useBundleBrowseCurrent() {
-    const current = this.browseState?.data?.current;
-    if (!current || !this.browseState?.returnDraft) return;
-    this.draft = { ...this.browseState.returnDraft, source: current };
-    this.mode = 'bundleInstall';
-    this.browseState = null;
+    const dirName = (files[0].webkitRelativePath || '').split('/')[0] || 'bundle';
+    this.uploadingBundle = true;
+    // 先同步已填字段再重渲染提示，避免上传期间的 re-render 冲掉用户输入。
+    this.syncDraftFromModal();
+    this.setModalNotice(`正在上传目录 ${dirName}（${files.length} 个文件）...`);
     this.renderModal();
+    try {
+      const formData = new FormData();
+      // 相对路径走独立 JSON 字段（multipart 的 filename 会被服务端剥成 basename）。
+      formData.append('paths', JSON.stringify(files.map((file) => file.webkitRelativePath || file.name)));
+      files.forEach((file) => formData.append('files', file));
+      const response = await fetch(`${managementBaseUrl}/react/bundle/upload`, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`请求失败：${response.status}`);
+      const data = normalizeEnvelope(await response.json());
+      this.syncDraftFromModal();
+      this.draft.source = data.path;
+      this.setModalNotice(`已上传目录 ${dirName}，来源已回填（服务端暂存），可直接安装。`);
+    } catch (error) {
+      this.setModalNotice(error?.message || '上传失败', true);
+    } finally {
+      this.uploadingBundle = false;
+      this.renderModal();
+    }
+  },
+  setModalNotice(text, isError = false) {
+    this.modalNotice = text ? { text, isError } : null;
   },
   async openEdit(item) {
     const resourceType = this.type;
@@ -1858,15 +1873,8 @@ const management = {
     }
   },
   closeModal() {
-    // 目录选择器的「返回」= 回到安装表单（保留已填草稿），不是关闭弹窗。
-    if (this.mode === 'bundleBrowse' && this.browseState?.returnDraft) {
-      this.draft = this.browseState.returnDraft;
-      this.mode = 'bundleInstall';
-      this.browseState = null;
-      this.renderModal();
-      return;
-    }
     this.draft = null;
+    this.setModalNotice('');
     $('management-modal-mask').classList.remove('rp-visible');
   },
   renderModal() {
@@ -1905,31 +1913,6 @@ const management = {
       $('management-modal-mask').classList.add('rp-visible');
       return;
     }
-    // Bundle 来源目录选择器：浏览白名单内目录，选定后回填安装表单 source。
-    if (this.mode === 'bundleBrowse') {
-      const state = this.browseState ?? { data: null, error: '' };
-      const data = state.data;
-      $('management-modal-title').textContent = '选择安装目录';
-      let body = '';
-      if (state.error) body += `<div class="rp-operation-note" style="color:var(--danger)">${escapeHtml(state.error)}</div>`;
-      if (data) {
-        const dirs = data.dirs ?? [];
-        body += `
-          <div class="rp-dir-current" title="${escapeHtml(data.current || '')}">${data.current ? `当前：${escapeHtml(data.current)}` : '白名单根目录（点击目录进入，可逐级下钻）'}</div>
-          <div class="rp-row-actions" style="margin-bottom:8px">
-            ${data.current && data.parent ? '<button class="rp-button" type="button" data-browse-up>上一级</button>' : ''}
-            ${data.current ? '<button class="rp-button rp-primary-btn" type="button" data-browse-use>使用当前目录</button>' : ''}
-          </div>
-          <div class="rp-dir-list">${dirs.length ? dirs.map((dir) => `<button class="rp-button rp-dir-item" type="button" data-browse-dir="${escapeHtml(dir.path)}" title="${escapeHtml(dir.path)}">📁 ${escapeHtml(dir.name)}</button>`).join('') : '<div class="rp-mcp-empty">此目录下没有可选子目录</div>'}</div>`;
-      } else if (!state.error) {
-        body += '<div class="rp-mcp-empty">加载中...</div>';
-      }
-      $('management-modal-body').innerHTML = body;
-      saveButton.hidden = true;
-      cancelButton.textContent = '返回';
-      $('management-modal-mask').classList.add('rp-visible');
-      return;
-    }
     saveButton.hidden = false;
     saveButton.textContent = '保存';
     cancelButton.textContent = '取消';
@@ -1946,19 +1929,20 @@ const management = {
       title = `导入${resource.itemName ?? resource.title.replace('管理', '')}定义`;
     } else if (this.mode === 'bundleInstall') {
       fields = [
-        ['source', '来源（白名单内 git URL 或本地路径）', 'sourcePath'],
+        ['source', '来源（选择本地目录 / 白名单内 git URL 或本地路径）', 'sourcePath'],
         ['ref', 'git ref（空=HEAD，本地路径忽略）'],
-        ['repoPath', '包内子目录（可选）'],
+        ['repoPath', '包内子目录（可选，本地目录一般不需要）'],
         ['callerKey', '兜底 caller', 'readonly'],
         ['routeText', '兜底路由（逗号分隔）'],
       ];
-      note = '安装会把包内 agents/skills/mcp.json 展开写入注册表（同名覆盖）；卸载可整体回滚。来源必须在 llm.react.bundle.allowed_source_prefixes 白名单内。';
+      note = '安装会把包内 agents/skills/mcp.json 展开写入注册表（同名覆盖）；卸载可整体回滚。可直接选择本地 bundle 目录（内容上传服务端暂存后安装，无需配置路径）；其余来源必须在 llm.react.bundle.allowed_source_prefixes 白名单内。';
       title = '安装 Bundle';
     } else {
       title = this.mode === 'create' ? resource.addText : `编辑${resource.itemName ?? resource.title.replace('管理', '')}`;
     }
     $('management-modal-title').textContent = title;
-    $('management-modal-body').innerHTML = `${note ? `<div class="rp-operation-note">${note}</div>` : ''}<div class="rp-form-grid">${fields.map((field) => {
+    const notice = this.modalNotice ? `<div class="rp-operation-note"${this.modalNotice.isError ? ' style="color:var(--danger)"' : ''}>${escapeHtml(this.modalNotice.text)}</div>` : '';
+    $('management-modal-body').innerHTML = `${note ? `<div class="rp-operation-note">${note}</div>` : ''}${notice}<div class="rp-form-grid">${fields.map((field) => {
       const [key, label, type] = field;
       const value = this.draft[key] ?? '';
       if (type === 'select') {
@@ -1984,9 +1968,9 @@ const management = {
       if (type === 'readonly') {
         return `<label class="rp-field"><span class="rp-field-label">${label}</span><input class="rp-control rp-control-size-default" value="${escapeHtml(value)}" readonly disabled /></label>`;
       }
-      // sourcePath：来源路径输入框附带目录选择器入口（Bundle 安装表单）。
+      // sourcePath：来源路径输入框附带本地目录选择入口（Bundle 安装表单）。
       if (type === 'sourcePath') {
-        return `<label class="rp-field rp-span-all"><span class="rp-field-label">${label}</span><span class="rp-source-path-row"><input class="rp-control rp-control-size-default" data-field="${key}" value="${escapeHtml(value)}" /><button class="rp-button" type="button" data-open-source-browser>选择目录…</button></span></label>`;
+        return `<label class="rp-field rp-span-all"><span class="rp-field-label">${label}</span><span class="rp-source-path-row"><input class="rp-control rp-control-size-default" data-field="${key}" value="${escapeHtml(value)}" placeholder="选择本地目录，或填白名单内 git URL / 本地路径" /><input type="file" data-bundle-dir webkitdirectory hidden /><button class="rp-button" type="button" data-bundle-local-dir>选择本地目录…</button></span></label>`;
       }
       return `<label class="rp-field"><span class="rp-field-label">${label}</span><input class="rp-control rp-control-size-default" data-field="${key}" value="${escapeHtml(value)}" /></label>`;
     }).join('')}</div>`;

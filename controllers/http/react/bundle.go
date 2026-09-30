@@ -1,6 +1,8 @@
 package react
 
 import (
+	"encoding/json"
+
 	"react-base-service/components"
 	"react-base-service/components/params"
 	"react-base-service/helpers"
@@ -86,26 +88,37 @@ func ListBundles(ctx *gin.Context) {
 	components.RenderJsonSucc(ctx, items)
 }
 
-// BrowseBundleSource 浏览白名单内可作安装来源的本地目录
-// @Summary      Bundle 来源目录浏览
-// @Description  供安装表单的目录选择器：path 为空返回白名单根目录，非空返回该目录的一层子目录（仅白名单本地前缀内，不跟随符号链接）。
+// UploadBundleSource 上传本地 bundle 目录作为安装来源
+// @Summary      上传 bundle 目录
+// @Description  接收目录选择器选出的全部文件：multipart files[] 携带文件内容、paths 携带同顺序的目录内相对路径 JSON 数组（multipart filename 会被剥成 basename，故路径走独立字段）。写入 cache_dir/uploads 服务端暂存区并预检可解析，返回暂存目录路径——直接填入安装表单 source 即可，无需把路径加入白名单。
 // @Tags         React
-// @Accept       json
+// @Accept       multipart/form-data
 // @Produce      json
-// @Param        req  body     params.BundleBrowseReq  true  "浏览请求"
-// @Success      200  {object} components.DefaultRenderWithTrace{data=params.BundleBrowseResp}  "目录清单"
-// @Failure      400  {object} components.DefaultRenderWithTrace  "目录不在白名单内或不存在"
-// @Router       /bundle/browse [post]
-func BrowseBundleSource(ctx *gin.Context) {
-	var req params.BundleBrowseReq
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf(err.Error()))
+// @Param        files  formData  file  true  "bundle 目录内全部文件（可多条）"
+// @Param        paths  formData  string  true  "与 files 同顺序的相对路径 JSON 数组"
+// @Success      200  {object} components.DefaultRenderWithTrace{data=params.BundleUploadResp}  "暂存目录"
+// @Failure      400  {object} components.DefaultRenderWithTrace  "空目录/路径逃逸/超限/包非法"
+// @Router       /bundle/upload [post]
+func UploadBundleSource(ctx *gin.Context) {
+	form, err := ctx.MultipartForm()
+	if err != nil {
+		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf("files不能为空（multipart 表单解析失败: %v）", err))
 		return
 	}
-	resp, err := bundleService.BrowseSourceDirs(req.Path)
+	files := form.File["files"]
+	var paths []string
+	if raw := form.Value["paths"]; len(raw) > 0 {
+		if err := json.Unmarshal([]byte(raw[0]), &paths); err != nil {
+			components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf("paths 必须是相对路径 JSON 数组: %v", err))
+			return
+		}
+	}
+	resp, err := bundleService.UploadFiles(ctx, files, paths)
 	if err != nil {
+		zlog.Errorf(ctx, "[Bundle.Upload] 上传失败: files=%d err=%v", len(files), err)
 		components.RenderJsonFail(ctx, err)
 		return
 	}
 	components.RenderJsonSucc(ctx, resp)
 }
+

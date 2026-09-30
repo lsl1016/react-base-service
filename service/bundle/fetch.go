@@ -7,12 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
 	"react-base-service/components"
-	"react-base-service/components/params"
 	"react-base-service/conf"
 )
 
@@ -63,7 +61,9 @@ type bundleContent struct {
 	commit      string // git 来源钉住的 commit（本地路径为空）
 }
 
-// validateBundleSource 校验安装来源命中白名单前缀（git URL 与本地路径同一张白名单）。
+// validateBundleSource 校验安装来源命中白名单前缀（git URL 与本地路径同一张白名单）；
+// 另放行 /react/bundle/upload 的服务端暂存区（cache_dir/uploads，清洗后的严格前缀，
+// 其内容只可能来自上传的 zip，不是用户任意指定的路径）。
 func validateBundleSource(cfg conf.ReactBundleConfig, source string) error {
 	source = strings.TrimSpace(source)
 	if source == "" {
@@ -71,6 +71,13 @@ func validateBundleSource(cfg conf.ReactBundleConfig, source string) error {
 	}
 	for _, prefix := range cfg.AllowedSourcePrefixes {
 		if strings.HasPrefix(source, strings.TrimSpace(prefix)) {
+			return nil
+		}
+	}
+	if strings.TrimSpace(cfg.CacheDir) != "" {
+		staging := bundleUploadRoot(cfg)
+		cleaned := filepath.Clean(source)
+		if cleaned == staging || strings.HasPrefix(cleaned, staging+string(filepath.Separator)) {
 			return nil
 		}
 	}
@@ -297,66 +304,4 @@ func readCapped(path string, limit int) ([]byte, error) {
 
 func isHiddenSegment(name string) bool {
 	return name == "" || strings.HasPrefix(name, ".")
-}
-
-// BrowseSourceDirs 列出白名单内可作安装来源的本地目录（一层），供前端目录选择器。
-// path 为空返回白名单根目录；非空必须是白名单内的已存在目录，返回其子目录。
-// 安全属性：仅白名单本地前缀（git URL 前缀不可浏览）；不跟随符号链接（DirEntry.IsDir
-// 对 symlink 为假，防经链接逃出白名单）；只列目录名，不读任何文件内容。
-func BrowseSourceDirs(path string) (*params.BundleBrowseResp, error) {
-	cfg := conf.GetReactRuntimeConfig().Bundle
-	roots := make([]string, 0, len(cfg.AllowedSourcePrefixes))
-	for _, prefix := range cfg.AllowedSourcePrefixes {
-		prefix = strings.TrimSpace(prefix)
-		if prefix == "" || strings.Contains(prefix, "://") {
-			continue
-		}
-		if info, err := os.Stat(prefix); err == nil && info.IsDir() {
-			roots = append(roots, filepath.Clean(prefix))
-		}
-	}
-
-	resp := &params.BundleBrowseResp{Dirs: []params.BundleDirItem{}}
-	target := strings.TrimSpace(path)
-	if target == "" {
-		for _, root := range roots {
-			resp.Dirs = append(resp.Dirs, params.BundleDirItem{Name: filepath.Base(root), Path: root})
-		}
-		return resp, nil
-	}
-
-	cleaned := filepath.Clean(target)
-	insideRoot := false
-	for _, root := range roots {
-		if cleaned == root || strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
-			insideRoot = true
-			if cleaned != root {
-				resp.Parent = filepath.Dir(cleaned)
-			}
-			break
-		}
-	}
-	if !insideRoot {
-		return nil, components.ErrorParamInvalid.Sprintf("目录不在白名单前缀内: %s", target)
-	}
-	if info, err := os.Stat(cleaned); err != nil || !info.IsDir() {
-		return nil, components.ErrorParamInvalid.Sprintf("目录不存在或不是目录: %s", target)
-	}
-	resp.Current = cleaned
-	entries, err := os.ReadDir(cleaned)
-	if err != nil {
-		return nil, components.ErrorBundleImportInvalid.Sprintf("读取目录失败: %v", err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() || isHiddenSegment(entry.Name()) || entry.Name() == "__MACOSX" || entry.Name() == "node_modules" {
-			continue
-		}
-		names = append(names, entry.Name())
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		resp.Dirs = append(resp.Dirs, params.BundleDirItem{Name: name, Path: filepath.Join(cleaned, name)})
-	}
-	return resp, nil
 }
