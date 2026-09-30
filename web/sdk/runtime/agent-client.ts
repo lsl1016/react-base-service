@@ -466,6 +466,9 @@ export class AgentClient {
         maxSteps: options?.maxSteps ?? this.config.maxSteps,
         executionMode: options?.executionMode ?? 'react',
         reasoning: options?.reasoning,
+        // 双模式之一（默认排队）：运行中回车显式排队，等 run 完全结束依次执行；
+        // 想立即影响当前对话，从队列列表点"立即发送"注入。
+        steerDelivery: 'queue',
       };
       this.wsClient.send({
         type: 'run',
@@ -919,17 +922,26 @@ export class AgentClient {
   }
 
   /**
-   * 显式发送一条排队输入（S3）：WS queue_send，服务端 claim-once 晋升并在当前连接开新 run。
-   * 与 run 互斥：已有活跃 run 时忽略（排队项留在队列，由自动续跑或再次发送消费）。
+   * 显式发送一条排队输入（S3 双模式）：
+   * - mode='run'（默认）：WS queue_send，服务端 claim-once 晋升并在当前连接开新 run；
+   *   与 run 互斥，已有活跃 run 时忽略（排队项留在队列，由自动续跑或注入消费）。
+   * - mode='inject'：把该排队项晋升为活跃 run 的 guide，在下一个安全边界注入当前对话；
+   *   仅运行中有意义——空闲时降级为 run 模式（任务已结束，"立即发送"即开新 run）。
    */
-  sendQueuedMessage(pendingInputId: string): void {
-    if (!pendingInputId || this.isRunInProgress()) return;
+  sendQueuedMessage(pendingInputId: string, mode: 'run' | 'inject' = 'run'): void {
+    if (!pendingInputId) return;
+    const runInProgress = this.isRunInProgress();
+    if (mode === 'run' && runInProgress) return;
     const sessionId = this.reducer.getState().sessionId;
     if (!sessionId) return;
     this.wsClient.send({
       type: 'queue_send',
       sessionId,
-      payload: { sessionId, pendingInputId } as unknown as Record<string, unknown>,
+      payload: {
+        sessionId,
+        pendingInputId,
+        mode: runInProgress ? 'inject' : 'run',
+      } as unknown as Record<string, unknown>,
     });
   }
 

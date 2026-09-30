@@ -319,8 +319,8 @@ export function AgentPanel(props: AgentPanelProps) {
       });
   };
 
-  const handleQueueSend = (pendingInputId: string) => {
-    props.client.sendQueuedMessage(pendingInputId);
+  const handleQueueSend = (pendingInputId: string, mode: 'run' | 'inject') => {
+    props.client.sendQueuedMessage(pendingInputId, mode);
   };
 
   // plans 空值保护（D7）：宿主手工构造的 AgentState 可能没有 plans 字段，不能因派生 memo 抛错。

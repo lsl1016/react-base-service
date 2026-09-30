@@ -294,6 +294,21 @@ func MarkPendingInputPromotedWithDB(ctx *gin.Context, db *gorm.DB, id uint, runI
 	return tx.RowsAffected > 0, nil
 }
 
+// PromoteQueuedInputToGuideWithDB 将一条 queued 输入晋升为活跃 run 的待消费 guide
+//（S3 queue_send mode=inject：排队项立即注入当前对话，等引擎在下一个安全边界消费）：
+// 条件更新实现 claim-safe（与删除/自动续跑晋升互斥），同时把归属改写到目标 run，
+// 使 GetNextAdmittedGuideForUpdateWithDB 按 run_id + seq FIFO 拾取。
+// 必须在持有 session 行锁的事务内、且已确认目标 run 处于可引导状态后调用。
+func PromoteQueuedInputToGuideWithDB(ctx *gin.Context, db *gorm.DB, sessionID string, id uint, runID string) (bool, error) {
+	tx := db.Model(&ReactPendingInput{}).WithContext(ctx).
+		Where("session_id = ? AND id = ? AND kind = ? AND status = ?", sessionID, id, ReactPendingKindUserInput, ReactPendingStatusQueued).
+		Updates(map[string]any{"status": ReactPendingStatusAdmitted, "delivery": ReactPendingDeliveryGuide, "run_id": runID})
+	if tx.Error != nil {
+		return false, components.ErrorDbUpdate.Wrap(tx.Error)
+	}
+	return tx.RowsAffected > 0, nil
+}
+
 // FallbackPendingInputsToQueueWithDB 将 run 内未消费的 admitted guide 降级为 queue
 // （对齐 ZCode fallbackPendingGuidesToQueue：turn 打断/结束时不丢输入，delivery 改写为 queue），
 // 返回受影响行数。queue 排队关闭时调用方应走 discard 结算而不是本函数。

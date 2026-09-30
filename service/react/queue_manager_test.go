@@ -1,8 +1,10 @@
 package react
 
 import (
+	"encoding/json"
 	"testing"
 
+	"react-base-service/components/params"
 	model "react-base-service/models/llm"
 )
 
@@ -38,5 +40,34 @@ func TestPlanQueueReorder(t *testing.T) {
 	// 空队列 + 空请求是合法 no-op（服务层已在调用前拒绝空队列，这里防御兜底）。
 	if assign, err := planQueueReorder(nil, []uint{}); err != nil || len(assign) != 0 {
 		t.Fatalf("空对空应为 no-op: %+v, err=%v", assign, err)
+	}
+}
+
+// queuedItemHasAttachments（纯函数）：从排队输入 payload 快照解析是否携带附件，
+// 供队列列表回显与前端禁用注入按钮；快照缺失/损坏按无附件处理。
+func TestQueuedItemHasAttachments(t *testing.T) {
+	withAttachment, err := json.Marshal(params.ReactRunPayload{
+		CallerKey: "report-editor",
+		Attachments: []params.ReactAttachmentRef{{FileID: "file_1", FileName: "a.pdf"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	withoutAttachment, err := json.Marshal(params.ReactRunPayload{CallerKey: "report-editor"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if !queuedItemHasAttachments(string(withAttachment)) {
+		t.Fatalf("快照带附件应解析为 true")
+	}
+	if queuedItemHasAttachments(string(withoutAttachment)) {
+		t.Fatalf("快照无附件应解析为 false")
+	}
+	if queuedItemHasAttachments("") || queuedItemHasAttachments("  ") {
+		t.Fatalf("快照缺失应按无附件处理")
+	}
+	if queuedItemHasAttachments("{not-json") {
+		t.Fatalf("快照损坏应按无附件处理")
 	}
 }

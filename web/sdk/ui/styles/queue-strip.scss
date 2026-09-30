@@ -112,6 +112,15 @@
         opacity: .4;
       }
     }
+
+    button.agent-ui-queue-strip-send-item {
+      color: $agent-ui-primary;
+
+      &:hover:not(:disabled) {
+        background: $agent-ui-primary-light;
+        color: $agent-ui-primary-hover;
+      }
+    }
   }
 
   &-editor {
@@ -158,30 +167,5 @@
   &-footer-hint {
     @include truncate;
     color: $agent-ui-text-tertiary;
-  }
-
-  &-send {
-    @include agent-ui-button-reset;
-    @include center-row;
-    flex-shrink: 0;
-    gap: $agent-ui-spacing-xs;
-    height: 24px;
-    padding: 0 $agent-ui-spacing-md;
-    border-radius: $agent-ui-radius-sm;
-    background: $agent-ui-primary-light;
-    color: $agent-ui-primary;
-    font-size: $agent-ui-font-size-xs;
-    font-weight: $agent-ui-font-weight-medium;
-    @include agent-ui-transition(background-color, color);
-
-    &:hover:not(:disabled) {
-      background: $agent-ui-primary-border-soft;
-      color: $agent-ui-primary-hover;
-    }
-
-    &:disabled {
-      cursor: not-allowed;
-      opacity: .5;
-    }
   }
 }

@@ -100,6 +100,12 @@ export interface RunPayload {
   executionMode?: ExecutionMode;
   /** 思考程度三态；未传时服务端按 auto 兼容旧客户端。 */
   reasoning?: ReactReasoningOptions;
+  /**
+   * 运行中收到本消息时用户期望的准入方式（Steering）：'queue' 显式排队，
+   * 等当前 run 完全结束后依次执行。仅在会话有活跃 run 时生效，空闲时忽略；
+   * 不传按后端决策树（running 且可引导 → 直接注入当前对话）。
+   */
+  steerDelivery?: 'queue';
 }
 
 /**

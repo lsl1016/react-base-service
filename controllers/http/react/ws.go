@@ -222,15 +222,29 @@ func handleWSMessage(ctx *gin.Context, connCtx context.Context, write reactServi
 		}
 		return startWSPlanCommand(ctx, connCtx, write, msg)
 	case reactService.EventQueueSend:
-		// 队列管理 S3：显式发送一条排队输入（claim-once 晋升 + 当前连接开新 run）。
-		// 与 EventRun 互斥：已有活跃 run 时拒绝（排队项留在队列，由自动续跑或再次发送消费）。
-		if runMsgCh != nil {
-			_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: "queue_send rejected while a run is active"}})
-			return runMsgCh, runDone
-		}
+		// 队列管理 S3：显式发送一条排队输入。
+		// - mode=inject（立即发送注入当前对话）：run 活跃时把该排队项晋升为活跃 run 的
+		//   待消费 guide，由引擎在下一个安全边界注入当前对话；校验不过发 steer_rejected
+		//   回执（排队项留在队列）。
+		// - 默认 run 模式：claim-once 晋升 + 当前连接开新 run；与 EventRun 互斥，
+		//   已有活跃 run 时拒绝（排队项留在队列，由自动续跑或再次发送消费）。
 		var queueSend params.ReactQueueSendReq
 		if err := json.Unmarshal(msg.Payload, &queueSend); err != nil {
 			_ = write(params.ReactEvent{Type: reactService.EventError, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorParamInvalid.ErrNo, ErrMsg: err.Error()}})
+			return runMsgCh, runDone
+		}
+		if runMsgCh != nil {
+			if queueSend.Mode == params.ReactQueueSendModeInject {
+				receipt, injectErr := reactService.InjectQueuedItemAsGuide(ctx, queueSend.SessionID, queueSend.PendingInputID)
+				if injectErr != nil {
+					zlog.Infof(ctx, "[React.WS] queue_send 注入失败: sessionId=%s, pendingInputId=%s, err=%v", queueSend.SessionID, queueSend.PendingInputID, injectErr)
+					_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: queueSend.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: injectErr.Error()}})
+					return runMsgCh, runDone
+				}
+				reactService.EmitSteerReceipt(write, receipt, queueSend.SessionID)
+				return runMsgCh, runDone
+			}
+			_ = write(params.ReactEvent{Type: reactService.EventError, RunID: msg.RunID, SessionID: msg.SessionID, Payload: params.ReactErrorPayload{ErrNo: components.ErrorReactRunFailed.ErrNo, ErrMsg: "queue_send rejected while a run is active"}})
 			return runMsgCh, runDone
 		}
 		payload, pendingID, err := reactService.PrepareQueuedRunPayload(ctx, queueSend.SessionID, queueSend.PendingInputID)

@@ -165,6 +165,8 @@ export interface QueueItem {
   /** 执行顺序号（FIFO，重排由服务端同步改写） */
   seq: number;
   status: string;
+  /** 准入时是否携带附件（服务端从 payload 快照解析）：注入只支持纯文本，带附件项禁用注入按钮 */
+  hasAttachments?: boolean;
   createdAt: string;
 }
 

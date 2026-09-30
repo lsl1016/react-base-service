@@ -183,7 +183,7 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
     expect(list).toEqual({ items: [], queueEnabled: false, autoDrain: false });
   });
 
-  it('空闲时 sendQueuedMessage 发送 queue_send（带 sessionId 与 pendingInputId）', async () => {
+  it('空闲时 sendQueuedMessage 发送 queue_send（带 sessionId、pendingInputId 与 run 模式）', async () => {
     client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
@@ -193,10 +193,10 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
     const send = sentMessages.at(-1);
     expect(send?.type).toBe('queue_send');
     expect(send?.sessionId).toBe('session_server');
-    expect(send?.payload).toEqual({ sessionId: 'session_server', pendingInputId: 'pend_9' });
+    expect(send?.payload).toEqual({ sessionId: 'session_server', pendingInputId: 'pend_9', mode: 'run' });
   });
 
-  it('run 活跃时 sendQueuedMessage 不发送（后端同样会拒绝）', async () => {
+  it('run 活跃时 sendQueuedMessage 默认模式不发送（后端同样会拒绝）', async () => {
     client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
@@ -206,6 +206,20 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
     expect(client.getState().status).toBe('running');
     client.sendQueuedMessage('pend_9');
     expect(sentMessages.filter((msg) => msg.type === 'queue_send')).toHaveLength(0);
+  });
+
+  it('run 活跃时 sendQueuedMessage inject 模式发送 queue_send mode=inject（立即注入当前对话）', async () => {
+    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client.connect();
+    await waitForConnected(client);
+    await client.switchSession('session_server');
+
+    client.run('第一条');
+    expect(client.getState().status).toBe('running');
+    client.sendQueuedMessage('pend_9', 'inject');
+    const send = sentMessages.filter((msg) => msg.type === 'queue_send').at(-1);
+    expect(send?.sessionId).toBe('session_server');
+    expect(send?.payload).toEqual({ sessionId: 'session_server', pendingInputId: 'pend_9', mode: 'inject' });
   });
 
   it('run 活跃时再次 run() 走 steer 分支：不重置运行态、不插乐观气泡、照发 WS run 消息', async () => {
@@ -229,9 +243,13 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
     // 运行态不被重置（重置会把 status 打回 running 但清空 currentRunId 等游标，
     // 这里用"未新增用户 step + 状态未闪断"作为不重置的可观察证据）。
     expect(state2.status).toBe('running');
-    // 两条 run 消息都发给后端，第二条由 HandleWSSteer 准入。
+    // 两条 run 消息都发给后端，第二条由 HandleWSSteer 准入；双模式默认排队：
+    // steer 消息显式携带 steerDelivery=queue，等 run 完全结束依次执行。
     const runSends = sentMessages.filter((msg) => msg.type === 'run');
     expect(runSends).toHaveLength(2);
     expect((runSends[1].payload as Record<string, unknown>).userPrompt).toBe('第二条');
+    expect((runSends[1].payload as Record<string, unknown>).steerDelivery).toBe('queue');
+    // 空闲发送的第一条不带排队偏好（正常新 run）。
+    expect((runSends[0].payload as Record<string, unknown>).steerDelivery).toBeUndefined();
   });
 });

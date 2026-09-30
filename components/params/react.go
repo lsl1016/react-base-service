@@ -57,10 +57,20 @@ type ReactRunPayload struct {
 	Reasoning *ReactReasoningOptions `json:"reasoning,omitempty"`
 	// ExecutionMode 控制本轮执行范式；空值按 react 兼容旧客户端。
 	ExecutionMode ReactExecutionMode `json:"executionMode,omitempty"`
+	// SteerDelivery 是运行中收到本消息时用户期望的准入方式（Steering S1）：
+	// 空/auto=按后端决策树（running 且可引导→guide 注入）；queue=显式排队，
+	// 等 run 完全结束后依次执行。仅在会话有活跃 run 时生效，空闲时忽略。
+	SteerDelivery string `json:"steerDelivery,omitempty"`
 	// PromotePendingInputID 是 Steering S2 自动续跑时待晋升的排队输入账本 ID。
 	// 仅服务端 run 循环内部传递，不参与 WS/API 序列化，也不写入账本 payload 快照。
 	PromotePendingInputID uint `json:"-"`
 }
+
+// SteerDelivery 取值（ReactRunPayload.SteerDelivery）。
+const (
+	// ReactSteerDeliveryQueue 显式排队：run 运行中本可 guide 也落队列，等 run 完全结束依次执行。
+	ReactSteerDeliveryQueue = "queue"
+)
 
 type ReactModelInfo struct {
 	ModelKey     string `json:"modelKey"`
@@ -327,6 +337,9 @@ type ReactQueueItem struct {
 	Content        string    `json:"content"`
 	Seq            int       `json:"seq"`
 	Status         string    `json:"status"`
+	// HasAttachments 表示该排队输入准入时携带附件（从账本 payload 快照解析）：
+	// 注入（inject）只支持纯文本，带附件项的前端应禁用注入按钮。
+	HasAttachments bool      `json:"hasAttachments"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -381,7 +394,18 @@ type ReactQueueMutateResp struct {
 type ReactQueueSendReq struct {
 	SessionID      string `json:"sessionId"`
 	PendingInputID string `json:"pendingInputId"`
+	// Mode 控制发送方式：空/run=开新 run（会话须空闲）；inject=晋升为 guide 注入
+	// 当前活跃 run（下一个安全边界生效；run 须处于 running 且非软着陆、输入不带附件）。
+	Mode string `json:"mode,omitempty"`
 }
+
+// queue_send 的 Mode 取值。
+const (
+	// ReactQueueSendModeRun 开新 run（默认，历史行为）。
+	ReactQueueSendModeRun = "run"
+	// ReactQueueSendModeInject 注入当前活跃 run（排队项立即发送的双模式之二）。
+	ReactQueueSendModeInject = "inject"
+)
 
 type ReactSessionListReq struct {
 	CallerKey   string   `json:"callerKey" binding:"required"`

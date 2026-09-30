@@ -60,6 +60,7 @@ const (
 	steerReasonRunNotSteerable = "run_not_steerable" // waiting_client_message/waiting_plan/cancelling 等非 running 状态
 	steerReasonSoftLanding     = "soft_landing"      // 软着陆收尾窗口内不再接收 guide
 	steerReasonAttachments     = "attachments_unsupported"
+	steerReasonUserPreferQueue = "user_preferred_queue" // 客户端显式要求排队（SteerDelivery=queue）
 )
 
 const (
@@ -77,6 +78,9 @@ type steerAdmissionInput struct {
 	ActiveRunState string
 	SoftLanding    bool
 	HasAttachments bool
+	// PreferQueue 是客户端显式排队偏好（ReactRunPayload.SterDelivery=queue）：
+	// run 运行中本可 guide 时也改为落队列，等 run 完全结束后依次执行。
+	PreferQueue bool
 	// QueueEnabled 为 S2 的排队开关：关闭时所有"不可引导"情形一律明确拒绝。
 	QueueEnabled bool
 }
@@ -89,9 +93,11 @@ type steerDecision struct {
 
 // steerAdmissionDecision 判定运行中会话收到的新用户输入如何准入：
 //   - running 且无附件且非软着陆 → guide（注入当前 run 的下一个模型轮）；
+//     其中客户端显式携带排队偏好（PreferQueue）时改判 queue，等 run 完全结束再执行；
 //   - 其余（waiting_*/cancelling、软着陆、带附件）→ QueueEnabled 时落队列，否则明确拒绝。
 //
 // HITL 等待（waiting_client_message/waiting_plan）与取消收尾（cancelling）状态绝不被 guide 打断。
+// PreferQueue 在 QueueEnabled 关闭时不生效：不能排队时兜底注入优于拒绝。
 func steerAdmissionDecision(in steerAdmissionInput) steerDecision {
 	notSteerable := in.ActiveRunState != model.ReactRunStateRunning
 	if notSteerable || in.SoftLanding || in.HasAttachments {
@@ -108,6 +114,9 @@ func steerAdmissionDecision(in steerAdmissionInput) steerDecision {
 			return steerDecision{Kind: steerDecisionQueue, Reason: reason}
 		}
 		return steerDecision{Kind: steerDecisionReject, Reason: reason}
+	}
+	if in.PreferQueue && in.QueueEnabled {
+		return steerDecision{Kind: steerDecisionQueue, Reason: steerReasonUserPreferQueue}
 	}
 	return steerDecision{Kind: steerDecisionGuide}
 }
@@ -309,6 +318,7 @@ func admitSteeringInputTx(ctx *gin.Context, tx *gorm.DB, sessionID string, activ
 		ActiveRunState: activeRun.State,
 		SoftLanding:    isRunSoftLanding(activeRun.RunID),
 		HasAttachments: hasAttachments,
+		PreferQueue:    strings.TrimSpace(payload.SteerDelivery) == params.ReactSteerDeliveryQueue,
 		QueueEnabled:   conf.GetReactRuntimeConfig().Steering.QueueEnabled(),
 	})
 

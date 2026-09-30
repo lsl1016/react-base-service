@@ -72,6 +72,7 @@ func ListSessionQueue(ctx *gin.Context, req params.ReactQueueListReq) (params.Re
 			Content:        row.Content,
 			Seq:            row.Seq,
 			Status:         row.Status,
+			HasAttachments: queuedItemHasAttachments(row.PayloadJSON),
 			CreatedAt:      row.CreatedAt,
 		})
 	}
@@ -260,6 +261,107 @@ func parsePendingInputID(pendingInputID string) (uint, error) {
 	return id, nil
 }
 
+// InjectQueuedItemAsGuide 将一条排队输入晋升为当前活跃 run 的待消费 guide（S3 queue_send
+// mode=inject：排队项"立即发送"注入当前对话）。session 行锁事务内完成归属校验、活跃 run
+// 可引导校验（running 且非软着陆）、附件校验与 claim-safe 晋升；注入后的行交由引擎在下一个
+// 安全边界（整批 tool_result 落库后或纯文本 finish 判定前）作为真实 user 消息消费并发
+// steer_drained，引擎零改动。
+//
+// 业务校验不过（run 非 running / 软着陆 / 带附件 / 不在队列）返回 rejected 回执而非 error：
+// 排队项留在队列，由自动续跑或用户再次操作消费。
+func InjectQueuedItemAsGuide(ctx *gin.Context, sessionID, pendingInputID string) (SteerReceipt, error) {
+	if !conf.GetReactRuntimeConfig().Steering.SteeringEnabled() {
+		return SteerReceipt{}, components.ErrorReactRunActive.Sprintf(sessionID)
+	}
+	id, err := parsePendingInputID(pendingInputID)
+	if err != nil {
+		return SteerReceipt{}, err
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return SteerReceipt{}, components.ErrorParamInvalid.Sprintf("sessionId 不能为空")
+	}
+
+	var receipt SteerReceipt
+	err = model.GetLLMDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := model.GetReactSessionBySessionIDForUpdate(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
+		if session == nil {
+			return components.ErrorReactSessionNotFound.Sprintf(sessionID)
+		}
+		activeRun, err := model.GetActiveOuterReactRunBySessionIDWithDB(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
+		if activeRun == nil || activeRun.State != model.ReactRunStateRunning {
+			receipt = SteerReceipt{Kind: steerReceiptRejected, Reason: steerReasonRunNotSteerable}
+			return nil
+		}
+		if isRunSoftLanding(activeRun.RunID) {
+			receipt = SteerReceipt{Kind: steerReceiptRejected, Reason: steerReasonSoftLanding}
+			return nil
+		}
+
+		queued, err := model.ListQueuedBySessionForUpdateWithDB(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
+		var target *model.ReactPendingInput
+		for i := range queued {
+			if queued[i].ID == id {
+				target = &queued[i]
+				break
+			}
+		}
+		if target == nil {
+			receipt = SteerReceipt{Kind: steerReceiptRejected, Reason: steerReasonRunNotSteerable}
+			return nil
+		}
+
+		var payload params.ReactRunPayload
+		if strings.TrimSpace(target.PayloadJSON) != "" {
+			if err := json.Unmarshal([]byte(target.PayloadJSON), &payload); err != nil {
+				return components.ErrorParamInvalid.Sprintf("排队输入 payload 快照解析失败: %s", pendingInputID)
+			}
+		}
+		if len(payload.Attachments) > 0 {
+			// guide 注入只支持纯文本（S1 纪律）：带附件的排队项只能在开新 run 时携带。
+			receipt = SteerReceipt{Kind: steerReceiptRejected, Reason: steerReasonAttachments}
+			return nil
+		}
+		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), payload.CallerKey, marshalRouteValuesForValidate(payload.RouteValues), normalizeSessionType(payload.Type)); err != nil {
+			return err
+		}
+
+		claimed, err := model.PromoteQueuedInputToGuideWithDB(ctx, tx, sessionID, id, activeRun.RunID)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			// 行锁下仍落空：与删除/自动续跑晋升并发，claim-once 语义。
+			receipt = SteerReceipt{Kind: steerReceiptRejected, Reason: steerReasonRunNotSteerable}
+			return nil
+		}
+		queueLength, err := model.CountReactPendingInputsBySessionStatusWithDB(ctx, tx, sessionID, model.ReactPendingStatusQueued)
+		if err != nil {
+			return err
+		}
+		receipt = SteerReceipt{
+			Kind:           steerReceiptGuided,
+			PendingInputID: pendingInputID,
+			QueueLength:    int(queueLength),
+			RunID:          activeRun.RunID,
+		}
+		return nil
+	})
+	if err != nil {
+		return SteerReceipt{}, err
+	}
+	return receipt, nil
+}
+
 // marshalRouteValuesForValidate 是队列发送路径的 routeValues 归一化（nil → []，JSON 序列化口径与准入一致）。
 func marshalRouteValuesForValidate(routeValues []string) string {
 	if routeValues == nil {
@@ -267,4 +369,18 @@ func marshalRouteValuesForValidate(routeValues []string) string {
 	}
 	encoded, _ := json.Marshal(routeValues)
 	return string(encoded)
+}
+
+// queuedItemHasAttachments 从排队输入的 payload 快照解析是否携带附件：
+// 注入（inject）只支持纯文本，前端据此禁用注入按钮。快照缺失/解析失败按无附件处理
+//（快照只是回显加速，不构成注入校验——注入路径会再次从行锁快照校验）。
+func queuedItemHasAttachments(payloadJSON string) bool {
+	if strings.TrimSpace(payloadJSON) == "" {
+		return false
+	}
+	var payload params.ReactRunPayload
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		return false
+	}
+	return len(payload.Attachments) > 0
 }

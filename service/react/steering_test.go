@@ -33,6 +33,12 @@ func TestSteerAdmissionDecision(t *testing.T) {
 		// 排队开启后，非 running 状态与软着陆都改为落队列。
 		{"waiting_queue_when_enabled", steerAdmissionInput{ActiveRunState: model.ReactRunStateWaitingClientMessage, QueueEnabled: true}, steerDecisionQueue, steerQueueReasonNotSteerable},
 		{"soft_landing_queue_when_enabled", steerAdmissionInput{ActiveRunState: model.ReactRunStateRunning, SoftLanding: true, QueueEnabled: true}, steerDecisionQueue, steerQueueReasonSoftLanding},
+		// 双模式之一（默认排队）：客户端显式携带排队偏好时，running 本可 guide 也落队列。
+		{"prefer_queue_when_enabled", steerAdmissionInput{ActiveRunState: model.ReactRunStateRunning, PreferQueue: true, QueueEnabled: true}, steerDecisionQueue, steerReasonUserPreferQueue},
+		// 排队关闭时偏好不生效：不能排队时兜底注入优于拒绝。
+		{"prefer_queue_ignored_when_disabled", steerAdmissionInput{ActiveRunState: model.ReactRunStateRunning, PreferQueue: true}, steerDecisionGuide, ""},
+		// 偏好不改变不可引导情形的结论（软着陆 + 偏好 → 仍按软着陆排队）。
+		{"prefer_queue_with_soft_landing", steerAdmissionInput{ActiveRunState: model.ReactRunStateRunning, SoftLanding: true, PreferQueue: true, QueueEnabled: true}, steerDecisionQueue, steerQueueReasonSoftLanding},
 		// 终态 run 不可能成为准入目标，防御性拒绝。
 		{"finished_reject", steerAdmissionInput{ActiveRunState: model.ReactRunStateFinished}, steerDecisionReject, steerRejectReasonRunNotSteerable},
 		{"empty_state_reject", steerAdmissionInput{}, steerDecisionReject, steerRejectReasonRunNotSteerable},

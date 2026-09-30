@@ -17,11 +17,12 @@ import type { QueueItem } from "../../session/types";
  * - 展开/收起队列列表（输入框上方常驻，run 结束队列消费完自动消失）
  * - 编辑/删除单条排队输入（后端 claim-once，已被晋升/作废时操作落空）
  * - 上下移动调整执行顺序（服务端同步改写账本 seq）
- * - 显式发送队首（WS queue_send，run 活跃时后端拒绝，按钮随之禁用）
+ * - 每条"立即发送"双模式：run 运行中 → 晋升为 guide 注入当前对话（下一个安全
+ *   边界生效，带附件的项不支持注入）；空闲 → claim-once 晋升开新 run
  */
 export interface QueueStripProps {
   items: QueueItem[];
-  /** 当前是否有 run 在进行（运行中禁用显式发送） */
+  /** 当前是否有 run 在进行（决定"立即发送"走注入还是开新 run） */
   isRunning: boolean;
   connected: boolean;
   /** steering 队列配置回显（决定提示文案） */
@@ -32,8 +33,8 @@ export interface QueueStripProps {
   onDelete: (id: number) => Promise<boolean>;
   /** 按新顺序提交全部排队输入 ID */
   onReorder: (idList: number[]) => void;
-  /** 显式发送一条排队输入（当前固定发送队首） */
-  onSend: (pendingInputId: string) => void;
+  /** 立即发送一条排队输入：mode=inject（运行中注入当前对话）或 run（空闲开新 run） */
+  onSend: (pendingInputId: string, mode: 'run' | 'inject') => void;
 }
 
 const CLAIM_LOST_NOTICE = "该条已被消费或作废，操作未生效";
@@ -99,10 +100,18 @@ export function QueueStrip(props: QueueStripProps) {
     props.onReorder(next.map((item) => item.id));
   };
 
-  const sendHead = () => {
-    const head = items()[0];
-    if (!head || props.isRunning || disabled()) return;
-    props.onSend(head.pendingInputId);
+  /** 每条"立即发送"：运行中注入当前对话（带附件除外），空闲开新 run。 */
+  const sendItem = (item: QueueItem) => {
+    if (disabled()) return;
+    if (props.isRunning && item.hasAttachments) return;
+    props.onSend(item.pendingInputId, props.isRunning ? 'inject' : 'run');
+  };
+
+  /** 单条"立即发送"按钮的禁用条件与提示文案。 */
+  const sendItemDisabled = (item: QueueItem): boolean => disabled() || (props.isRunning && !!item.hasAttachments);
+  const sendItemTitle = (item: QueueItem): string => {
+    if (props.isRunning && item.hasAttachments) return "带附件的排队消息不支持注入，将在 run 结束后自动执行";
+    return props.isRunning ? "立即发送：注入当前对话（下一个安全边界生效）" : "立即发送（开新 run）";
   };
 
   return (
@@ -139,6 +148,15 @@ export function QueueStrip(props: QueueStripProps) {
                       <span class="agent-ui-queue-strip-seq">{index() + 1}</span>
                       <span class="agent-ui-queue-strip-content" title={item.content}>{item.content}</span>
                       <span class="agent-ui-queue-strip-actions">
+                        <button
+                          type="button"
+                          class="agent-ui-queue-strip-send-item"
+                          title={sendItemTitle(item)}
+                          disabled={sendItemDisabled(item)}
+                          onClick={() => sendItem(item)}
+                        >
+                          <IconMdiSendOutline width="13" height="13" />
+                        </button>
                         <button type="button" title="上移" disabled={index() === 0 || disabled()} onClick={() => move(index(), -1)}>
                           <IconMdiArrowUp width="13" height="13" />
                         </button>
@@ -184,20 +202,12 @@ export function QueueStrip(props: QueueStripProps) {
           </div>
           <div class="agent-ui-queue-strip-footer">
             <span class="agent-ui-queue-strip-footer-hint">
-              {props.autoDrain
-                ? props.isRunning ? "当前 run 结束后将按顺序自动执行" : "队列空闲，可手动发送或等待下一次 run 结束"
-                : "自动续跑未开启，可手动发送队首"}
+              {props.isRunning
+                ? "当前 run 结束后将按顺序自动执行；点条目右侧发送图标可立即注入当前对话"
+                : props.autoDrain
+                  ? "队列空闲，可立即发送或等待下一次 run 结束"
+                  : "自动续跑未开启，点条目右侧发送图标可立即执行"}
             </span>
-            <button
-              type="button"
-              class="agent-ui-queue-strip-send"
-              disabled={props.isRunning || disabled()}
-              title={props.isRunning ? "run 运行中不能显式发送" : "立即发送队首排队输入"}
-              onClick={sendHead}
-            >
-              <IconMdiSendOutline width="13" height="13" />
-              立即发送队首
-            </button>
           </div>
         </Show>
       </div>
