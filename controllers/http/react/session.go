@@ -75,3 +75,30 @@ func GetSessionEvents(ctx *gin.Context) {
 	}
 	components.RenderJsonSucc(ctx, resp)
 }
+
+// DeleteSession 删除一个会话（硬删：级联删除全部关联数据）
+// @Summary 删除 ReAct 会话
+// @Description 事务内级联删除该会话的 runs/消息/工具结果/排队输入/反馈/产物/异步任务/Plan 数据；运行中的会话会被拒绝
+// @Tags React
+// @Accept json
+// @Produce json
+// @Param req body params.ReactSessionDeleteReq true "会话删除请求体"
+// @Success 200 {object} components.DefaultRenderWithTrace{data=params.ReactSessionDeleteResp}
+// @Failure 400 {object} components.DefaultRenderWithTrace
+// @Router /react/session/delete [post]
+func DeleteSession(ctx *gin.Context) {
+	var req params.ReactSessionDeleteReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Errorf(ctx, "[React.DeleteSession] 请求参数绑定失败: %v", err)
+		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf(err.Error()))
+		return
+	}
+
+	resp, err := reactService.DeleteReactSession(ctx, req)
+	if err != nil {
+		zlog.Errorf(ctx, "[React.DeleteSession] 删除会话失败: sessionId=%s, err=%v", req.SessionID, err)
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	components.RenderJsonSucc(ctx, resp)
+}

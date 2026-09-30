@@ -62,6 +62,13 @@ export interface AgentStartBlockContext {
   state: AgentStartBlockState;
 }
 
+/** 模型选择的持久化形态（localStorage 中只存标识字段，恢复时与列表匹配取完整对象）。 */
+interface StoredModelRef {
+  modelKey: string;
+  modelVersion: string;
+  modelHash?: string;
+}
+
 export interface AgentPanelProps {
   /** AgentClient 实例 */
   client: AgentClient;
@@ -165,6 +172,63 @@ export function AgentPanel(props: AgentPanelProps) {
   const [models, setModels] = createSignal<ReactModelInfo[]>([]);
   const configuredModel = () => props.client.getConfiguredModel?.() ?? null;
   const [selectedModel, setSelectedModel] = createSignal<ReactModelInfo | null>(configuredModel());
+
+  // ─── 模型选择的浏览器持久化 ───────────────────────────────
+  // 记住用户在输入框下拉里主动选择的模型，刷新/重开页面后恢复。
+  // 按 callerKey + routeValues 分键，不同宿主/场景互不干扰；恢复值必须在当前
+  // 可用列表中（模型被停用/删除时不恢复，由校正 effect 回退并覆盖存储）。
+  /** 用户主动选择后置位：后续列表加载/合并不再用存储值覆盖用户的选择。 */
+  let userPickedModel = false;
+  const modelStorageKey = (): string => {
+    const scope = props.client.getSessionScope?.();
+    return `agent-ui:selected-model:${scope?.callerKey ?? 'default'}:${(scope?.routeValues ?? []).join(',')}`;
+  };
+  const readStoredModel = (): StoredModelRef | null => {
+    try {
+      const raw = localStorage.getItem(modelStorageKey());
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as StoredModelRef | null;
+      if (!parsed || typeof parsed.modelKey !== 'string' || typeof parsed.modelVersion !== 'string') return null;
+      return parsed;
+    } catch {
+      return null; // 隐私模式等 localStorage 不可用时静默降级
+    }
+  };
+  const persistModel = (model: ReactModelInfo | null): void => {
+    try {
+      if (!model) {
+        localStorage.removeItem(modelStorageKey());
+        return;
+      }
+      localStorage.setItem(modelStorageKey(), JSON.stringify({
+        modelKey: model.modelKey,
+        modelVersion: model.modelVersion,
+        modelHash: model.modelHash,
+      }));
+    } catch {
+      // 存储不可用时静默降级：仅丢失持久化，不影响本次会话内的选择。
+    }
+  };
+  // 匹配只按 key+version（与合并去重键一致）：hash 是配置指纹，同 key+version 的
+  // 变体漂移不应影响恢复；恢复后选中对象取列表当前条目，携带其最新 hash。
+  const matchesStoredModel = (item: ReactModelInfo, stored: StoredModelRef): boolean =>
+    item.modelKey === stored.modelKey
+    && item.modelVersion === stored.modelVersion;
+  const handleModelChange = (model: ReactModelInfo | null) => {
+    userPickedModel = true;
+    setSelectedModel(model);
+    persistModel(model);
+  };
+  /** 列表合并完成后的补一次恢复：存储的模型是用户自建模型时不在平台列表里。 */
+  const maybeRestoreStoredModel = (list: ReactModelInfo[]): void => {
+    if (userPickedModel) return;
+    const stored = readStoredModel();
+    if (!stored) return;
+    const selected = selectedModel();
+    if (selected && matchesStoredModel(selected, stored)) return;
+    const restored = list.find((item) => matchesStoredModel(item, stored));
+    if (restored) setSelectedModel(restored);
+  };
   // 思考程度三态（off/auto/custom）；默认 auto 与历史行为一致。
   const [reasoning, setReasoning] = createSignal<ReactReasoningOptions>({ mode: 'auto' });
   // 模型配置面板（SettingsDrawer）开关与用户模型刷新触发器。
@@ -504,7 +568,10 @@ export function AgentPanel(props: AgentPanelProps) {
     }
     try {
       const userModels = await props.client.listUserModels();
-      setModels(mergeUserModels(platformModels, userModels ?? []));
+      const merged = mergeUserModels(platformModels, userModels ?? []);
+      setModels(merged);
+      // 存储的模型若是用户自建模型（不在平台列表），在合并列表里补一次恢复。
+      maybeRestoreStoredModel(merged);
     } catch (error) {
       console.warn('[AgentPanel] 加载用户模型列表失败，仅使用平台模型:', error);
       setModels(platformModels);
@@ -521,9 +588,11 @@ export function AgentPanel(props: AgentPanelProps) {
     void props.client.listModels().then(async (response) => {
       const platformModels = response.models ?? [];
       const configured = configuredModel();
-      const initial = platformModels.find((item) => configured
-        && item.modelKey === configured.modelKey
-        && item.modelVersion === configured.modelVersion)
+      // 恢复优先级：浏览器持久化的用户选择 > 宿主配置（须在列表中）> 服务端默认 > 列表首个。
+      const stored = readStoredModel();
+      const initial = (stored ? platformModels.find((item) => matchesStoredModel(item, stored)) : undefined)
+        ?? (configured ? platformModels.find((item) => item.modelKey === configured.modelKey
+          && item.modelVersion === configured.modelVersion) : undefined)
         ?? response.defaultModel
         ?? platformModels[0]
         ?? configured;
@@ -571,16 +640,29 @@ export function AgentPanel(props: AgentPanelProps) {
     });
   };
 
-  // 下拉数据变化后校正选中模型：被停用/删除的模型自动回退到列表首个可用项。
-  const modelIdentityKey = (model: ReactModelInfo): string => model.modelHash
-    ? `${model.modelKey}\u0000${model.modelVersion}\u0000${model.modelHash}`
-    : `${model.modelKey}\u0000${model.modelVersion}`;
+  // 身份键必须与 mergeUserModels 的去重键一致（key+version）：用户模型表可能存在
+  // 同 key+version、不同配置 hash 的重复条目，服务端返回顺序会漂移——若判存键
+  // 含 hash，合并列表保留的变体一变就会误判"选中模型不在列表"而回退到第一个
+  //（即"点开下拉自动切换"的根因）。hash 不参与存在性判定，选中对象始终取列表
+  // 当前条目，发送时自然携带最新配置。
+  const modelIdentityKey = (model: ReactModelInfo): string =>
+    `${model.modelKey}\u0000${model.modelVersion}`;
   createEffect(() => {
     const current = models();
     const selected = selectedModel();
     if (!selected || current.length === 0) return;
-    if (current.some((item) => modelIdentityKey(item) === modelIdentityKey(selected))) return;
-    setSelectedModel(current[0] ?? null);
+    const matched = current.find((item) => modelIdentityKey(item) === modelIdentityKey(selected));
+    if (!matched) {
+      // 被停用/删除：回退列表首个可用项，并覆盖持久化（下次不再恢复已不可用的选择）。
+      const fallback = current[0] ?? null;
+      setSelectedModel(fallback);
+      persistModel(fallback);
+      return;
+    }
+    // 同身份条目刷新（如配置 hash 漂移的重复条目）：同步为列表当前对象，
+    // 保证 select 受控 value（含 hash）与 option 对齐，否则下拉显示空白/跳第一项；
+    // 发送时也随之携带列表当前条目的最新配置。
+    if (matched !== selected) setSelectedModel(matched);
   });
 
   createEffect(() => {
@@ -650,6 +732,22 @@ export function AgentPanel(props: AgentPanelProps) {
     setShowSessionHistory(false);
     setShowAsyncTaskResults(false);
     showAsyncTaskNotice(undefined);
+  };
+
+  // 删除会话（硬删不可恢复；运行中的会话服务端拒绝）。成功后刷新列表；
+  // 若删的是当前会话，client.deleteSession 内部会切到新会话草稿。
+  const handleDeleteSession = async (sessionId: string) => {
+    const previousSessionId = store.state.sessionId;
+    try {
+      await props.client.deleteSession(sessionId);
+    } catch (error) {
+      console.warn("[AgentUI] delete session failed:", error);
+      showPanelMessage(error instanceof Error ? error.message : "会话删除失败");
+      return;
+    }
+    emitUIEvent({ type: 'session_delete', previousSessionId, sessionId });
+    await loadSessions();
+    refreshSessionStatuses();
   };
 
   const handleToggleSessionHistory = () => {
@@ -963,6 +1061,7 @@ export function AgentPanel(props: AgentPanelProps) {
                 statuses={sessionStatuses()}
                 onSelectSession={handleSelectSession}
                 onNewSession={handleNewSession}
+                onDeleteSession={handleDeleteSession}
               />
             </div>
           </div>
@@ -999,7 +1098,7 @@ export function AgentPanel(props: AgentPanelProps) {
           onSend={handleSend}
           models={models()}
           selectedModel={selectedModel()}
-          onModelChange={setSelectedModel}
+          onModelChange={handleModelChange}
           onModelDropdownRefresh={refreshModelsOnDropdownOpen}
           reasoning={reasoning()}
           onReasoningChange={setReasoning}

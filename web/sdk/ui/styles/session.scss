@@ -60,11 +60,34 @@
   font-size: $agent-ui-font-size-sm;
 }
 
+// 会话条目容器：选择区 + 删除操作区（hover 显示删除，行内二次确认）
+.agent-ui-session-item-wrapper {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: $agent-ui-spacing-xs;
+
+  &.agent-ui-session-active .agent-ui-session-item {
+    background: $agent-ui-primary-light;
+    border-color: $agent-ui-primary-border;
+
+    .agent-ui-session-item-title {
+      color: $agent-ui-primary;
+      font-weight: $agent-ui-font-weight-semibold;
+    }
+  }
+
+  &:hover .agent-ui-session-delete-button {
+    opacity: 1;
+  }
+}
+
 .agent-ui-session-item {
   @include agent-ui-button-reset;
   @include agent-ui-flex-column;
   align-items: flex-start;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: $agent-ui-spacing-lg;
   border: 1px solid transparent;
   border-radius: $agent-ui-radius-md;
@@ -77,15 +100,76 @@
     border-color: $agent-ui-primary-border-soft;
     box-shadow: $agent-ui-shadow-session;
   }
+}
 
-  &.agent-ui-session-active {
-    background: $agent-ui-primary-light;
-    border-color: $agent-ui-primary-border;
+// 删除按钮：默认隐藏，hover 条目时浮现；运行中的会话禁用
+.agent-ui-session-delete-button {
+  @include agent-ui-button-reset;
+  @include agent-ui-flex-center;
+  flex-shrink: 0;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  border-radius: $agent-ui-radius-sm;
+  color: $agent-ui-text-tertiary;
+  opacity: 0;
+  @include agent-ui-transition(opacity, background-color, color);
 
-    .agent-ui-session-item-title {
-      color: $agent-ui-primary;
-      font-weight: $agent-ui-font-weight-semibold;
+  &:hover:not(:disabled) {
+    background: rgba(255, 77, 79, 0.12);
+    color: $agent-ui-danger;
+  }
+
+  &:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+  }
+}
+
+// 行内二次确认条：不可恢复提示 + 确认/取消
+.agent-ui-session-delete-confirm {
+  @include agent-ui-flex-center;
+  flex-shrink: 0;
+  align-self: center;
+  gap: 2px;
+
+  button {
+    @include agent-ui-button-reset;
+    @include agent-ui-flex-center;
+    width: 22px;
+    height: 22px;
+    border-radius: $agent-ui-radius-sm;
+    @include agent-ui-transition(background-color, color);
+
+    &:disabled {
+      opacity: .4;
+      cursor: not-allowed;
     }
+  }
+}
+
+.agent-ui-session-delete-hint {
+  flex-shrink: 0;
+  padding: 0 4px;
+  color: $agent-ui-danger;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.agent-ui-session-delete-confirm-yes {
+  color: $agent-ui-danger;
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 77, 79, 0.12);
+  }
+}
+
+.agent-ui-session-delete-confirm-no {
+  color: $agent-ui-text-tertiary;
+
+  &:hover:not(:disabled) {
+    background: $agent-ui-bg-tertiary;
+    color: $agent-ui-text-primary;
   }
 }
 

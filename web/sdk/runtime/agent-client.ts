@@ -624,6 +624,37 @@ export class AgentClient {
     }
   }
 
+  /**
+   * 删除一个会话（硬删级联，不可恢复；运行中的会话服务端拒绝）。
+   * 删除成功后本地同步清理：dispose 该会话 runtime（断连）、清 IndexedDB 账本；
+   * 若删的是当前视图会话，自动切到新会话草稿。
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.sessionManager.deleteSession({
+      sessionId,
+      callerKey: this.config.callerKey,
+      routeValues: this.config.routeValues,
+    });
+
+    // 本地 runtime 摘除（多会话架构下可能是挂着空闲连接的后台会话）
+    const runtime = this.runtimes.get(sessionId);
+    if (runtime) {
+      this.runtimes.delete(sessionId);
+      this.clearIdleTimer(sessionId);
+      runtime.dispose();
+    }
+    // 本地账本清理
+    try {
+      await this.ledger.clearSession(sessionId);
+    } catch (error) {
+      console.warn('[AgentClient] clear deleted session ledger failed:', error);
+    }
+    // 删的是当前视图会话：切到新会话草稿，避免 UI 悬空
+    if (this.currentKey === sessionId) {
+      this.newSession();
+    }
+  }
+
   /** 同步指定会话的历史事件到本地缓存：服务端结果直接覆盖本地 events[] */
   async syncSessionEvents(sessionId: string): Promise<HistoryEvent[]> {
     const runtime = this.runtimes.get(sessionId);

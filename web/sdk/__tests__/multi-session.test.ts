@@ -92,6 +92,13 @@ function createMockFetch() {
       return jsonOk({ items: [], queueEnabled: true, autoDrain: true });
     }
 
+    if (path === '/react/session/delete') {
+      return jsonOk({
+        deleted: true, runs: 1, messages: 2, toolResults: 0, pendingInputs: 0,
+        feedbacks: 0, artifacts: 0, asyncTasks: 0, planRows: 0,
+      });
+    }
+
     return { ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) };
   });
 }
@@ -279,5 +286,44 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
     const statuses = client.getSessionStatuses();
     expect(statuses.find((item) => item.sessionId === 'session_resolved')).toBeTruthy();
     expect(client.getState().sessionId).toBe('session_resolved');
+  });
+
+  it('deleteSession：调 REST、dispose 该会话 runtime，删当前会话后切到草稿', async () => {
+    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client.connect();
+    await waitForConnected(client);
+    await client.switchSession('session_del_cur');
+    await waitForConnected(client);
+    const wsCur = runtimeWs(client, 'session_del_cur');
+
+    await client.deleteSession('session_del_cur');
+
+    // REST 已发出且带归属五元组
+    const calls = ((globalThis.fetch as any).mock.calls as Array<[string, RequestInit]>)
+      .filter(([url]) => new URL(url, 'http://test').pathname === '/react/session/delete');
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0][1].body)).toMatchObject({ sessionId: 'session_del_cur', callerKey: 'report-editor' });
+
+    // runtime 已摘除且连接断开；视图切到草稿（sessionId 置空）
+    expect((client as any).runtimes.get('session_del_cur')).toBeUndefined();
+    expect(wsCur.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(client.getState().sessionId).toBeNull();
+  });
+
+  it('deleteSession 删非当前会话：不影响当前视图', async () => {
+    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client.connect();
+    await waitForConnected(client);
+    await client.switchSession('session_del_other');
+    await waitForConnected(client);
+    await client.switchSession('session_del_keep');
+    await waitForConnected(client);
+    const wsOther = runtimeWs(client, 'session_del_other');
+
+    await client.deleteSession('session_del_other');
+
+    expect((client as any).runtimes.get('session_del_other')).toBeUndefined();
+    expect(wsOther.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(client.getState().sessionId).toBe('session_del_keep');
   });
 });

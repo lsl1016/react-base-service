@@ -1,11 +1,15 @@
 /**
  * SessionList - 会话列表组件
  *
- * 展示历史会话列表，支持在会话之间切换。
- * 多会话架构：statuses 提供各会话 runtime 的运行状态（后台运行中/等待输入徽标）。
+ * 展示历史会话列表，支持在会话之间切换、删除会话（硬删，行内二次确认）。
+ * 多会话架构：statuses 提供各会话 runtime 的运行状态（后台运行中/等待输入徽标）；
+ * 运行中的会话删除按钮禁用（服务端同样会拒绝）。
  */
 
-import { For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
+import IconMdiCheck from "~icons/mdi/check";
+import IconMdiClose from "~icons/mdi/close";
+import IconMdiTrashCanOutline from "~icons/mdi/trash-can-outline";
 import type { SessionStatusInfo } from "../../runtime/agent-client";
 import type { SessionMeta } from "../../storage/event-ledger";
 import { ScrollArea } from "./ScrollArea";
@@ -23,6 +27,8 @@ export interface SessionListProps {
   onSelectSession: (sessionId: string) => void;
   /** 创建新会话时的回调 */
   onNewSession: () => void;
+  /** 删除会话时的回调（硬删不可恢复；运行中的会话由调用方/服务端拒绝） */
+  onDeleteSession?: (sessionId: string) => Promise<void> | void;
 }
 
 /** 会话运行徽标文案：空串表示不显示。 */
@@ -40,7 +46,16 @@ function sessionBadgeText(status?: SessionStatusInfo["status"]): string {
   }
 }
 
+/** 运行中的会话不允许删除（与服务端约束一致）。 */
+function isSessionBusy(status?: SessionStatusInfo["status"]): boolean {
+  return status === "running" || status === "waiting_client_tool" || status === "compacting" || status === "recovering";
+}
+
 export function SessionList(props: SessionListProps) {
+  /** 行内二次确认：正在确认删除的会话 ID */
+  const [confirmingId, setConfirmingId] = createSignal<string | null>(null);
+  const [deletingId, setDeletingId] = createSignal<string | null>(null);
+
   const formatDate = (value: string) => {
     const normalized = value.includes("T") ? value : value.replace(" ", "T");
     const date = new Date(normalized);
@@ -68,6 +83,22 @@ export function SessionList(props: SessionListProps) {
     return info ? sessionBadgeText(info.status) : "";
   };
 
+  const busyFor = (sessionId: string): boolean => {
+    const info = props.statuses?.find((item) => item.sessionId === sessionId);
+    return info ? isSessionBusy(info.status) : false;
+  };
+
+  const confirmDelete = async (sessionId: string) => {
+    if (!props.onDeleteSession || deletingId()) return;
+    setDeletingId(sessionId);
+    try {
+      await props.onDeleteSession(sessionId);
+      setConfirmingId(null);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div class="agent-ui-session-list">
       <div class="agent-ui-session-header">
@@ -90,33 +121,71 @@ export function SessionList(props: SessionListProps) {
 
         <For each={props.sessions}>
           {(session) => (
-            <button
-              class="agent-ui-session-item"
-              classList={{
-                "agent-ui-session-active": session.sessionId === props.activeSessionId,
-              }}
-              onClick={() => props.onSelectSession(session.sessionId)}
+            <div
+              class="agent-ui-session-item-wrapper"
+              classList={{ "agent-ui-session-active": session.sessionId === props.activeSessionId }}
             >
-              <div class="agent-ui-session-item-title">
-                {session.title || "未命名会话"}
-                <Show when={badgeFor(session.sessionId)}>
-                  <span class="agent-ui-session-item-badge">{badgeFor(session.sessionId)}</span>
+              <button
+                class="agent-ui-session-item"
+                onClick={() => props.onSelectSession(session.sessionId)}
+              >
+                <div class="agent-ui-session-item-title">
+                  {session.title || "未命名会话"}
+                  <Show when={badgeFor(session.sessionId)}>
+                    <span class="agent-ui-session-item-badge">{badgeFor(session.sessionId)}</span>
+                  </Show>
+                </div>
+                <Show when={session.lastMessage}>
+                  <div class="agent-ui-session-item-preview">
+                    {session.lastMessage}
+                  </div>
                 </Show>
-              </div>
-              <Show when={session.lastMessage}>
-                <div class="agent-ui-session-item-preview">
-                  {session.lastMessage}
+                <div class="agent-ui-session-item-meta">
+                  <span class="agent-ui-session-item-events">
+                    {session.eventCount > 0 ? `${session.eventCount} 条事件` : session.state}
+                  </span>
+                  <span class="agent-ui-session-item-time">
+                    {formatDate(session.updatedAt)}
+                  </span>
+                </div>
+              </button>
+              <Show
+                when={confirmingId() === session.sessionId}
+                fallback={
+                  <Show when={props.onDeleteSession}>
+                    <button
+                      type="button"
+                      class="agent-ui-session-delete-button"
+                      title={busyFor(session.sessionId) ? "会话运行中，请先停止任务再删除" : "删除会话（不可恢复）"}
+                      disabled={busyFor(session.sessionId) || deletingId() === session.sessionId}
+                      onClick={() => setConfirmingId(session.sessionId)}
+                    >
+                      <IconMdiTrashCanOutline width="14" height="14" />
+                    </button>
+                  </Show>
+                }
+              >
+                <div class="agent-ui-session-delete-confirm">
+                  <span class="agent-ui-session-delete-hint">不可恢复</span>
+                  <button
+                    type="button"
+                    class="agent-ui-session-delete-confirm-yes"
+                    disabled={deletingId() === session.sessionId}
+                    onClick={() => void confirmDelete(session.sessionId)}
+                  >
+                    <IconMdiCheck width="14" height="14" />
+                  </button>
+                  <button
+                    type="button"
+                    class="agent-ui-session-delete-confirm-no"
+                    disabled={deletingId() === session.sessionId}
+                    onClick={() => setConfirmingId(null)}
+                  >
+                    <IconMdiClose width="14" height="14" />
+                  </button>
                 </div>
               </Show>
-              <div class="agent-ui-session-item-meta">
-                <span class="agent-ui-session-item-events">
-                  {session.eventCount > 0 ? `${session.eventCount} 条事件` : session.state}
-                </span>
-                <span class="agent-ui-session-item-time">
-                  {formatDate(session.updatedAt)}
-                </span>
-              </div>
-            </button>
+            </div>
           )}
         </For>
       </ScrollArea>

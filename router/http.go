@@ -84,6 +84,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.GET("/config/schema", react.GetConfigSchema)
 		reactGroup.POST("/session/list", react.ListSessions)
 		reactGroup.POST("/session/events", react.GetSessionEvents)
+		// 会话删除（硬删级联）：运行中的会话拒绝，归属五元组校验与 list/events 同口径。
+		reactGroup.POST("/session/delete", react.DeleteSession)
 		reactGroup.POST("/async_task/list", react.ListAsyncTasks)
 		reactGroup.POST("/plan_execution/detail", react.GetPlanExecutionDetail)
 		reactGroup.POST("/plan_execution/events", react.GetPlanStepEvents)

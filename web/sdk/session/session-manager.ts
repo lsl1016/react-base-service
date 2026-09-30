@@ -26,6 +26,8 @@ import type {
   RunFeedbackResp,
   SessionEventsResp,
   SessionFeedbackResp,
+  SessionDeleteParams,
+  SessionDeleteResp,
   SessionListParams,
   SessionListResp,
 } from './types';
@@ -52,6 +54,11 @@ export class SessionManager {
   /** 获取指定会话的全部历史事件 → POST /session/events */
   async getEvents(sessionId: string): Promise<SessionEventsResp> {
     return this.post<SessionEventsResp>('/session/events', { sessionId });
+  }
+
+  /** 删除一个会话（硬删级联；运行中的会话服务端拒绝）→ POST /session/delete */
+  async deleteSession(params: SessionDeleteParams): Promise<SessionDeleteResp> {
+    return this.post<SessionDeleteResp>('/session/delete', params);
   }
 
   /** 分页获取指定会话第三方已终态但本地尚未处理的异步任务。 */

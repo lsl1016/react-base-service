@@ -184,6 +184,26 @@ export interface QueueListResp {
   autoDrain: boolean;
 }
 
+/** session/delete 请求参数 */
+export interface SessionDeleteParams {
+  sessionId: string;
+  callerKey: string;
+  routeValues?: string[];
+}
+
+/** session/delete 响应：各关联表删除行数（排障友好） */
+export interface SessionDeleteResp {
+  deleted: boolean;
+  runs: number;
+  messages: number;
+  toolResults: number;
+  pendingInputs: number;
+  feedbacks: number;
+  artifacts: number;
+  asyncTasks: number;
+  planRows: number;
+}
+
 /** queue/update 请求参数 */
 export interface QueueUpdateParams extends QueueListParams {
   id: number;

@@ -29,6 +29,11 @@ export type AgentUIEvent =
       sessionId: string;
     }
   | {
+      type: 'session_delete';
+      previousSessionId: string | null;
+      sessionId: string;
+    }
+  | {
       type: 'user_message_copy';
       sessionId: string | null;
       runId: string;

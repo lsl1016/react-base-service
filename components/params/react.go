@@ -440,6 +440,27 @@ type ReactSessionEventsReq struct {
 	SessionID string `json:"sessionId" binding:"required"`
 }
 
+// ReactSessionDeleteReq 删除一个会话（硬删：事务内级联删除全部关联数据）。
+// 运行中的会话会被拒绝（请先停止任务再删除）。
+type ReactSessionDeleteReq struct {
+	SessionID   string   `json:"sessionId" binding:"required"`
+	CallerKey   string   `json:"callerKey" binding:"required"`
+	RouteValues []string `json:"routeValues"`
+}
+
+// ReactSessionDeleteResp 是会话删除响应：各关联表删除行数（排障友好）。
+type ReactSessionDeleteResp struct {
+	Deleted       bool  `json:"deleted"`
+	Runs          int64 `json:"runs"`
+	Messages      int64 `json:"messages"`
+	ToolResults   int64 `json:"toolResults"`
+	PendingInputs int64 `json:"pendingInputs"`
+	Feedbacks     int64 `json:"feedbacks"`
+	Artifacts     int64 `json:"artifacts"`
+	AsyncTasks    int64 `json:"asyncTasks"`
+	PlanRows      int64 `json:"planRows"`
+}
+
 // ReactAsyncTaskListReq 查询当前会话第三方已终态但本地尚未处理的异步任务，使用稳定游标分页。
 type ReactAsyncTaskListReq struct {
 	SessionID string `json:"sessionId" binding:"required"`
