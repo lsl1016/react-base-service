@@ -47,7 +47,7 @@ export function ToolExplore(props: ToolExploreProps) {
           <Show when={explorePrefixText()}>
             <span class="agent-ui-tool-explore-prefix-text">{explorePrefixText()}</span>
           </Show>
-          <span class="agent-ui-tool-name">{toolDisplayName()}</span>
+          <span class="agent-ui-tool-name" title={toolDisplayName()}>{toolDisplayName()}</span>
 
           {/* <Show when={props.toolCall.durationMs}>
             <span class="agent-ui-tool-duration">

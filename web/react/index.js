@@ -490,6 +490,13 @@ const shortText = (value, max = 56) => {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 };
 
+// 单元格纯文本值：对象紧凑 JSON，其余转字符串；配合 td 的 CSS 省略号截断，
+// DOM 里始终保留全文（可选中复制、可展开行详情），不再做字符级硬截断。
+const plainValue = (value) => {
+  if (value == null) return '';
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+};
+
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -904,7 +911,16 @@ const management = {
   mcpConnection: '',
   // 批量改状态的勾选集（存 idKey 值）：切页/重载清空，全选作用于当前筛选结果。
   selectedIds: new Set(),
+  // 行详情展开集（存 idKey 值）：点击数据行展开全宽详情子行，长文本/配置 JSON 完整可读。
+  expandedDetails: new Set(),
+  // 表头列宽记忆：{ [资源页]: { [列key]: px } }，localStorage 持久化（rp-col-widths）。
+  columnWidths: {},
   init() {
+    try {
+      this.columnWidths = JSON.parse(localStorage.getItem('rp-col-widths') || '{}');
+    } catch {
+      this.columnWidths = {};
+    }
     $('management-tabs').innerHTML = Object.entries(resources).map(([key, resource]) => (
       `<button class="rp-button rp-management-tab" data-type="${key}" type="button">${resource.tabText ?? resource.title.replace('管理', '')}</button>`
     )).join('');
@@ -913,6 +929,7 @@ const management = {
       if (!button) return;
       this.type = button.dataset.type;
       this.mcpConnection = '';
+      this.expandedDetails.clear();
       this.renderShell();
       this.reload();
     });
@@ -981,6 +998,11 @@ const management = {
     $('management-modal-save').addEventListener('click', () => this.save());
     $('management-body').addEventListener('click', (event) => this.handleTableClick(event));
     $('management-cards').addEventListener('click', (event) => this.handleTableClick(event));
+    // 表头列宽拖拽：委托到 thead，pointerdown 命中 resizer 手柄即进入拖拽。
+    $('management-head').addEventListener('pointerdown', (event) => {
+      const handle = event.target.closest('[data-resize-key]');
+      if (handle) this.startColumnResize(event, handle);
+    });
     // 运行时配置面板的数字输入（data-setting-input=字段名）走 input 事件委托；
     // 卡片容器带 data-card，据此定位对应草稿。
     $('management-cards').addEventListener('input', (event) => {
@@ -993,6 +1015,38 @@ const management = {
     this.renderShell();
   },
   resource() { return resources[this.type]; },
+  // 表头列宽拖拽：pointer capture 把后续 move/up 都锁定在手柄上（拖出窗口也不丢事件），
+  // 实时改 th.style.width（table-layout:fixed 下即刻生效）；松手按资源页+列 key 记忆
+  // 宽度并落 localStorage；拖拽期间全局锁定光标与选区。
+  startColumnResize(event, handle) {
+    const th = handle.closest('th');
+    if (!th) return;
+    const key = handle.dataset.resizeKey;
+    const startX = event.clientX;
+    const startWidth = th.offsetWidth;
+    event.preventDefault();
+    document.body.classList.add('rp-col-resizing');
+    const onMove = (moveEvent) => {
+      const width = Math.max(72, Math.round(startWidth + moveEvent.clientX - startX));
+      th.style.width = `${width}px`;
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('rp-col-resizing');
+      (this.columnWidths[this.type] ??= {})[key] = Math.round(th.offsetWidth);
+      try {
+        localStorage.setItem('rp-col-widths', JSON.stringify(this.columnWidths));
+      } catch { /* 隐私模式等存储不可用时静默降级为会话内记忆 */ }
+    };
+    // pointer capture 把事件重定向到手柄并照常冒泡到 window：只挂 window 监听即可，
+    // 拖出窗口/经过其他元素都不丢事件。
+    try {
+      handle.setPointerCapture(event.pointerId);
+    } catch { /* 老浏览器无 capture 时 window 监听仍覆盖窗口内拖拽 */ }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  },
   config() { return getConfig(); },
   setState(text, isError = false) {
     const el = $('management-state');
@@ -1020,7 +1074,19 @@ const management = {
     const batchHead = batchable
       ? '<th class="rp-table-cell rp-table-header-cell rp-batch-cell"><input type="checkbox" data-batch-select-all title="全选（当前筛选结果）" /></th>'
       : '';
-    $('management-head').innerHTML = useCards ? '' : `<tr class="rp-table-row">${batchHead}${resource.columns.map(([, label]) => `<th class="rp-table-cell rp-table-header-cell">${label}</th>`).join('')}</tr>`;
+    // 列宽拖拽：每个数据列表头右缘挂一个 resizer 手柄（actions 操作列不需要），
+    // 拖动即改该列宽度；宽度按资源页记忆（columnWidths）并在重建表头后回填。
+    const resizer = (key) => (key === 'actions' ? '' : `<span class="rp-th-resizer" data-resize-key="${escapeHtml(key)}" title="拖动调整列宽"></span>`);
+    $('management-head').innerHTML = useCards ? '' : `<tr class="rp-table-row">${batchHead}${resource.columns.map(([key, label]) => `<th class="rp-table-cell rp-table-header-cell">${escapeHtml(label)}${resizer(key)}</th>`).join('')}</tr>`;
+    if (!useCards) {
+      const widths = this.columnWidths[this.type];
+      if (widths) {
+        $('management-head').querySelectorAll('[data-resize-key]').forEach((handle) => {
+          const width = widths[handle.dataset.resizeKey];
+          if (width) handle.closest('th').style.width = `${width}px`;
+        });
+      }
+    }
     // MCP 相关页提供「网关管理台」入口（mcp-server 风格的独立管理页，
     // 工具批量注册/编辑/上下线/应用授权都在管理台里做）。
     $('management-gwadmin').hidden = !(this.type === 'mcp' || this.type === 'mcpapp');
@@ -1134,20 +1200,20 @@ const management = {
       return `<div class="rp-row-actions"><button class="rp-button rp-link-btn" data-action="edit" type="button">修改</button>${deleteButton}</div>`;
     }
     if (item.source === 'builtin' && key === 'name') {
-      return '<span class="rp-mcp-kind-badge" title="代码内置子智能体：不落库，delegate_agent 可直接使用；Fork 后可修改">内置</span> ' + escapeHtml(shortText(item[key], 60));
+      return '<span class="rp-mcp-kind-badge" title="代码内置子智能体：不落库，delegate_agent 可直接使用；Fork 后可修改">内置</span> ' + escapeHtml(plainValue(item[key]));
     }
     if (key === 'status' && item.source === 'builtin') return '<span class="rp-mcp-badge rp-mcp-badge-ok" title="内置 profile 恒可用（无启停概念）">—</span>';
     if (key === 'readOnly') return Number(item.readOnly) === 1 ? '<span class="rp-mcp-kind-badge" title="只读执行域：非 readOnly 业务工具被硬拦截">只读</span>' : '';
     if (key === 'status') return `<button class="rp-button rp-switch ${isEnabled(item) ? 'rp-on' : ''}" data-action="toggle" type="button" title="${isEnabled(item) ? '启用' : '停用'}"></button>`;
     if (key === 'planEnabled') return `<button class="rp-button rp-switch ${isPlanEnabled(item) ? 'rp-on' : ''}" data-action="toggle-plan" type="button" title="Plan ${isPlanEnabled(item) ? '启用' : '停用'}"></button>`;
-    if (key === 'callerKey' && this.resource().callerFilter) return item.callerKey === 'default' ? '<span class="rp-mcp-badge rp-mcp-badge-ok" title="挂在 default 伪 caller 下，全部 caller 的请求都能解析到">默认（全 caller）</span>' : escapeHtml(shortText(item.callerKey, 24));
+    if (key === 'callerKey' && this.resource().callerFilter) return item.callerKey === 'default' ? '<span class="rp-mcp-badge rp-mcp-badge-ok" title="挂在 default 伪 caller 下，全部 caller 的请求都能解析到">默认（全 caller）</span>' : escapeHtml(plainValue(item.callerKey));
     if (key === 'toolType' && item.toolType === 'mcp') {
       const server = item.config?.mcpServer || '';
       return `<span class="rp-mcp-kind-badge" title="MCP 连接：${escapeHtml(server)}">MCP·${escapeHtml(server)}</span>`;
     }
     if (key === 'routeValues') return escapeHtml(Array.isArray(item.routeValues) && item.routeValues.length ? item.routeValues.join(',') : '[]');
-    if (key === 'config') return escapeHtml(shortText(item.configText ?? item.config, 64));
-    return escapeHtml(shortText(item[key], 72));
+    if (key === 'config') return escapeHtml(plainValue(item.configText ?? item.config));
+    return escapeHtml(plainValue(item[key]));
   },
   renderTable() {
     const resource = this.resource();
@@ -1184,11 +1250,44 @@ const management = {
       const key = this.batchKey(item);
       return `<td class="rp-table-cell rp-batch-cell"><input type="checkbox" data-batch-select="${escapeHtml(key)}" ${this.selectedIds.has(key) ? 'checked' : ''} /></td>`;
     };
-    $('management-body').innerHTML = rows.map((item, index) => (
-      `<tr class="rp-table-row" data-index="${index}">${batchCell(item)}${resource.columns.map(([key]) => `<td class="rp-table-cell" title="${escapeHtml(typeof item[key] === 'object' ? JSON.stringify(item[key] ?? '') : item[key] ?? '')}">${this.renderValue(key, item)}</td>`).join('')}</tr>`
-    )).join('');
+    $('management-body').innerHTML = rows.map((item, index) => {
+      const detailOpen = this.expandedDetails.has(this.detailKey(item));
+      return `<tr class="rp-table-row rp-row-data${detailOpen ? ' rp-row-open' : ''}" data-index="${index}" title="点击行展开/收起完整字段">${batchCell(item)}${resource.columns.map(([key]) => `<td class="rp-table-cell" title="${escapeHtml(plainValue(item[key]))}">${this.renderValue(key, item)}</td>`).join('')}</tr>`
+        + (detailOpen ? this.renderDetailRow(item, index, resource.columns.length + (batchable ? 1 : 0)) : '');
+    }).join('');
     this.visibleItems = rows;
     this.updateBatchControls();
+  },
+  // 行详情展开键：优先 idKey（与批量勾选同源），内置子 Agent 无落库 id 时回落 name。
+  detailKey(item) {
+    return String(item[this.resource().idKey] ?? item.name ?? '');
+  },
+  // 行详情子行：全宽平铺该行所有字段的完整值——描述/配置 JSON/路由等长文本不再依赖悬停 title。
+  renderDetailRow(item, index, colspan) {
+    const boolLabels = { status: ['停用', '启用'], isDefault: ['否', '默认'], readOnly: ['否', '只读'], planEnabled: ['关', '开'] };
+    const fields = this.resource().columns.filter(([key]) => key !== 'actions').map(([key, label]) => {
+      const raw = key === 'config' ? (item.configText ?? item.config) : item[key];
+      let text;
+      if (raw == null || raw === '') text = '—';
+      else if (boolLabels[key] && (raw === 0 || raw === 1 || raw === '0' || raw === '1')) text = `${boolLabels[key][Number(raw)]}（${raw}）`;
+      else if (typeof raw === 'object') text = JSON.stringify(raw, null, 2);
+      else text = String(raw);
+      return `<div class="rp-detail-field"><span class="rp-detail-label">${escapeHtml(label)}</span><span class="rp-detail-value">${escapeHtml(text)}</span></div>`;
+    }).join('');
+    return `<tr class="rp-table-row rp-detail-row" data-index="${index}" data-detail="1"><td class="rp-table-cell rp-detail-cell" colspan="${colspan}"><div class="rp-detail-grid">${fields}</div></td></tr>`;
+  },
+  // 点击数据行/详情行切换详情展开；卡片页（cardList/cardKind）与无列表资源的点击不触发，
+  // 按钮、开关、勾选框等交互元素同样跳过。
+  toggleDetailRow(event) {
+    const resource = this.resource();
+    if (resource.cardKind || resource.cardList || !resource.columns?.length) return;
+    if (event.target.closest('button, input, a, label, [data-action]')) return;
+    const item = this.itemFromEvent(event);
+    if (!item) return;
+    const key = this.detailKey(item);
+    if (this.expandedDetails.has(key)) this.expandedDetails.delete(key);
+    else this.expandedDetails.add(key);
+    this.renderTable();
   },
   // MCP 连接卡片列表：每张卡片 = 头部（名称/传输/状态/端点/工具数/操作）+ 可展开工具清单。
   renderMcpCards() {
@@ -1392,7 +1491,7 @@ const management = {
     const rowsHtml = tools.map((tool) => `
       <label class="rp-field rp-span-all" style="flex-direction:row;align-items:center;gap:8px">
         <input type="checkbox" data-grant-tool="${escapeHtml(tool.toolId)}" ${tool.granted ? 'checked' : ''} />
-        <span style="flex:1"><b>${escapeHtml(tool.name)}</b> <span class="rp-mcp-endpoint">${escapeHtml(tool.callerKey)}</span>${Number(tool.status) !== 1 ? ' <span class="rp-mcp-badge rp-mcp-badge-off">已下线</span>' : ''}${tool.description ? ` — ${escapeHtml(shortText(tool.description, 60))}` : ''}</span>
+        <span style="flex:1;min-width:0"><b>${escapeHtml(tool.name)}</b> <span class="rp-mcp-endpoint">${escapeHtml(tool.callerKey)}</span>${Number(tool.status) !== 1 ? ' <span class="rp-mcp-badge rp-mcp-badge-off">已下线</span>' : ''}${tool.description ? ` — ${escapeHtml(tool.description)}` : ''}</span>
       </label>`).join('');
     const grantedCount = tools.filter((tool) => tool.granted).length;
     return `
@@ -1639,7 +1738,11 @@ const management = {
   },
   handleTableClick(event) {
     const action = event.target.closest('[data-action]')?.dataset.action;
-    if (!action) return;
+    if (!action) {
+      // 未命中任何行内操作（按钮/开关/勾选）时，点击数据行切换详情展开。
+      this.toggleDetailRow(event);
+      return;
+    }
     // 运行时配置面板的行内控件没有 data-index（非列表项），先于通用行分发处理。
     if (this.type === 'runtimeSetting') {
       this.handleSettingClick(event, action);

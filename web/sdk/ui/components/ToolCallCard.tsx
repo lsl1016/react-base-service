@@ -129,7 +129,7 @@ export function ToolCallCard(props: ToolCallCardProps) {
       >
         <div class="agent-ui-tool-info">
           {statusIcon()}
-          <span class="agent-ui-tool-name">{toolDisplayName()}</span>
+          <span class="agent-ui-tool-name" title={toolDisplayName()}>{toolDisplayName()}</span>
           {riskBadge()}
           {readOnlyBadge()}
           <Show when={props.toolCall.agentPath}>

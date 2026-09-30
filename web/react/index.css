@@ -559,6 +559,43 @@
 .rp-table-header-cell {
   color: #334155;
   font-weight: 700;
+  /* 列宽拖拽手柄的定位锚点 */
+  position: relative;
+}
+
+/* 表头列宽拖拽手柄：贴在每个数据列表头右缘（即两列分界竖线位置） */
+.rp-th-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 9px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+
+.rp-th-resizer::after {
+  content: '';
+  position: absolute;
+  top: 20%;
+  right: 3px;
+  width: 2px;
+  height: 60%;
+  border-radius: 1px;
+  background: transparent;
+}
+
+.rp-th-resizer:hover::after,
+.rp-th-resizer:active::after {
+  background: #2563eb;
+}
+
+/* 拖拽期间全局统一 col-resize 光标并禁用文本选择 */
+body.rp-col-resizing,
+body.rp-col-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 /* 批量改状态：行首勾选列（工具/技能管理页），窄列居中。 */
@@ -574,6 +611,52 @@
 
 .rp-table-row:hover {
   background: #f8fafc;
+}
+
+/* 普通表格资源的数据行/详情行可点击（展开/收起详情） */
+.rp-table-row.rp-row-data,
+.rp-table-row.rp-detail-row {
+  cursor: pointer;
+}
+
+.rp-table-row.rp-row-open > .rp-table-cell {
+  background: #f1f5f9;
+}
+
+/* 行详情子行：全宽平铺完整字段值，长文本换行、配置 JSON 保留缩进 */
+.rp-detail-row .rp-detail-cell {
+  height: auto;
+  padding: 10px 14px 12px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.rp-detail-grid {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 6px 14px;
+  font-size: 12px;
+}
+
+.rp-detail-field {
+  display: contents;
+}
+
+.rp-detail-label {
+  color: var(--muted);
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.rp-detail-value {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  color: #0f172a;
+  /* 超长值（如大配置 JSON）限高内滚，避免单字段撑爆整屏 */
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .rp-table-empty-cell {
