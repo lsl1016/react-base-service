@@ -17,6 +17,9 @@ import (
 
 // Config COS 配置
 type Config struct {
+	// Provider 存储后端选择：minio/s3（自部署 MinIO，S3 兼容）、local（本地目录）；
+	// 留空走腾讯云 COS（需云凭证）。显式指定时优先级高于 localDir。
+	Provider  string `yaml:"provider"`
 	SecretID  string `yaml:"secretID"`
 	SecretKey string `yaml:"secretKey"`
 	Bucket    string `yaml:"bucket"`
@@ -24,7 +27,7 @@ type Config struct {
 	Region    string `yaml:"region"`
 	Endpoint  string `yaml:"endpoint"`
 	Timeout   int    `yaml:"timeout"`
-	Path      string `yaml:"path"`    // 可选：默认路径前缀
+	Path      string `yaml:"path"`     // 可选：默认路径前缀
 	LocalDir  string `yaml:"localDir"` // 可选：本地目录存储模式，配置后无需腾讯云凭证（本地开发用）
 }
 
@@ -33,16 +36,35 @@ type Client struct {
 	raw    *tencentcos.Client
 	config Config
 	local  *localFS
+	s3     *minioStore
 }
 
-// NewClient 创建 COS 客户端；配置 localDir 时切换为本地目录存储模式。
+// NewClient 创建对象存储客户端：按 provider 选择后端，localDir 兼容旧配置。
+// 三种后端（腾讯 COS / MinIO / 本地目录）共享同一套 Client 方法，业务层无感知。
 func NewClient(config Config) (*Client, error) {
-	if dir := strings.TrimSpace(config.LocalDir); dir != "" {
-		store, err := newLocalFS(dir)
+	provider := strings.TrimSpace(strings.ToLower(config.Provider))
+	if provider == "" || provider == providerLocal {
+		dir := strings.TrimSpace(config.LocalDir)
+		if dir == "" && provider == providerLocal {
+			return nil, fmt.Errorf("cos provider=local 需要配置 localDir")
+		}
+		if dir != "" {
+			store, err := newLocalFS(dir)
+			if err != nil {
+				return nil, err
+			}
+			return &Client{config: config, local: store}, nil
+		}
+	}
+	if provider == providerMinio || provider == providerS3 {
+		store, err := newMinioStore(config)
 		if err != nil {
 			return nil, err
 		}
-		return &Client{config: config, local: store}, nil
+		return &Client{config: config, s3: store}, nil
+	}
+	if provider != "" && provider != providerCos {
+		return nil, fmt.Errorf("未支持的 cos provider: %s（可选 minio/s3/local/cos）", provider)
 	}
 	if strings.TrimSpace(config.SecretID) == "" ||
 		strings.TrimSpace(config.SecretKey) == "" ||
@@ -82,6 +104,9 @@ func (c *Client) UploadFile(ctx context.Context, localPath, cosKey string) error
 	if c.local != nil {
 		return c.local.uploadFile(ctx, localPath, c.normalizeKey(cosKey))
 	}
+	if c.s3 != nil {
+		return c.s3.uploadFile(ctx, localPath, c.normalizeKey(cosKey))
+	}
 	f, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("open local file failed: %w", err)
@@ -105,6 +130,9 @@ func (c *Client) UploadData(ctx context.Context, data []byte, cosKey, contentTyp
 	if c.local != nil {
 		return c.local.uploadData(ctx, data, c.normalizeKey(cosKey), contentType)
 	}
+	if c.s3 != nil {
+		return c.s3.uploadData(ctx, data, c.normalizeKey(cosKey), contentType)
+	}
 	key := c.normalizeKey(cosKey)
 	if contentType == "" {
 		contentType = detectContentType(cosKey)
@@ -125,6 +153,9 @@ func (c *Client) UploadData(ctx context.Context, data []byte, cosKey, contentTyp
 func (c *Client) DownloadFile(ctx context.Context, cosKey, localPath string) error {
 	if c.local != nil {
 		return c.local.downloadFile(ctx, c.normalizeKey(cosKey), localPath)
+	}
+	if c.s3 != nil {
+		return c.s3.downloadFile(ctx, c.normalizeKey(cosKey), localPath)
 	}
 	key := c.normalizeKey(cosKey)
 	dir := filepath.Dir(localPath)
@@ -155,6 +186,9 @@ func (c *Client) DownloadData(ctx context.Context, cosKey string) ([]byte, error
 	if c.local != nil {
 		return c.local.downloadData(ctx, c.normalizeKey(cosKey))
 	}
+	if c.s3 != nil {
+		return c.s3.downloadData(ctx, c.normalizeKey(cosKey))
+	}
 	key := c.normalizeKey(cosKey)
 	resp, err := c.raw.Object.Get(ctx, key, nil)
 	if err != nil {
@@ -173,6 +207,9 @@ func (c *Client) DownloadData(ctx context.Context, cosKey string) ([]byte, error
 func (c *Client) DownloadRange(ctx context.Context, cosKey string, start, end int64) ([]byte, error) {
 	if c.local != nil {
 		return c.local.downloadRange(ctx, c.normalizeKey(cosKey), start, end)
+	}
+	if c.s3 != nil {
+		return c.s3.downloadRange(ctx, c.normalizeKey(cosKey), start, end)
 	}
 	if start < 0 || end < start {
 		return nil, fmt.Errorf("invalid cos byte range: %d-%d", start, end)
@@ -207,6 +244,9 @@ func (c *Client) DeleteObject(ctx context.Context, cosKey string) error {
 	if c.local != nil {
 		return c.local.deleteObject(ctx, c.normalizeKey(cosKey))
 	}
+	if c.s3 != nil {
+		return c.s3.deleteObject(ctx, c.normalizeKey(cosKey))
+	}
 	key := c.normalizeKey(cosKey)
 	if _, err := c.raw.Object.Delete(ctx, key); err != nil {
 		return fmt.Errorf("cos delete object failed: %w", err)
@@ -223,6 +263,15 @@ func (c *Client) DeleteObjects(ctx context.Context, cosKeys []string) error {
 			}
 		}
 		return nil
+	}
+	if c.s3 != nil {
+		keys := make([]string, 0, len(cosKeys))
+		for _, cosKey := range cosKeys {
+			if key := c.normalizeKey(cosKey); key != "" {
+				keys = append(keys, key)
+			}
+		}
+		return c.s3.deleteObjects(ctx, keys)
 	}
 	if len(cosKeys) == 0 {
 		return nil
@@ -255,6 +304,9 @@ func (c *Client) IsExist(ctx context.Context, cosKey string) (bool, error) {
 	if c.local != nil {
 		return c.local.isExist(ctx, c.normalizeKey(cosKey))
 	}
+	if c.s3 != nil {
+		return c.s3.isExist(ctx, c.normalizeKey(cosKey))
+	}
 	key := c.normalizeKey(cosKey)
 	if _, err := c.raw.Object.Head(ctx, key, nil); err != nil {
 		if tencentcos.IsNotFoundError(err) {
@@ -269,6 +321,9 @@ func (c *Client) IsExist(ctx context.Context, cosKey string) (bool, error) {
 func (c *Client) GetURL(ctx context.Context, cosKey string, expire time.Duration) (string, error) {
 	if c.local != nil {
 		return c.local.getURL(c.normalizeKey(cosKey))
+	}
+	if c.s3 != nil {
+		return c.s3.getURL(ctx, c.normalizeKey(cosKey), expire)
 	}
 	key := c.normalizeKey(cosKey)
 	u, err := c.raw.Object.GetPresignedURL(
@@ -290,6 +345,9 @@ func (c *Client) GetURL(ctx context.Context, cosKey string, expire time.Duration
 func (c *Client) ListObjects(ctx context.Context, prefix string, maxCount int) ([]string, error) {
 	if c.local != nil {
 		return c.local.listObjects(c.normalizeKey(prefix), maxCount)
+	}
+	if c.s3 != nil {
+		return c.s3.listObjects(ctx, c.normalizeKey(prefix), maxCount)
 	}
 	if maxCount <= 0 {
 		maxCount = 1000
@@ -324,6 +382,9 @@ func (c *Client) AppendObject(ctx context.Context, cosKey string, appendData []b
 	if c.local != nil {
 		return c.local.appendObject(ctx, c.normalizeKey(cosKey), appendData, contentType)
 	}
+	if c.s3 != nil {
+		return c.s3.appendObject(ctx, c.normalizeKey(cosKey), appendData, contentType)
+	}
 	exists, err := c.IsExist(ctx, cosKey)
 	if err != nil {
 		return err
@@ -340,8 +401,14 @@ func (c *Client) AppendObject(ctx context.Context, cosKey string, appendData []b
 	return c.UploadData(ctx, newData, cosKey, contentType)
 }
 
-// ClearObject 清空 COS 对象内容
+// ClearObject 清空对象内容；对象不存在时为幂等空操作。
 func (c *Client) ClearObject(ctx context.Context, cosKey string) error {
+	if c.local != nil {
+		return c.local.clearObject(ctx, c.normalizeKey(cosKey))
+	}
+	if c.s3 != nil {
+		return c.s3.clearObject(ctx, c.normalizeKey(cosKey))
+	}
 	exists, err := c.IsExist(ctx, cosKey)
 	if err != nil {
 		return err

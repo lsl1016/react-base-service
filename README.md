@@ -26,7 +26,7 @@
 - 🧰 **两段式工具加载** — 模型只看工具摘要索引，`get_tool` 按需激活完整定义、`execute_tool` 校验执行；Business Tool 支持 http / client / mcp 三类，MCP 客户端支持静态声明 + 动态登记
 - 🧠 **双层记忆** — 跨会话长期记忆（owner 作用域、分层注入、修订审计）+ Graphiti 时序事实图谱
 - 👤 **HITL 人机协同** — 浏览器执行 Client Tool、ask_question 补充信息、危险工具二次确认
-- 🧪 **沙箱与产物** — python_exec 沙箱执行 + COS 产物下载，csv / md / txt 附件上传与引用
+- 🧪 **沙箱与产物** — python_exec 沙箱执行 + 对象存储产物下载（自部署 MinIO / 腾讯 COS / 本地目录三种后端），csv / md / txt 附件上传与引用
 - 📦 **Bundle 插件包** — manifest + agents + skills + .mcp.json 打包安装，快照式卸载回滚
 
 ## 🏗️ 系统架构
@@ -209,7 +209,7 @@ CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）：push / PR 触发 
 | HITL 交互 | Client Tool（浏览器执行）、ask_question 补充信息、危险工具二次确认（tool_confirm），统一经 clientMessageHub 按 toolUseId 认领回包 |
 | 系统提示词 | 按 callerKey + routeValues 前缀匹配解析，多条由通用到具体拼接；支持 `default` 默认作用域（全 caller 共享，拼接在最前） |
 | 异步任务 | 提交快照落库、`<async_tasks>` 提醒注入、resolve/get 闭环工具、Provider 状态同步框架（可插拔） |
-| 产物与附件 | python_exec 沙箱执行 + COS 产物下载（支持本地目录存储模式）；csv/md/txt 附件上传与引用 |
+| 产物与附件 | python_exec 沙箱执行 + 对象存储产物下载（provider 可选 minio/cos/local）；csv/md/txt 附件上传与引用 |
 | 轮次反馈 | run 级点赞/点踩与问题反馈，会话维度回显 |
 | 模型管理 | 用户自定义模型（modelHash 直引）、模型白名单、积分 |
 | 默认作用域 | 工具/系统提示词/skill 可挂在保留伪 caller `default` 下，全部 caller 的请求自动合并解析；管理面板三类资源支持 全部/默认/各 caller（按平台分组）筛选，新建跟随筛选落到目标作用域 |

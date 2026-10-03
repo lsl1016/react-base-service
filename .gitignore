@@ -69,3 +69,5 @@ react-base-service
 **/.mimosa/
 .zcode/
 .agents/
+
+/minio-data/

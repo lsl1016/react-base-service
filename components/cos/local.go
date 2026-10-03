@@ -185,3 +185,14 @@ func (l *localFS) appendObject(ctx context.Context, cosKey string, appendData []
 	}
 	return l.uploadData(ctx, merged, cosKey, contentType)
 }
+
+func (l *localFS) clearObject(ctx context.Context, cosKey string) error {
+	exists, err := l.isExist(ctx, cosKey)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	return l.uploadData(ctx, []byte{}, cosKey, "")
+}

@@ -9,6 +9,7 @@
 # - mysql/redis 使用本地已有镜像（mysql:8.0 / redis:7-alpine）；
 # - sandbox 由 ./sandbox/Dockerfile 构建（基础镜像 python:3.11-slim，若本地缺失会触发一次拉取）；
 # - MySQL 首次启动自动执行 sql/init.sql 建库；
+# - 对象存储用自部署 MinIO（S3 兼容，替代腾讯云 COS），控制台 http://127.0.0.1:9001；
 # - 服务配置挂载 deploy/compose/conf/mount（容器内网地址），与本机开发的 conf/mount 互不干扰；
 # - 监控组件（prometheus/loki/promtail/grafana）配置见 deploy/monitoring，
 #   采集全部走 compose 内网；Grafana 管理密码通过 GRAFANA_ADMIN_PASSWORD 覆盖（默认 admin）。
@@ -89,11 +90,34 @@ services:
       retries: 12
       start_period: 15s
 
+  # ===== 对象存储：自部署 MinIO（S3 兼容），替代腾讯云 COS =====
+  minio:
+    image: minio/minio
+    container_name: react-base-minio
+    command: server /data --console-address ":9001"
+    networks:
+      - backend
+    ports:
+      - "${MINIO_HOST_PORT:-9000}:9000"   # S3 API（本机 go run 直连 127.0.0.1:9000）
+      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"   # Web 控制台
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - ./minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
   service:
     build:
       context: .
     container_name: react-base-service
-    # 唯一桥接两网的服务：业务内网（mysql/redis/searxng）+ 沙箱隔离网
+    # 唯一桥接两网的服务：业务内网（mysql/redis/minio/searxng）+ 沙箱隔离网
     networks:
       - backend
       - sandbox-net
@@ -106,6 +130,8 @@ services:
         condition: service_healthy
       sandbox:
         condition: service_started
+      minio:
+        condition: service_healthy
     ports:
       - "${SERVICE_HOST_PORT:-8080}:8080"
     volumes:
@@ -179,7 +205,7 @@ services:
     restart: unless-stopped
 
 networks:
-  # 业务内网：mysql/redis/searxng/service 与监控组件互通，可出公网
+  # 业务内网：mysql/redis/minio/searxng/service 与监控组件互通，可出公网
   backend:
   # 沙箱隔离网（P0-1）：internal 断掉出网路由；只允许 service 与 sandbox 同网。
   # 静态扫描（AST 白名单）自此降级为"降噪第一层"，真正的边界由网络层承担。

@@ -1,5 +1,4 @@
 // Package zlog 提供上下文日志的最小实现（stdout + 可选文件落盘与轮转），
-// 替代原内部框架 zlog 包。
 package zlog
 
 import (

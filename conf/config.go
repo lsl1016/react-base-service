@@ -751,6 +751,8 @@ type ResourceConf struct {
 
 // COSConfig COS 配置
 type COSConfig struct {
+	// Provider 存储后端：minio/s3（自部署 MinIO）、local（本地目录）、留空=腾讯云 COS
+	Provider   string `yaml:"provider"`
 	SecretID   string `yaml:"secretID"`
 	SecretKey  string `yaml:"secretKey"`
 	Bucket     string `yaml:"bucket"`

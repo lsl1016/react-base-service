@@ -19,6 +19,7 @@ var (
 func InitCos() {
 	cfg := conf.RConf.Cos
 	client, err := cos.NewClient(cos.Config{
+		Provider:  cfg.Provider,
 		SecretID:  cfg.SecretID,
 		SecretKey: cfg.SecretKey,
 		Bucket:    cfg.Bucket,
@@ -40,6 +41,7 @@ func EnsureCos() error {
 	cosInitOnce.Do(func() {
 		cfg := conf.RConf.Cos
 		client, err := cos.NewClient(cos.Config{
+			Provider:  cfg.Provider,
 			SecretID:  cfg.SecretID,
 			SecretKey: cfg.SecretKey,
 			Bucket:    cfg.Bucket,
