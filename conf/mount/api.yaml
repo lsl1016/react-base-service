@@ -29,7 +29,9 @@ llm:
       max_tokens: 32768
 
 python_exec:
-  # react-base-sandbox 容器宿主机映射（docker-compose SANDBOX_HOST_PORT=18190）
+  # react-base-sandbox 容器宿主机映射（需叠加 docker-compose.dev.yml 覆盖层，
+  # 端口由 .env 的 SANDBOX_HOST_PORT=18190 固化）。容器全栈形态走 deploy/compose 的
+  # http://sandbox:8190，沙箱不对外发布端口。
   domain: http://127.0.0.1:18190
   httpStat: false
   idleConnTimeout: 300s

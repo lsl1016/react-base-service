@@ -16,6 +16,9 @@ services:
   mysql:
     image: mysql:8.0
     container_name: react-base-mysql
+    # 只在业务内网：沙箱不在本网，故不可达
+    networks:
+      - backend
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: llm
@@ -34,6 +37,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: react-base-redis
+    # 只在业务内网：沙箱不在本网，故不可达
+    networks:
+      - backend
     # 宿主机端口映射供本地开发（go run）直连；容器内服务仍走内网 DNS redis:6379
     ports:
       - "${REDIS_HOST_PORT:-16379}:6379"
@@ -47,9 +53,11 @@ services:
     build:
       context: ./sandbox
     container_name: react-base-sandbox
-    # 宿主机端口映射供本地开发（go run）的 python_exec 调用
-    ports:
-      - "${SANDBOX_HOST_PORT:-18190}:8190"
+    # P0-1 网络硬隔离：只挂 internal 网络（无出网路由），且仅 service 与它同网。
+    # 沙箱因此既不可达外网、也不可达 mysql/redis；不再发布宿主机端口。
+    # 本机 go run 需要直连的场景见 docker-compose.dev.yml（仅开发覆盖层，会放弃隔离）。
+    networks:
+      - sandbox-net
     # 强隔离：非 root + 只读根文件系统 + tmpfs 工作区 + 资源限额
     read_only: true
     tmpfs:
@@ -66,6 +74,8 @@ services:
   searxng:
     image: searxng/searxng:latest
     container_name: react-base-searxng
+    networks:
+      - backend
     # 宿主机端口映射供本地开发（go run）的 web_search 调用；
     # 容器形态的 service 走内网 DNS http://searxng:8080（deploy/compose 配置）
     ports:
@@ -83,6 +93,10 @@ services:
     build:
       context: .
     container_name: react-base-service
+    # 唯一桥接两网的服务：业务内网（mysql/redis/searxng）+ 沙箱隔离网
+    networks:
+      - backend
+      - sandbox-net
     # MySQL 首次初始化存在 healthy 后短暂重启的窗口，连接失败自动重试自愈
     restart: unless-stopped
     depends_on:
@@ -110,6 +124,8 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.3
     container_name: react-base-prometheus
+    networks:
+      - backend
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=15d
@@ -121,6 +137,8 @@ services:
   loki:
     image: grafana/loki:3.4.2
     container_name: react-base-loki
+    networks:
+      - backend
     command: -config.file=/etc/loki/loki.yml
     volumes:
       - ./deploy/monitoring/loki.yml:/etc/loki/loki.yml:ro
@@ -130,6 +148,8 @@ services:
   promtail:
     image: grafana/promtail:3.4.2
     container_name: react-base-promtail
+    networks:
+      - backend
     command: -config.file=/etc/promtail/config.yml
     volumes:
       - ./deploy/monitoring/promtail.yml:/etc/promtail/config.yml:ro
@@ -141,6 +161,8 @@ services:
   grafana:
     image: grafana/grafana:11.1.0
     container_name: react-base-grafana
+    networks:
+      - backend
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
@@ -155,6 +177,14 @@ services:
       - prometheus
       - loki
     restart: unless-stopped
+
+networks:
+  # 业务内网：mysql/redis/searxng/service 与监控组件互通，可出公网
+  backend:
+  # 沙箱隔离网（P0-1）：internal 断掉出网路由；只允许 service 与 sandbox 同网。
+  # 静态扫描（AST 白名单）自此降级为"降噪第一层"，真正的边界由网络层承担。
+  sandbox-net:
+    internal: true
 
 volumes:
   mysql_data:

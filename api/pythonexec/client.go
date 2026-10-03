@@ -16,11 +16,12 @@ import (
 
 const pathExecute = "/api/pythonexec/execute"
 
+// ExecuteRequest 是 python_exec 沙箱执行请求。
+// 沙箱不需要用户凭证，故不含 Cookie 字段（P0-3：不再透传上游 Cookie）。
 type ExecuteRequest struct {
-	LogID   string `json:"logId"`
-	Python  string `json:"python"`
-	Data    string `json:"data"`
-	Cookies string `json:"cookies,omitempty"`
+	LogID  string `json:"logId"`
+	Python string `json:"python"`
+	Data   string `json:"data"`
 }
 
 type ExecuteResult struct {
@@ -48,15 +49,12 @@ func Execute(ctx context.Context, reqBody *ExecuteRequest) (*ExecuteResult, erro
 		return nil, fmt.Errorf("python_exec.domain 未配置")
 	}
 
-	headers := make(map[string]string, 3)
+	headers := make(map[string]string, 2)
 	if logID, _ := ctx.Value("logID").(string); logID != "" {
 		headers["X-Log-Id"] = logID
 	}
 	if requestID, _ := ctx.Value("requestId").(string); requestID != "" {
 		headers["Uber-Trace-Id"] = requestID
-	}
-	if reqBody.Cookies != "" {
-		headers["Cookie"] = reqBody.Cookies
 	}
 
 	opt := base.HttpRequestOptions{

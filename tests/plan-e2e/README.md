@@ -33,7 +33,8 @@
 
 ## 运行方式
 
-需要真实环境：依赖容器（`docker compose up -d mysql redis sandbox`）+ 服务本地直跑
+需要真实环境：依赖容器（`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql redis sandbox`
+——基础 compose 里沙箱不发布宿主机端口，本机直跑需叠加 dev 覆盖层）+ 服务本地直跑
 （`go run main.go`，:8180）+ glm-4.6 模型 + `demo-app` caller。repo 检索工具依赖
 `data/repo-mirrors` 镜像库；mcpgw 网关类工具不在本套件依赖内（未启动仅记日志）。
 

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"react-base-service/api/pythonexec"
-	"react-base-service/components"
 	"react-base-service/components/metrics"
 	"react-base-service/conf"
 	"react-base-service/golib/zlog"
@@ -144,11 +143,11 @@ func ExecutePythonExec(rc RunContext, toolUseID string, input json.RawMessage) (
 	if strings.TrimSpace(logID) == "" {
 		logID = rc.RunID
 	}
+	// P0-3：沙箱不需要用户 Cookie，一律不透传——减少沙箱侧凭证暴露面。
 	resp, err := pythonexec.Execute(rc.RunCtx, &pythonexec.ExecuteRequest{
-		LogID:   logID,
-		Python:  python,
-		Data:    data,
-		Cookies: components.BuildCookieHeader(core.RequestCookies(rc.GinCtx)),
+		LogID:  logID,
+		Python: python,
+		Data:   data,
 	})
 	if err != nil {
 		zlog.Errorf(rc.GinCtx, "[python_exec] 调用沙箱失败: runId=%s, toolUseId=%s, logId=%s, err=%v", rc.RunID, toolUseID, logID, err)

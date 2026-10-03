@@ -78,17 +78,20 @@ open http://127.0.0.1:8080/react-base-service/react/playground
 
 ```bash
 # 依赖容器（一次性）：MySQL / Redis / python 沙箱
-docker compose up -d mysql redis sandbox
+# 注意：基础 compose 里 python 沙箱只挂 internal 隔离网络、不发布宿主机端口（P0-1 网络硬隔离），
+# 本机 go run 需要直连，故叠加 docker-compose.dev.yml 覆盖层把 18190 端口放出来。
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql redis sandbox
 
 # 本地起服务（前台，监听 :8180；改代码后重跑即生效）
 go run main.go
 
-# 或直接用脚本：./dev.sh（等价上面两条）| ./dev.sh deps | ./dev.sh stop
+# 或直接用脚本：./dev.sh（已默认带上 dev 覆盖层）| ./dev.sh deps | ./dev.sh stop
 ```
 
 本地开发约束：
 
 - **依赖只在容器中跑**：MySQL=`127.0.0.1:3317`、Redis=`127.0.0.1:16379`、Python 沙箱=`127.0.0.1:18190`，宿主机端口由仓库根 `.env` 固化
+- **沙箱端口来自 dev 覆盖层**：`18190` 只在 `docker-compose.dev.yml` 生效；发布形态（`docker compose up -d --build`，不含覆盖层）沙箱不对外发布端口、且不可出网。**不要把覆盖层带到发布环境**
 - **本地服务端口 8180**（`conf/mount/config.yaml` 的 `server.address`），与容器版 service（:8080）可并行
 - **不要用 `docker compose up -d --build service` 验证代码改动**——那是发布形态；日常开发一律本地 `go run`
 - DB 注册的 MCP 连接（如 mcpgw 网关）本地与容器共用同一注册表，本地启动时自动拉起

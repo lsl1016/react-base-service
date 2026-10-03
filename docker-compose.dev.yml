@@ -1,0 +1,22 @@
+# 本地开发覆盖层 —— 仅本机 `go run` 直连用，**发布/多租户形态不要加载**。
+#
+# 背景：docker-compose.yml 里 sandbox 只挂 internal 的 sandbox-net 且不发布宿主机端口
+# （P0-1 网络硬隔离）。本机 go run 的服务进程在宿主机上，走不进 internal 网络，因此
+# 本地开发必须叠加本文件：它把 sandbox 重新接回可出网的 backend 并发布 18190。
+#
+# 代价（务必知悉）：加载本文件后沙箱**失去出网隔离**，R1 绕过重新具备打内网/出网能力。
+# 该隔离只在容器全栈形态（docker compose up -d --build，见 deploy.yml）下成立。
+# 因此：
+#   - 本地只跑可信的、自己写的分析代码；
+#   - 不要用本覆盖层形态对外提供服务或多租户试用。
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql redis sandbox searxng
+#   （./dev.sh 已默认带上本覆盖层）
+services:
+  sandbox:
+    networks:
+      - backend
+      - sandbox-net
+    ports:
+      - "${SANDBOX_HOST_PORT:-18190}:8190"

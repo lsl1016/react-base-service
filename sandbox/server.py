@@ -2,7 +2,8 @@
 
 实现 react-base-service 约定的沙箱协议：
     POST /api/pythonexec/execute
-    请求: {"logId": "...", "python": "<code>", "data": "<stdin json>", "cookies": "..."}
+    请求: {"logId": "...", "python": "<code>", "data": "<stdin json>"}
+          （历史字段 "cookies" 已废弃，服务端显式丢弃，见 do_POST）
     响应: {"code": 0, "message": "ok", "data": {"exitCode": 0, "stdout": "...", "stderr": "...", "timedOut": false}}
 
 安全模型（与基座 meta tool 对模型声明的规则一致）：
@@ -19,6 +20,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -148,8 +150,21 @@ def _kill_proc_tree(proc: subprocess.Popen) -> None:
 
 
 def run_isolated(python_code: str, data: str, log_id: str) -> dict:
-    """在受限子进程中执行代码，返回协议 data 结构。"""
+    """在受限子进程中执行代码，返回协议 data 结构。
+
+    工作目录是一次性目录：无论正常返回、启动失败还是超时，退出前必定整目录清理。
+    /tmp 是 128m tmpfs，不清理会随调用次数累积直到写满，导致沙箱整体不可用。
+    """
     workdir = tempfile.mkdtemp(prefix="sandbox-")
+    try:
+        return _run_in_workdir(python_code, data, log_id, workdir)
+    finally:
+        # ignore_errors：超时路径下若有子进程仍在写，删不干净不应影响结果返回
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _run_in_workdir(python_code: str, data: str, log_id: str, workdir: str) -> dict:
+    """run_isolated 的实际执行体；workdir 由调用方创建并负责清理。"""
     handle = tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", suffix=".py",
         prefix="main-", dir=workdir, delete=False,
@@ -254,6 +269,10 @@ class SandboxHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_failure(f"bad request body: {exc}")
             return
+
+        # P0-3：协议里的 cookies 字段已废弃，沙箱一律不使用——凭证不进入沙箱。
+        # 显式丢弃而非默默忽略，避免未来实现者"顺手"把它接进执行环境或外发请求。
+        req.pop("cookies", None)
 
         log_id = sanitize_log_id(req.get("logId"))
         python_code = req.get("python")
