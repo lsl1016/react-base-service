@@ -670,6 +670,7 @@ type LLMConfig struct {
 	ModelVersionLimits map[string]ModelVersionLimit `yaml:"model_version_limits"`
 	React              ReactRuntimeConfig           `yaml:"react"`
 	ModelWhitelist     []string                     `yaml:"model_whitelist"`
+	Workflow           WorkflowConfig               `yaml:"workflow"`
 }
 
 // ModelCatalog 模型目录（每类模型下可包含多个版本）
@@ -681,6 +682,43 @@ type ModelCatalog struct {
 	// SupportsThinking 声明该模型是否支持思考模式（Anthropic 系 thinking / GPT 系
 	// reasoning）。nil=未配置，回退按模型名启发式（claude.go 旧逻辑）；显式配置优先生效。
 	SupportsThinking *bool `yaml:"supports_thinking"`
+}
+
+// WorkflowConfig 控制定时触发工作流（cron 调度发起 headless ReAct run，见 docs/定时触发工作流实现方案.md）。
+// enabled=false 时不启动调度器、不注册管理接口（与历史版本行为一致）。
+type WorkflowConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxParallelPerCaller 是 caller 级并发闸门（该 caller 在途 run 数达上限时本次触发记 skipped）。
+	MaxParallelPerCaller int `yaml:"max_parallel_per_caller"`
+	// DefaultTimeoutSec 是 workflow 未显式配置 timeout_sec 时的超时兜底。
+	DefaultTimeoutSec int `yaml:"default_timeout_sec"`
+	// DefaultMaxSteps 是 workflow 未显式配置 max_steps 时的步数兜底。
+	DefaultMaxSteps int `yaml:"default_max_steps"`
+	// NotifyOnlyOnRisk 控制 completed 且无风险时是否免打扰（failed/timeout/high 恒通知）。
+	NotifyOnlyOnRisk bool `yaml:"notify_only_on_risk"`
+	// ReplayBaseURL 是回放页对外访问基址（通知拼接回放链接用；空=通知只给 sessionId）。
+	ReplayBaseURL string `yaml:"replay_base_url"`
+}
+
+const (
+	defaultWorkflowMaxParallelPerCaller = 2
+	defaultWorkflowTimeoutSec           = 1800
+	defaultWorkflowMaxSteps             = 20
+)
+
+// GetWorkflowConfig 返回合并内置默认值后的 workflow 配置。
+func GetWorkflowConfig() WorkflowConfig {
+	cfg := CustomConf.LLM.Workflow
+	if cfg.MaxParallelPerCaller <= 0 {
+		cfg.MaxParallelPerCaller = defaultWorkflowMaxParallelPerCaller
+	}
+	if cfg.DefaultTimeoutSec <= 0 {
+		cfg.DefaultTimeoutSec = defaultWorkflowTimeoutSec
+	}
+	if cfg.DefaultMaxSteps <= 0 {
+		cfg.DefaultMaxSteps = defaultWorkflowMaxSteps
+	}
+	return cfg
 }
 
 // TCustom 对应 custom.yaml（LLM 业务配置）

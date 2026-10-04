@@ -18,6 +18,9 @@ const (
 	// ReactSessionTypeReflection 是记忆自动整理（reflection）专用会话类型：
 	// 工具集仅限 memory 三工具，历史列表默认不展示（显式传 type=reflection 可查）。
 	ReactSessionTypeReflection = "reflection"
+	// ReactSessionTypeScheduled 是定时触发工作流的无人值守会话类型：
+	// 无前端连接，禁用 client 工具与 ask_question（等待人工输入即挂死）。
+	ReactSessionTypeScheduled = "scheduled"
 
 	ReactSessionStateActive   = "active"
 	ReactSessionStateArchived = "archived"

@@ -193,6 +193,20 @@ async_task:
   # 异步任务状态同步框架总开关；无内置 Provider 时开启后也为空转
   enabled: false
 
+# 定时触发工作流：按 cron 计划在服务端无人值守发起完整 ReAct run（见 docs/定时触发工作流实现方案.md）。
+# enabled=false 时不启动调度器、不注册管理接口（需先执行 sql/init.sql 中两张 workflow 表建表）。
+workflow:
+  enabled: false
+  # caller 级并发闸门：该 caller 在途 run 数达上限时本次触发记 skipped
+  max_parallel_per_caller: 2
+  # workflow 未显式配置时的超时/步数兜底
+  default_timeout_sec: 1800
+  default_max_steps: 20
+  # completed 且无风险时是否免打扰（failed/timeout/high 风险恒通知）
+  notify_only_on_risk: true
+  # 回放页对外访问基址（通知拼接回放链接用；空=通知只给 sessionId）
+  # replay_base_url: 'https://your-host'
+
 # MCP 服务端网关：把 tblLlmTool 中启用的 http 工具按 caller 作用域对外暴露成 MCP 协议
 #（端点 /react-base-service/mcp，独立进程可 go run ./cmd/mcp-gateway）。
 # 应用凭证在 playground「MCP 应用」页创建（Bearer <app_key>:<app_secret>）；

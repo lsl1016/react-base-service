@@ -48,3 +48,17 @@ func subAgentExecutionProfile() ExecutionProfile {
 	profile.InjectAsyncTaskReminder = false
 	return profile
 }
+
+// scheduledExecutionProfile 是定时触发工作流无人值守 run 的执行档案。
+// 无前端连接：禁用 client 工具与 ask_question（等待人工回填即挂死，是无人值守 run 的
+// 首要失控面）；不注入会话级异步任务提醒（新会话无任务账本，且无人值守不应产出待接续任务）。
+// 其余能力沿用 caller + user 白名单——巡检类 caller 建议只配只读工具。
+func scheduledExecutionProfile() ExecutionProfile {
+	profile := outerExecutionProfile()
+	profile.AllowClientTools = false
+	profile.AllowUserQuestion = false
+	profile.AllowAsyncTaskTools = false
+	profile.InjectAsyncTaskReminder = false
+	profile.RestoreOuterHistory = false
+	return profile
+}

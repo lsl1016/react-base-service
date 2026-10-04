@@ -18,6 +18,7 @@ import (
 	"react-base-service/controllers/http/setting"
 	"react-base-service/controllers/http/systemprompt"
 	"react-base-service/controllers/http/tool"
+	"react-base-service/controllers/http/workflow"
 	"react-base-service/helpers"
 	"react-base-service/middleware"
 	"react-base-service/service/mcpgateway"
@@ -135,6 +136,20 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/memory/rollback", react.RollbackMemory)
 		// python_exec 产物下载：走 IPS 登录态，图片/文件均需鉴权后经本接口读取（COS 私有桶不外暴露）。
 		reactGroup.GET("/artifact/:artifactId", react.GetArtifact)
+
+		// 定时触发工作流管理接口（llm.workflow.enabled 控制；关闭时不启动调度器也不挂接口，
+		// 与历史版本行为一致，见 docs/定时触发工作流实现方案.md §5.4）。
+		if conf.CustomConf.LLM.Workflow.Enabled {
+			workflowGroup := reactGroup.Group("/workflow")
+			{
+				workflowGroup.POST("", workflow.CreateWorkflow)
+				workflowGroup.GET("/list", workflow.ListWorkflows)
+				workflowGroup.PATCH("/:key", workflow.UpdateWorkflow)
+				workflowGroup.DELETE("/:key", workflow.DeleteWorkflow)
+				workflowGroup.POST("/:key/dispatch", workflow.DispatchWorkflow)
+				workflowGroup.GET("/:key/runs", workflow.ListWorkflowRuns)
+			}
+		}
 	}
 
 	// ReAct 附件上传：fileId 供 run payload 的 attachments 引用。

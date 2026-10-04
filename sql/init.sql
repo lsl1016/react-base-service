@@ -800,3 +800,53 @@ CREATE TABLE IF NOT EXISTS `tblLlmMcpCallLog` (
     INDEX `idx_tool_created` (`tool_name`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP网关调用审计表';
 
+
+-- 定时触发工作流定义表（跑什么/何时跑/怎么通知；见 docs/定时触发工作流实现方案.md）
+CREATE TABLE IF NOT EXISTS `tblLlmWorkflow` (
+    `id`                 BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `workflow_key`       VARCHAR(64)  NOT NULL COMMENT '业务标识(如 daily-bd-cron-inspection)',
+    `name`               VARCHAR(128) NOT NULL COMMENT '名称(通知/会话标题展示)',
+    `description`        TEXT         NULL COMMENT '描述',
+    `caller_key`         VARCHAR(64)  NOT NULL COMMENT '触发的 run 用的 caller(解析提示词/工具/Skill/ApiKey)',
+    `route_values`       VARCHAR(256) NOT NULL DEFAULT '[]' COMMENT '路由值 JSON 数组',
+    `user_name`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '以谁的身份跑(工具白名单/积分归属/审计)；空则匿名',
+    `prompt`             MEDIUMTEXT   NOT NULL COMMENT '任务提示词，支持 {{date}}/{{datetime}}/{{workflow}} 占位符',
+    `trigger_type`       VARCHAR(16)  NOT NULL DEFAULT 'cron' COMMENT '触发类型: cron | manual(webhook/event 三期预留)',
+    `cron_expr`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '标准 5 段 cron 表达式',
+    `timezone`           VARCHAR(64)  NOT NULL DEFAULT 'Asia/Shanghai' COMMENT 'IANA 时区',
+    `model_key`          VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '模型 key(空=caller 默认模型)',
+    `model_version`      VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '模型版本(空=默认版本)',
+    `max_steps`          INT          NOT NULL DEFAULT 0 COMMENT '最大推理轮次(0=配置默认)',
+    `timeout_sec`        INT          NOT NULL DEFAULT 0 COMMENT '运行超时秒(0=配置默认)',
+    `notify_webhook_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '完成通知 webhook(企业微信/飞书通用格式)',
+    `risk_patterns`      TEXT         NULL COMMENT '判级规则：每行一个正则，命中即 risk=high',
+    `enabled`            TINYINT      NOT NULL DEFAULT 1 COMMENT '状态: 0=停用 1=启用',
+    `next_fire_at`       DATETIME     NULL COMMENT '下次着火点展示缓存(manager 注册时回写,非调度依据)',
+    `last_fire_at`       DATETIME     NULL COMMENT '最近着火时刻',
+    `deleted_at`         BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
+    `created_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_workflow_key` (`workflow_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时触发工作流定义表';
+
+-- 定时触发工作流运行历史表(每次触发的审计与回放入口；
+-- uk_workflow_fire 使「插入 run」本身即多实例防重锁，手动触发 planned_fire_at=NULL 天然放行)
+CREATE TABLE IF NOT EXISTS `tblLlmWorkflowRun` (
+    `id`              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `workflow_id`     BIGINT UNSIGNED NOT NULL COMMENT 'tblLlmWorkflow.id',
+    `trigger_type`    VARCHAR(16)  NOT NULL COMMENT '触发类型: cron | manual',
+    `trigger_note`    VARCHAR(512) NOT NULL DEFAULT '' COMMENT '手动触发备注/未来的事件摘要',
+    `planned_fire_at` DATETIME     NULL COMMENT 'cron 计划着火时刻(防重键)；手动触发为 NULL',
+    `status`          VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/completed/failed/cancelled/timeout/skipped',
+    `session_id`      VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '关联 react 会话(回放页入口)',
+    `run_id`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '关联 react run',
+    `summary`         MEDIUMTEXT   NULL COMMENT 'run 最终 assistant 消息(结论快照；全文在会话消息表)',
+    `risk_level`      VARCHAR(8)   NOT NULL DEFAULT 'none' COMMENT '风险级别: none | high',
+    `error_msg`       TEXT         NULL COMMENT '失败/超时/跳过原因',
+    `started_at`      DATETIME     NULL COMMENT '开始执行时刻',
+    `finished_at`     DATETIME     NULL COMMENT '到达终态时刻',
+    `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    KEY `idx_workflow_run` (`workflow_id`, `id`),
+    UNIQUE KEY `uk_workflow_fire` (`workflow_id`, `planned_fire_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时触发工作流运行历史表';

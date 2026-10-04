@@ -113,11 +113,11 @@ func generateMessageID() string {
 	return "msg_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 }
 
-// normalizeSessionType 将会话类型收敛到受支持集合；reflection 为内部整理专用类型，
-// 外部传入时不做特殊拒绝（其执行档案仅放行记忆工具，无滥用面）。
+// normalizeSessionType 将会话类型收敛到受支持集合；reflection/scheduled 为内部触发专用类型，
+// 外部传入时不做特殊拒绝（reflection 执行档案仅放行记忆工具；scheduled 禁用交互类工具，无滥用面）。
 func normalizeSessionType(t string) string {
 	switch strings.TrimSpace(t) {
-	case model.ReactSessionTypeChat, model.ReactSessionTypeReflection:
+	case model.ReactSessionTypeChat, model.ReactSessionTypeReflection, model.ReactSessionTypeScheduled:
 		return strings.TrimSpace(t)
 	default:
 		return defaultReactSessionType
@@ -763,13 +763,18 @@ func validateReactSessionContext(session *model.ReactSession, userName, callerKe
 
 // createReactSession 在当前事务中创建新的 ReAct 会话，并返回最终落库的 sessionID。
 func createReactSession(ctx *gin.Context, tx *gorm.DB, sessionID string, req *runtimeRequest) (string, error) {
+	// SessionTitle 供后台触发方（定时工作流）显式命名会话；普通入口仍按提示词截取。
+	title := strings.TrimSpace(req.payload.SessionTitle)
+	if title == "" {
+		title = buildSessionTitle(req.payload.UserPrompt)
+	}
 	session := &model.ReactSession{
 		SessionID:   sessionID,
 		UserName:    req.userName,
 		CallerKey:   req.payload.CallerKey,
 		RouteValues: req.routeValuesJSON,
 		SessionType: req.payload.Type,
-		Title:       buildSessionTitle(req.payload.UserPrompt),
+		Title:       title,
 		State:       model.ReactSessionStateActive,
 	}
 	if err := model.CreateReactSessionWithDB(ctx, tx, session); err != nil {

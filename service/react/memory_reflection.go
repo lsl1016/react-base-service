@@ -45,6 +45,9 @@ func executionProfileForSessionType(sessionType string) ExecutionProfile {
 	if sessionType == model.ReactSessionTypeReflection {
 		return reflectionExecutionProfile()
 	}
+	if sessionType == model.ReactSessionTypeScheduled {
+		return scheduledExecutionProfile()
+	}
 	return outerExecutionProfile()
 }
 
@@ -198,6 +201,18 @@ func headlessEventWriter(ctx *gin.Context) EventWriter {
 		}
 		return nil
 	}
+}
+
+// NewHeadlessGinContext 是 newHeadlessGinContext 的导出别名：供同进程后台触发方
+// （定时触发工作流）复用无前端请求的 gin.Context 构造，与 reflection 保持同一身份注入口径。
+func NewHeadlessGinContext(userName string) *gin.Context {
+	return newHeadlessGinContext(userName)
+}
+
+// HeadlessEventWriter 是 headlessEventWriter 的导出别名：供后台触发方复用"丢弃实时事件、
+// 错误落日志"的事件写入器（事件流持久化不受影响，回放页可还原）。
+func HeadlessEventWriter(ctx *gin.Context) EventWriter {
+	return headlessEventWriter(ctx)
 }
 
 // buildMemoryReflectionPrompt 构造五阶段整理提示词：压缩摘要 + 被压缩原文转录（截尾）+ 整理纪律。

@@ -155,4 +155,24 @@ var (
 		Name: "react_graph_memory_episode_total",
 		Help: "Total graph memory episodes written by status.",
 	}, []string{"status"})
+
+	// WorkflowTriggerTotal 定时工作流触发计数（workflow × status：
+	// fired=实际派发 / skipped=并发闸门跳过 / completed|failed|timeout|cancelled=终态口径）。
+	WorkflowTriggerTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "react_workflow_trigger_total",
+		Help: "Total scheduled workflow triggers by workflow and status.",
+	}, []string{"workflow", "status"})
+
+	// WorkflowRunDuration workflow run 端到端耗时分布（workflow 维度，终态时打点）。
+	WorkflowRunDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "react_workflow_run_duration_seconds",
+		Help:    "Scheduled workflow run duration in seconds.",
+		Buckets: []float64{5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600},
+	}, []string{"workflow"})
+
+	// WorkflowRunning 当前在跑的 workflow run 数（gauge）。
+	WorkflowRunning = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "react_workflow_running",
+		Help: "Current in-flight scheduled workflow runs.",
+	})
 )

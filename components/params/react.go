@@ -64,6 +64,9 @@ type ReactRunPayload struct {
 	// PromotePendingInputID 是 Steering S2 自动续跑时待晋升的排队输入账本 ID。
 	// 仅服务端 run 循环内部传递，不参与 WS/API 序列化，也不写入账本 payload 快照。
 	PromotePendingInputID uint `json:"-"`
+	// SessionTitle 显式指定新建会话的标题（定时触发工作流用「{workflow 名} {触发时间}」）；
+	// 空值回退按 UserPrompt 截取的默认标题。
+	SessionTitle string `json:"sessionTitle,omitempty"`
 }
 
 // SteerDelivery 取值（ReactRunPayload.SteerDelivery）。
