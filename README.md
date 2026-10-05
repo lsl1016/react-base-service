@@ -1,127 +1,382 @@
 <p align="center">
-  <img src="docs/images/logo.svg" alt="react-base-service logo" width="720">
+  <img src="docs/images/logo.svg" alt="react-base-service" width="760">
 </p>
 
-<h3 align="center">可直接调用的 ReAct / Plan 双范式 Agent 基座服务</h3>
+<p align="center">
+  <strong>一个面向长任务、工具调用、多 Agent 与无人值守执行的 Go Agent Runtime。</strong>
+</p>
 
 <p align="center">
   <a href="https://github.com/lsl1016/react-base-service/actions/workflows/ci.yml"><img src="https://github.com/lsl1016/react-base-service/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white" alt="Go">
-  <img src="https://img.shields.io/badge/Web-Gin-337FF3" alt="Gin">
+  <img src="https://img.shields.io/badge/Gin-1.10-008ECF" alt="Gin">
+  <img src="https://img.shields.io/badge/MCP-go--sdk-5E5CE6" alt="MCP">
   <img src="https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white" alt="MySQL">
   <img src="https://img.shields.io/badge/Redis-7-D82C20?logo=redis&logoColor=white" alt="Redis">
-  <img src="https://img.shields.io/badge/MCP-go--sdk-5E5CE6" alt="MCP">
-  <img src="https://img.shields.io/badge/Protocol-WebSocket-010101?logo=websocket" alt="WebSocket">
+  <img src="https://img.shields.io/badge/Runtime-ReAct%20%2B%20Plan-4F46E5" alt="Runtime">
 </p>
 
 ---
 
-**react-base-service** 是一个开箱即用的通用 Agent 基座服务：内置 ReAct 与 Plan 两种执行范式，以及一个 Agent 服务所需的完整周边能力——会话管理、历史回放、异步任务、工具产物、轮次反馈、附件、长期记忆、多 Agent 委派、HITL 人机协同。注册好模型、工具与提示词，即可通过一个 WebSocket 入口获得完整的智能体运行时。
+**react-base-service** 是一个可独立部署的通用 Agent 基座服务。它不只提供“模型 + Tool Call”循环，而是把一个长期运行 Agent 所需的运行时能力完整落到服务端：**持久化 Session / Run、ReAct、Plan、多 Agent 委派、Steering、Pending Queue、MCP、长期记忆、代码工作区、Python 沙箱、HITL、定时工作流、裁判外环、Artifact、历史回放与可观测性**。
 
-## ✨ 核心特性
+项目的目标不是实现某个业务机器人，而是提供一个稳定的 **Agent Runtime / Control Plane**：业务侧只需要注册 Caller、模型、工具、Skill、Agent 和系统提示词，即可通过 WebSocket、HTTP 或无人值守 Workflow 发起完整 Agent 执行。
 
-- 🔁 **ReAct 运行时** — WebSocket 单入口 `/react-base-service/react/ws`：模型流式输出 + 工具循环 + 上下文自动压缩 + 模型互备
-- 📋 **Plan 模式** — 结构化 Planner 生成线性计划（全量持久化），逐步创建隔离 Scoped Run 执行，USER_INPUT / USER_ACTION 步骤持久化等待，支持 resume / retry / skip / cancel
-- 🤝 **多 Agent 委派** — Agent 注册表（支持 Markdown 导入），`delegate_agent` 委派子 ReactRun：父子历史与 token 预算隔离、事件按 agentPath 归流、支持同轮并行委派
-- 🧰 **两段式工具加载** — 模型只看工具摘要索引，`get_tool` 按需激活完整定义、`execute_tool` 校验执行；Business Tool 支持 http / client / mcp 三类，MCP 客户端支持静态声明 + 动态登记
-- 🧠 **双层记忆** — 跨会话长期记忆（owner 作用域、分层注入、修订审计）+ Graphiti 时序事实图谱
-- 👤 **HITL 人机协同** — 浏览器执行 Client Tool、ask_question 补充信息、危险工具二次确认
-- 🧪 **沙箱与产物** — python_exec 沙箱执行 + 对象存储产物下载（自部署 MinIO / 腾讯 COS / 本地目录三种后端），csv / md / txt 附件上传与引用
-- 📦 **Bundle 插件包** — manifest + agents + skills + .mcp.json 打包安装，快照式卸载回滚
+> 当前 README 按 2026-10-05 默认分支实现更新。
+
+## ✨ 当前能力
+
+| 能力 | 当前实现 |
+|---|---|
+| **ReAct Runtime** | 流式模型轮、工具循环、模型重试与互备、上下文自动压缩、resultRef 大结果分页、soft landing；不以 Tool Call 次数作为硬停止条件 |
+| **Plan Runtime** | Planner → 持久化 Plan/Step → Scoped ReactRun；支持 USER_INPUT / USER_ACTION 等待，以及 resume / retry / skip / cancel |
+| **Multi-Agent** | `delegate_agent`、`wait_agent`、`send_message`、后台委派、子 Run 独立上下文/预算/工具白名单、continue_run_id 续跑 |
+| **Steering / Queue** | Agent 执行中支持 guided steering；忙碌时输入进入持久化 Pending Queue，也可立即注入当前 Run |
+| **Tool Runtime** | 两段式工具加载：摘要索引 → `get_tool` → `execute_tool`；HTTP / Client / MCP 三类 Business Tool 统一执行 |
+| **MCP** | MCP Client + MCP Server Gateway；支持 stdio repo MCP、Streamable HTTP、官方 Go SDK 适配与工具注册同步 |
+| **Memory** | 长期记忆分层注入、revision 审计、自动 extractor / resolver；可选 Graphiti 时序事实图谱 |
+| **Code Workspace** | `load_runtime_code` 将线上/指定版本代码映射为只读仓库检索工具；工作区按 **(service, commit)** 全局共享并引用计数复用 |
+| **HITL** | `ask_question`、危险工具确认、浏览器 Client Tool；按 toolUseId 路由响应 |
+| **Python / Artifact** | Python 3.11 沙箱、pandas / numpy / matplotlib、附件读取、产物上传、MinIO/S3/COS/local 存储 |
+| **Workflow** | robfig/cron 定时触发无人值守 ReAct Run，支持手动 dispatch、并发闸门、超时、运行历史与 webhook 通知 |
+| **Judge Loop** | Workflow 结束后语义判断目标是否达成；未达成可自动追问继续同一 Session，支持风险判级与失败熔断 |
+| **Web 能力** | 内置 `web_search`（SearXNG）与 `web_fetch` |
+| **SDK / UI** | TypeScript + SolidJS SDK，多 Session 独立 WebSocket / 状态分片，IndexedDB Event Ledger；内置 Playground / Replay / Workflow Admin / MCP Admin |
+| **Observability** | `/healthz`、`/readyz`、Prometheus metrics、Loki、Grafana、滚动日志 |
 
 ## 🏗️ 系统架构
 
 <p align="center">
-  <img src="docs/images/architecture.svg" alt="系统架构图" width="920">
+  <img src="docs/images/architecture.svg" alt="react-base-service 系统架构" width="1000">
 </p>
 
-五层结构：客户端（Web SDK / playground / 业务 Caller）→ router + 免鉴权中间件 → 控制器 → service 层（ReAct 运行时核心 + 注册类资源管理）→ 基础设施（LLM 网关 / MySQL / Redis / COS / Python 沙箱 / Graphiti）。
+当前架构可以分为五个部分：
 
-- 详细分层与设计约束见 [系统架构](docs/architecture.md)
-- Runtime 模块化见 [runtime-modularization](docs/runtime-modularization.md)
+1. **Access Channels**：Web SDK、Playground、业务 Caller、MCP Client、Headless Workflow；
+2. **Control Plane**：Caller / Tool / Skill / Agent / Prompt / Model / MCP / Bundle / Runtime Setting / Workflow 管理；
+3. **Execution Plane**：ReAct、Plan、多 Agent、Steering、Queue、HITL、Context/Memory、Judge；
+4. **Capability Services**：MCP、Workspace、Memory、Tool/Artifact、Web Search/Fetch；
+5. **Infrastructure**：LLM Provider、MySQL、Redis、MinIO/S3/COS、Python Sandbox、Prometheus/Loki/Grafana。
 
-## 🔄 ReAct 运行时
+更细的运行时链路、状态机和模块职责见 [docs/architecture.md](docs/architecture.md)。
 
-<p align="center">
-  <img src="docs/images/react-loop.svg" alt="ReAct 运行时循环图" width="920">
-</p>
+## 🔁 ReAct Runtime
 
-一次 run 的完整生命周期：装配（系统提示词前缀拼接 + 工具摘要索引 + Skill 索引 + 长期记忆分层注入）→ 单事务建 session / run → 进入主循环（模型流式轮 → 解析 tool call → 串行执行 → 结果回填）→ 无工具调用时 finish 收敛。
+一次普通 Run 的核心链路：
 
-**两段式工具加载**是运行时的核心设计：
+```text
+WebSocket / Headless Trigger
+        │
+        ▼
+prepareRuntimeRequest
+  ├─ caller / user / model 解析
+  ├─ system prompt
+  ├─ Tool / Skill / Agent 索引快照
+  ├─ Memory / Graph Memory 注入
+  └─ ExecutionProfile 能力装配
+        │
+        ▼
+createReactRunContext
+  ├─ Session 行锁
+  ├─ Run 持久化
+  ├─ History 恢复
+  └─ Pending Input claim
+        │
+        ▼
+executeReactLoop
+  ├─ Runtime Command / Steering
+  ├─ Context compact / microcompact
+  ├─ Model stream + retry / failover
+  ├─ Tool dispatch
+  ├─ HITL / Client Tool
+  ├─ Multi-Agent delegation
+  └─ Finish / timeout / cancel / soft landing
+```
 
-1. 模型只看到工具**摘要索引**（system 前缀），不含 parameters；
-2. `get_tool(toolId|name)` 激活工具并返回完整 parameters / outputSchema（定义指纹落 run）；
-3. `execute_tool(toolId|name|callName, input)` 输入 JSON Schema 校验 + 指纹复核 + 可见性复核后执行；
-4. 定义变更可自愈：execute_tool 未命中时现查最新工具，定义一致则自动激活。
+这个 Runtime 的一个关键原则是：**Tool Call 数量本身不是“失控”的充分条件**。真正的终止边界来自用户取消、权限拒绝、Context/Token Budget、Wall Clock Timeout、模型错误重试预算、Compact 失败、明确的 Runtime 控制以及模型自然结束。
 
-系统提示词装配顺序（对外契约，保持稳定）：`systemPrompt（注册表解析） + 工具索引摘要 + Skill 索引摘要`。
+### 两段式 Business Tool
+
+业务工具不会把全部 JSON Schema 一次性塞进模型上下文，而是：
+
+```text
+Tool Summary Index
+      │
+      ├─ get_tool(toolId | name)
+      │      └─ 加载完整 parameters / outputSchema
+      │
+      └─ execute_tool(...)
+             ├─ visibility check
+             ├─ fingerprint check
+             ├─ JSON Schema validation
+             ├─ permission / confirmation
+             └─ http / mcp / client execution
+```
+
+这样可以在工具数量较多时显著降低固定上下文开销，同时保留运行时可见性、版本指纹和权限校验。
+
+## 📋 Plan Runtime
+
+项目同时支持独立的 `executionMode=plan`：
+
+```text
+User Request
+   │
+   ▼
+Planner
+   │
+   ▼
+Plan Version / Steps  ───────────────┐
+   │                                 │ durable
+   ▼                                 │
+Scoped ReactRun per Step             │
+   │                                 │
+   ├─ automatic step                 │
+   ├─ USER_INPUT  ── wait ── resume  │
+   └─ USER_ACTION ── wait ── resume  │
+   │                                 │
+   ▼                                 │
+Finalizer ◄───────────────────────────┘
+```
+
+Plan 数据完整持久化，因此等待用户期间不依赖原 goroutine 存活。Caller 还可以通过 `allow_plan` 三态开关控制 Plan 能力：
+
+- `NULL`：跟随全局 `llm.react.allow_plan`；
+- `0`：该 Caller 强制关闭；
+- `1`：该 Caller 强制开启。
+
+ReAct 中的 `create_plan` 计划确认卡片，与独立 Plan Runtime 是两套不同能力。
+
+## 🤝 Multi-Agent 与运行中控制
+
+子 Agent 本质上不是一次函数调用，而是**独立 ReactRun**：
+
+- 独立历史与上下文；
+- 独立 Tool / Skill 白名单；
+- 独立 token budget 与 max steps；
+- 使用 `agentPath` 标识执行路径；
+- 可同步委派，也可 `background=true` 后台执行；
+- `wait_agent` 等待多个子 Run；
+- `send_message` 可向正在运行的子 Agent 补充引导；
+- 已终态的子 Run 可通过 `continue_run_id` 继续。
+
+外层 Run 执行期间，用户新输入也不必粗暴中断当前 Agent：
+
+- **Steering**：把新指令注入当前活跃 Turn；
+- **Pending Queue**：忙时先持久化排队，当前 Run 完成后自动晋升；
+- **立即发送**：队列项也可以主动注入当前执行。
+
+## ⏰ Scheduled Workflow
+
+`service/workflow` 提供服务端无人值守执行：
+
+```text
+robfig/cron
+    │
+    ▼
+Workflow Definition
+    │
+    ├─ unique fire key / caller concurrency gate
+    ▼
+Headless ReAct Run
+    │
+    ▼
+Judge Outer Loop
+    │
+    ├─ goal achieved?
+    ├─ semantic risk
+    └─ optional follow-up in same session
+    │
+    ▼
+Markdown Artifact / Replay / Webhook
+    │
+    └─ consecutive failure circuit breaker
+```
+
+已实现：
+
+- cron 调度与时区；
+- 手动 dispatch；
+- caller 级并发闸门；
+- wall-clock timeout；
+- scheduled ExecutionProfile（禁止需要前端交互的能力）；
+- 运行历史；
+- 语义裁判；
+- 未达成自动追问；
+- risk pattern + semantic risk 双判级；
+- Markdown 报告产物化；
+- 连续失败自动停用；
+- webhook 通知；
+- Workflow Admin 页面。
+
+管理页：
+
+```text
+/react-base-service/react/workflow/admin
+```
+
+## 🧠 Memory
+
+长期记忆支持两层数据来源：
+
+### Durable Memory
+
+- owner scope；
+- resident / index / detached 分层；
+- Run 启动自动注入；
+- `memory_list / memory_read / memory_write`；
+- Revision 审计与回滚；
+- compact 后可触发 reflection 或 V2 extractor；
+- extractor：候选抽取 → 相似记忆检索 → 冲突消解 → 统一写核心。
+
+### Graph Memory
+
+可选接入 Graphiti：
+
+- Session Run 启动按当前输入检索事实；
+- `graph_memory_search`；
+- `graph_memory_write`；
+- 用于时序事实和关系型长期知识，而不是替代普通 durable memory。
+
+## 🧑‍💻 Code Workspace
+
+`load_runtime_code(service, env)` 用于让 Agent 按指定服务版本加载代码检索能力。
+
+最新实现的共享粒度已经从“每 Run 一个 worktree”改为：
+
+```text
+(service, commit)
+      │
+      ├─ bare mirror
+      ├─ shared git worktree
+      └─ shared repo-mcp process
+             │
+             ├─ Run A / Caller A
+             ├─ Run B / Caller B
+             └─ Run C / Caller A
+```
+
+同一 commit 的 worktree 和 repo-mcp 进程只冷启动一次，多 Run / Caller 引用计数共享：
+
+- caller 引用归零：清理该 Caller 的工具副本；
+- 总引用归零：回收 worktree + repo MCP；
+- server 名包含 commit 短哈希，避免不同快照互相替换；
+- mirror fetch 有仓库级互斥；
+- 冷启动与 teardown 有 entry 生命周期锁；
+- Workspace 本身只挂只读 Repo MCP，避免共享写竞争。
+
+详细设计见 [代码工作区共享化改造方案](docs/todo/20261004_代码工作区共享化改造方案.md)。
+
+## 🔌 MCP
+
+项目同时扮演 **MCP Client** 和 **MCP Server**。
+
+### MCP Client
+
+外部 MCP Server 可以通过配置或管理面接入，并同步为普通 Business Tool：
+
+- `kind=repo`：stdio，主要用于 repo-mcp；
+- `kind=http`：Streamable HTTP；
+- `kind=http_sdk`：官方 `modelcontextprotocol/go-sdk`。
+
+MCP Tool 进入 `tblLlmTool` 后，与 HTTP Tool 使用完全相同的 `get_tool → execute_tool` Runtime 协议。
+
+### MCP Server Gateway
+
+本服务注册的 HTTP Tool 也可以反向通过 MCP Gateway 暴露给 Claude、Cursor 或其它 MCP Client。
+
+独立进程入口：
+
+```bash
+go run ./cmd/mcp-gateway
+```
+
+repo 只读检索 MCP：
+
+```bash
+go run ./cmd/repo-mcp
+```
+
+## 🧪 Python Sandbox 与安全边界
+
+`python_exec` 运行在独立 Python 3.11 Sandbox 中。
+
+发布形态下：
+
+- Sandbox 只连接 Docker `internal` 网络；
+- 不发布宿主机端口；
+- 不能访问公网；
+- 不能访问 MySQL / Redis 所在业务网；
+- 非 root；
+- 根文件系统只读；
+- `/tmp` 使用限额 tmpfs；
+- 有 CPU / Memory / Process 限制；
+- 每次执行使用独立工作目录并在结束后清理。
+
+静态 AST 检查仍保留，但它只是第一层降噪；真正的隔离边界在容器与网络层。
 
 ## 🚀 快速开始
 
-**方式一：Docker Compose 一键起**（推荐试用）
+### Docker Compose
+
+最适合直接体验完整能力：
 
 ```bash
-# 1. 填入 LLM API key
+# 1. 配置模型 API Key
 vim deploy/compose/conf/mount/api.yaml
 
-# 2. 一键起全套（MySQL 建库 + Redis + python 沙箱 + 服务）
+# 2. 启动完整环境
 docker compose up -d --build
 
-# 3. 访问 playground
+# 3. 打开 Playground
 open http://127.0.0.1:8080/react-base-service/react/playground
 ```
 
-**方式二：日常开发（依赖容器化 + 服务本地直跑）**
+Compose 默认包含：
 
-改代码不需要重新打包镜像——依赖在容器里，前后端本地 `go run` 直跑（web 前端是 embed 静态资源，无独立构建步骤）：
+- react-base-service
+- MySQL 8
+- Redis 7
+- Python Sandbox
+- SearXNG
+- MinIO
+- Prometheus
+- Loki / Promtail
+- Grafana
+
+### 本地 Go 开发
+
+依赖走 Docker，Go 服务本地运行：
 
 ```bash
-# 依赖容器（一次性）：MySQL / Redis / python 沙箱
-# 注意：基础 compose 里 python 沙箱只挂 internal 隔离网络、不发布宿主机端口（P0-1 网络硬隔离），
-# 本机 go run 需要直连，故叠加 docker-compose.dev.yml 覆盖层把 18190 端口放出来。
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql redis sandbox
+docker compose -f docker-compose.yml -f docker-compose.dev.yml   up -d mysql redis sandbox minio searxng
 
-# 本地起服务（前台，监听 :8180；改代码后重跑即生效）
 go run main.go
-
-# 或直接用脚本：./dev.sh（已默认带上 dev 覆盖层）| ./dev.sh deps | ./dev.sh stop
 ```
 
-本地开发约束：
-
-- **依赖只在容器中跑**：MySQL=`127.0.0.1:3317`、Redis=`127.0.0.1:16379`、Python 沙箱=`127.0.0.1:18190`，宿主机端口由仓库根 `.env` 固化
-- **沙箱端口来自 dev 覆盖层**：`18190` 只在 `docker-compose.dev.yml` 生效；发布形态（`docker compose up -d --build`，不含覆盖层）沙箱不对外发布端口、且不可出网。**不要把覆盖层带到发布环境**
-- **本地服务端口 8180**（`conf/mount/config.yaml` 的 `server.address`），与容器版 service（:8080）可并行
-- **不要用 `docker compose up -d --build service` 验证代码改动**——那是发布形态；日常开发一律本地 `go run`
-- DB 注册的 MCP 连接（如 mcpgw 网关）本地与容器共用同一注册表，本地启动时自动拉起
-
-**方式三：本机分步运行（不依赖容器）**
+或：
 
 ```bash
-# 1. 建库（MySQL）
-mysql -h <host> -u root -p < sql/init.sql
-
-# 2. 配置（编辑 conf/mount 下的四个 yaml，替换占位符）
-vim conf/mount/resource.yaml   # MySQL / Redis / COS
-vim conf/mount/api.yaml        # LLM 网关 / python-exec 沙箱
-vim conf/mount/custom.yaml     # 模型目录、ReAct 运行时
-
-# 3. 构建前端 SDK（playground 页面依赖；不构建则仅 SDK 路由 404）
-cd web/sdk && npm i && npm run build && cd ../..
-
-# 4. 启动本地 python 沙箱（可选；不启动则 python_exec 工具不可用）
-cd sandbox && SANDBOX_HOST=127.0.0.1 python server.py && cd ..   # 监听 :8190
-
-# 5. 启动
-go run main.go                 # 监听 :8180（conf/mount/config.yaml 可改）
+./dev.sh
 ```
 
-**运维端点**：`/healthz`（存活）、`/readyz`（就绪，探测 MySQL/Redis）、`/metrics`（Prometheus 指标：run 数 / 模型耗时 / 工具失败率 / WS 连接数等）；日志默认落 `log/` 目录并按大小轮转。
+> `docker-compose.dev.yml` 会为本机开发暴露 Sandbox 端口，因此不要把这个覆盖层用于发布环境。
 
-## 💻 使用 SDK 接入
+默认开发端口：
 
-前端通过 TypeScript SDK（`@react-agent-web-sdk`，内置 SolidJS UI 组件）接入：
+| 服务 | 地址 |
+|---|---|
+| Go Service | `127.0.0.1:8180` |
+| MySQL | `127.0.0.1:3317` |
+| Redis | `127.0.0.1:16379` |
+| Sandbox（dev override） | `127.0.0.1:18190` |
+| SearXNG | `127.0.0.1:8888` |
+| MinIO API | `127.0.0.1:9000` |
+| MinIO Console | `127.0.0.1:9001` |
+
+## 💻 Web SDK
+
+前端 SDK：`web/sdk`。
 
 ```typescript
 import { createAgentClient, mountAgentUI } from '@react-agent-web-sdk';
@@ -132,95 +387,164 @@ const agent = createAgentClient({
   routeValues: ['demo'],
 });
 
-const ui = mountAgentUI(document.getElementById('agent-container'), agent, {
-  title: 'AI Assistant',
-  theme: 'dark',
-});
+const ui = mountAgentUI(
+  document.getElementById('agent-container'),
+  agent,
+  {
+    title: 'AI Assistant',
+    showSidebar: true,
+    theme: 'dark',
+  },
+);
 ```
 
-详见 [web/sdk/README.md](web/sdk/README.md) 与 [接入指南](docs/integration-guide.md)。
+SDK 当前包含：
+
+- WebSocket streaming；
+- 多 Session 独立连接与状态分片；
+- IndexedDB Event Ledger；
+- Event Reducer；
+- Session Manager；
+- Client Tool Executor；
+- SolidJS UI；
+- Markdown / highlight / diff；
+- reconnect；
+- replay / history 对齐。
+
+详见 [web/sdk/README.md](web/sdk/README.md)。
 
 ## 🧰 技术栈
 
-| 层 | 选型 |
+| 层 | 实现 |
 |---|---|
-| 语言 | Go 1.25 |
-| Web 框架 | Gin · 手写 WebSocket（RFC 6455 握手 / 帧编解码 / ping-pong 保活） |
-| 存储 | GORM + MySQL 8（sql/init.sql 全量建库）· redigo + Redis 7 |
-| LLM 接入 | claude / gpt 兼容 / minimax，流式输出 + 工具调用，模型互备 |
-| 工具协议 | MCP（modelcontextprotocol/go-sdk）客户端 + 服务端网关 |
-| 校验 | jsonschema-go（工具输入 Schema 校验） |
-| 可观测 | Prometheus `/metrics` · 日志按大小轮转（lumberjack） |
-| 沙箱 | Python 3.11（python_exec：pandas / numpy / matplotlib） |
-| 前端 | embed 静态页面（playground / replay / mcp-admin）· TypeScript SDK（SolidJS UI） |
-| 部署 | Docker Compose（服务 + 依赖 + Prometheus / Loki / Grafana 监控全家桶） |
+| Backend | Go 1.25 · Gin |
+| Runtime | 自研 ReAct / Plan Runtime |
+| WebSocket | 手写 RFC 6455 握手、帧编解码与 ping-pong |
+| LLM | Claude / GPT-compatible / MiniMax |
+| MCP | `modelcontextprotocol/go-sdk` + 自研 HTTP / stdio 适配 |
+| Persistence | GORM + MySQL 8（当前 `sql/init.sql` 38 张表） |
+| Cache / metadata | Redis 7 |
+| Object Storage | MinIO / S3 / 腾讯 COS / local |
+| Sandbox | Python 3.11 |
+| Web search | SearXNG |
+| Frontend SDK | TypeScript · SolidJS · Vite |
+| Schedule | robfig/cron v3 |
+| Metrics | Prometheus |
+| Logs | lumberjack · Loki / Promtail |
+| Dashboard | Grafana |
+| Deploy | Docker Compose |
 
 ## 📁 目录结构
 
-```
-├── main.go                  # 入口：PreInit → InitResource → 路由 → 后台任务 → HTTP
-├── router/                  # 路由注册（react / 注册类管理接口 / 静态资源）
-├── controllers/http/        # HTTP/WS 控制器（react、attachment、caller、agent、skill、tool、apikey、systemprompt、llmmodel、probe）
-├── service/react/           # ReAct 运行时核心（引擎、运行时装配、Meta Tool、委派、记忆注入、会话历史、异步任务…）
-├── service/                 # 领域服务：tool / skill / agent / memory / graphmemory / workspace / mcpclient / bundle / asynctask / caller / apikey / systemprompt / llmmodel / credits / token / skillchatfile
-├── api/llm/                 # LLM 客户端（claude / gpt 兼容 / minimax，流式+工具调用）
-├── api/pythonexec/          # python_exec 沙箱客户端
-├── models/llm/              # GORM 模型（26 张表，表结构见 sql/init.sql）
-├── components/              # 错误码、响应渲染、参数结构、路由前缀、COS、调用方运行时上下文
-├── conf/                    # 配置加载 + conf/mount 示例配置（脱敏）
-├── middleware/              # 免鉴权中间件（信任 X-User-Name 头，缺省 anonymous）
-├── web/                     # playground / replay 页面 + TypeScript SDK（embed 进二进制）
-├── sql/init.sql             # 全量建库脚本
-└── docs/                    # 受管文档体系（system / changelog / plan）+ 架构、接入、部署与专题文档
+```text
+.
+├── main.go
+├── api/
+│   ├── llm/                    # Claude / GPT-compatible / MiniMax
+│   └── pythonexec/             # Python Sandbox client
+├── cmd/
+│   ├── mcp-gateway/            # 独立 MCP Gateway
+│   ├── repo-mcp/               # 只读代码仓库 MCP
+│   └── livetest/               # 真实链路测试客户端
+├── components/                 # params / metrics / COS / runtime context
+├── controllers/http/           # HTTP / WS / management controllers
+├── models/llm/                 # GORM models
+├── router/                     # route + startup tasks
+├── service/
+│   ├── react/                  # ReAct Runtime façade + internal capability domains
+│   ├── plan/                   # Durable Plan Runtime
+│   ├── workflow/               # Cron / headless runner / notification / breaker
+│   ├── judge/                  # Workflow semantic judge
+│   ├── agent/                  # Agent registry / builtin profiles
+│   ├── tool/                   # Business Tool execution
+│   ├── skill/                  # Skill registry
+│   ├── memory/                 # Durable long-term memory
+│   ├── graphmemory/            # Graphiti adapter
+│   ├── workspace/              # Shared code workspace
+│   ├── mcpclient/              # MCP client manager
+│   ├── mcpgateway/             # MCP server gateway
+│   ├── bundle/                 # Agent Bundle install / rollback
+│   ├── setting/                # Runtime online settings
+│   └── ...                     # caller / model / credits / async task / files
+├── sandbox/                    # Python execution service
+├── web/
+│   ├── react/                  # Playground / Replay / Workflow Admin
+│   ├── mcp-admin/
+│   └── sdk/
+├── sql/init.sql
+├── deploy/
+└── docs/
 ```
 
 ## 🧪 测试与 CI
 
 ```bash
-go test ./... -count=1                # Go 单测（CI 默认执行）
-go test -tags integration ./router/... ./service/...   # 集成测试（需真实 MySQL）
-cd web/sdk && npm run test:run        # SDK 单测
+# Go 单元测试
+go test ./... -count=1
+
+# 常规静态检查
+go vet ./...
+
+# SDK
+cd web/sdk
+npm run type-check
+npm run test:run
+
+# Workspace 真实链路（需要 git / repo-mcp）
+go build -o bin/repo-mcp ./cmd/repo-mcp
+WORKSPACE_IT=1 go test ./service/workspace/   -run TestWorkspaceSharingIntegration -v -count=1 -timeout 600s
 ```
 
-CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）：push / PR 触发 Build + Vet + Test（Go 与 SDK 两个 job），集成测试 job 需手动触发（起 MySQL service 容器）。
+GitHub Actions：`.github/workflows/ci.yml`。
 
-## 📚 文档
+近期 Workspace 共享化改造已验证：
 
-- [文档总索引](docs/README.md) — 含 `docs/system/` 全量模块系统文档与 `docs/changelog/` 变更记录
-- 专题：[系统架构](docs/architecture.md) · [接入指南](docs/integration-guide.md) · [启动与部署](docs/deployment.md) · [Runtime 模块化](docs/runtime-modularization.md) · [MCP 客户端与仓库检索能力边界](docs/mcp.md) · [多 Agent 编排](docs/multi-agent-orchestration.md) · [Memory 专题](docs/memory.md)
-- 内置页面：playground 联调页（`/react/playground`）、历史回放页（`/react/replay`）、MCP 连接管理
+- `go build ./...`
+- `go test ./... -count=1`
+- workspace `-race`
+- 真实 repo-mcp + git worktree 集成链路
 
-## 🧭 能力总览
+## 📚 文档导航
 
-| 能力 | 说明 |
-|---|---|
-| ReAct 运行时 | WebSocket 单入口 `/react-base-service/react/ws`，模型流式输出 + 工具循环 + 上下文自动压缩 + 模型互备 |
-| 多 Agent 委派 | Agent 注册表（`/agent/*`，支持 Markdown 导入）；`delegate_agent` 委派子 ReactRun 执行：父子历史/token 预算隔离、事件按 agentPath 归流、支持同轮并行委派 |
-| 计划确认 | `create_plan` Meta Tool：复杂任务先提交分步计划，前端计划卡片 + 「开始任务」确认后按计划执行（进度走 todo）；`llm.react.allow_plan: false` 可关闭（未配置默认开启） |
-| Plan 模式 | `executionMode=plan` 的独立执行范式：结构化 Planner 生成线性计划（6 张表全量持久化），逐步创建隔离 Scoped ReactRun 执行，USER_INPUT/USER_ACTION 步骤持久化等待，WS/HTTP 双通道 resume、retry、skip、cancel；Finalizer 总结写回会话历史，等待期间不依赖原 goroutine（详见 [Plan 模块文档](docs/system/plan.md)） |
-| 会话管理 | 会话隐式创建/复用（事务加锁 + 归属校验）、会话列表、并发 run 互斥、软删状态；启动期自动清理重启残留的陈旧活跃 run |
-| 历史回放 | 持久化消息还原为与实时协议同形的事件流（`/react/session/events`），内置回放页面 `/react/replay` |
-| 工具体系 | Business Tool 注册（http/client/mcp 三类）、两段式加载、输入 Schema 校验、白名单、异步提交型工具；MCP 客户端双来源：`custom.yaml` `mcp` 段静态声明 + 「MCP 连接管理」接口动态登记（`tblLlmMcpServer`，支持粘贴 mcpServers JSON、请求头透传、连接测试、启停与工具清单同步），工具自动进注册表供 ReAct 运行时使用 |
-| Skill 体系 | Skill 注册 + 摘要索引注入 system 前缀 + get_skill 按需加载完整说明；支持 `default` 默认作用域 |
-| 长期记忆 | 跨会话记忆按 owner 作用域读写（memory_write 等 Meta Tool）、run 启动分层注入、修订审计与回滚；管理面 `/react/memory/*` |
-| 图谱记忆 | Graphiti 时序事实图谱（Layer2）：run 启动事实注入 + `graph_memory_search` / `graph_memory_write` Meta Tool，外部 REST 存储 |
-| 代码工作区 | 按 run 分配 git worktree（bare mirror 缓存 + 静态解析 + commit 锁定），挂载只读 repo MCP 检索工具（`ws_*` 系列）；运行视图 `/react/workspace/active` |
-| Bundle 插件包 | manifest + agents + skills + .mcp.json 打包安装，展开写入注册表并记录快照，卸载按快照逆序回滚（`/react/bundle/*`） |
-| HITL 交互 | Client Tool（浏览器执行）、ask_question 补充信息、危险工具二次确认（tool_confirm），统一经 clientMessageHub 按 toolUseId 认领回包 |
-| 系统提示词 | 按 callerKey + routeValues 前缀匹配解析，多条由通用到具体拼接；支持 `default` 默认作用域（全 caller 共享，拼接在最前） |
-| 异步任务 | 提交快照落库、`<async_tasks>` 提醒注入、resolve/get 闭环工具、Provider 状态同步框架（可插拔） |
-| 产物与附件 | python_exec 沙箱执行 + 对象存储产物下载（provider 可选 minio/cos/local）；csv/md/txt 附件上传与引用 |
-| 轮次反馈 | run 级点赞/点踩与问题反馈，会话维度回显 |
-| 模型管理 | 用户自定义模型（modelHash 直引）、模型白名单、积分 |
-| 默认作用域 | 工具/系统提示词/skill 可挂在保留伪 caller `default` 下，全部 caller 的请求自动合并解析；管理面板三类资源支持 全部/默认/各 caller（按平台分组）筛选，新建跟随筛选落到目标作用域 |
-| 内置页面 | playground 联调页（`/react/playground`）、回放页（`/react/replay`）、TypeScript SDK |
+- [文档总索引](docs/README.md)
+- [系统架构](docs/architecture.md)
+- [Runtime 模块化](docs/runtime-modularization.md)
+- [接入指南](docs/integration-guide.md)
+- [启动与部署](docs/deployment.md)
+- [MCP](docs/mcp.md)
+- [多 Agent 编排](docs/multi-agent-orchestration.md)
+- [Memory](docs/memory.md)
+- [Plan Runtime](docs/system/plan.md)
+- [定时触发工作流实现方案](docs/定时触发工作流实现方案.md)
+- [代码工作区共享化改造](docs/todo/20261004_代码工作区共享化改造方案.md)
 
-## 🗺️ 范围与边界
+## 🧭 项目边界
 
-- **只做通用 Agent 基座**：提供与业务域解耦的运行时和注册管理接口。通用执行范式（ReAct、Plan）属于基座；业务知识库检索、具体业务流程编排等上层能力不属于。`create_plan` 仅为 ReAct 模式内的计划确认卡片，与 Plan 模式互不影响。
-- **对外契约保持稳定**：ReAct 引擎主循环、系统提示词装配顺序（systemPrompt + 工具索引摘要 + Skill 索引摘要）、Meta Tool 集合与描述、两段式工具加载与指纹自愈、Skill 注入，以及注册类接口（caller/skill/tool/apikey/system-prompt）的请求响应结构。
-- **通用化设计**：HTTP 工具请求头透传不绑定特定 caller；异步任务 Provider 框架默认无内置 Provider，按需注册扩展。
+这个仓库刻意把**通用 Agent Runtime** 与具体业务应用分开：
+
+**属于基座：**
+
+- ReAct / Plan 执行范式；
+- Agent / Tool / Skill / Prompt 注册与解析；
+- Session / Run / History；
+- Multi-Agent / Steering / Queue；
+- MCP；
+- Memory；
+- Workspace；
+- HITL；
+- Workflow；
+- Sandbox / Artifact；
+- Runtime Setting / Observability。
+
+**不属于基座：**
+
+- 某个具体业务域的 Agent Prompt；
+- 企业知识库内容本身；
+- 某个产品固定业务流程；
+- 上层应用 UI 的具体业务页面。
+
+因此它更适合作为其它 Agent 产品、平台助手、研发助手、巡检系统和自动化执行平台的服务端 Runtime，而不是一个绑定单一场景的成品机器人。
 
 ## 📄 License
 
-本项目暂未附加开源协议（License），默认保留所有权利；引用代码请注明出处。
+仓库当前未附加开源 License，默认保留所有权利。使用或引用前请确认授权范围。
