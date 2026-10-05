@@ -44,11 +44,12 @@ const customSessionTitleMaxLength = 64
 func ForkReactSession(ctx *gin.Context, req params.ReactSessionForkReq) (params.ReactSessionForkResp, error) {
 	sessionID := strings.TrimSpace(req.SessionID)
 	throughMessageID := strings.TrimSpace(req.ThroughMessageID)
+	throughRunID := strings.TrimSpace(req.ThroughRunID)
 	if sessionID == "" {
 		return params.ReactSessionForkResp{}, components.ErrorParamInvalid.Sprintf("sessionId 不能为空")
 	}
-	if throughMessageID == "" {
-		return params.ReactSessionForkResp{}, components.ErrorParamInvalid.Sprintf("throughMessageId 不能为空")
+	if (throughMessageID == "") == (throughRunID == "") {
+		return params.ReactSessionForkResp{}, components.ErrorParamInvalid.Sprintf("throughMessageId 与 throughRunId 必须二选一")
 	}
 
 	var newSessionID string
@@ -84,7 +85,12 @@ func ForkReactSession(ctx *gin.Context, req params.ReactSessionForkReq) (params.
 		if err != nil {
 			return err
 		}
-		cut, err := resolveForkCut(runs, messages, throughMessageID)
+		var cut forkCut
+		if throughRunID != "" {
+			cut, err = resolveForkCutByRun(runs, throughRunID, req.Inclusive == nil || *req.Inclusive)
+		} else {
+			cut, err = resolveForkCut(runs, messages, throughMessageID)
+		}
 		if err != nil {
 			return err
 		}
@@ -145,25 +151,14 @@ func resolveForkCut(runs []model.ReactRun, messages []model.ReactMessage, throug
 		return forkCut{}, components.ErrorParamInvalid.Sprintf("分叉点消息不存在: %s", throughMessageID)
 	}
 
-	runByID := make(map[string]*model.ReactRun, len(runs))
-	for i := range runs {
-		runByID[runs[i].RunID] = &runs[i]
-	}
+	runByID := forkRunIndex(runs)
 	run, ok := runByID[picked.RunID]
 	if !ok {
 		return forkCut{}, components.ErrorParamInvalid.Sprintf("分叉点消息所属 run 不存在: %s", picked.RunID)
 	}
-	// 上溯到外层 run（父 run 一定先于子 run 创建，链路必然存在；缺失按数据异常拒绝）
-	outer := run
-	for outer.ParentRunID != "" {
-		parent, parentOK := runByID[outer.ParentRunID]
-		if !parentOK {
-			return forkCut{}, components.ErrorParamInvalid.Sprintf("分叉点所在 run 的父链不完整: %s", outer.RunID)
-		}
-		outer = parent
-	}
-	if strings.HasPrefix(strings.TrimSpace(outer.AgentPath), "plan/") {
-		return forkCut{}, components.ErrorParamInvalid.Sprintf("分叉点不能落在 Plan 执行消息上")
+	outer, err := forkOuterRun(runByID, run)
+	if err != nil {
+		return forkCut{}, err
 	}
 
 	// exclusive 仅当命中的正是 anchor run 的起始用户输入
@@ -174,6 +169,47 @@ func resolveForkCut(runs []model.ReactRun, messages []model.ReactMessage, throug
 		}
 	}
 	return forkCut{anchorRun: outer, inclusive: true}, nil
+}
+
+// resolveForkCutByRun 把 run 级分叉点（前端轮次粒度入口）对齐到外层 run：
+// inclusive 由调用方显式给出（缺省 true，见 ForkReactSession 入参归一化）——
+// 轮末「从这里分叉」传 true 带着该轮继续，用户气泡「回到这里重新问」传 false 丢弃该轮起。
+func resolveForkCutByRun(runs []model.ReactRun, throughRunID string, inclusive bool) (forkCut, error) {
+	runByID := forkRunIndex(runs)
+	run, ok := runByID[throughRunID]
+	if !ok {
+		return forkCut{}, components.ErrorParamInvalid.Sprintf("分叉点 run 不存在: %s", throughRunID)
+	}
+	outer, err := forkOuterRun(runByID, run)
+	if err != nil {
+		return forkCut{}, err
+	}
+	return forkCut{anchorRun: outer, inclusive: inclusive}, nil
+}
+
+func forkRunIndex(runs []model.ReactRun) map[string]*model.ReactRun {
+	runByID := make(map[string]*model.ReactRun, len(runs))
+	for i := range runs {
+		runByID[runs[i].RunID] = &runs[i]
+	}
+	return runByID
+}
+
+// forkOuterRun 从任意 run（含 delegate 子 run）上溯到外层 run；
+// 父 run 一定先于子 run 创建，链路必然存在，缺失按数据异常拒绝。
+func forkOuterRun(runByID map[string]*model.ReactRun, run *model.ReactRun) (*model.ReactRun, error) {
+	outer := run
+	for outer.ParentRunID != "" {
+		parent, ok := runByID[outer.ParentRunID]
+		if !ok {
+			return nil, components.ErrorParamInvalid.Sprintf("分叉点所在 run 的父链不完整: %s", outer.RunID)
+		}
+		outer = parent
+	}
+	if strings.HasPrefix(strings.TrimSpace(outer.AgentPath), "plan/") {
+		return nil, components.ErrorParamInvalid.Sprintf("分叉点不能落在 Plan 执行消息上")
+	}
+	return outer, nil
 }
 
 // forkCopyPlan 是一次分叉复制的纯内存计算结果（不落库，便于单测）。

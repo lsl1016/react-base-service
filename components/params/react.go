@@ -465,15 +465,21 @@ type ReactSessionDeleteResp struct {
 }
 
 // ReactSessionForkReq 基于历史会话分叉出一个新会话：复制截断点之前的全部历史到全新 session。
-// 截断点按 run 边界对齐——throughMessageId 命中 run 起始用户输入时该轮起不复制
-// （回到这轮提问之前重新问），命中 run 内其它消息时该轮整轮复制（带着这轮回答继续）。
+// 截断点两种给法（二选一）：
+//   - throughMessageId：消息级，服务端按 run 边界对齐——命中 run 起始用户输入时该轮起不复制
+//     （回到这轮提问之前重新问），命中 run 内其它消息时该轮整轮复制（带着这轮回答继续）；
+//   - throughRunId + inclusive：run 级，供前端轮次粒度入口使用（前端消息天然携带 runId 而无
+//     messageId）——inclusive=true 该轮整轮保留，false 该轮起丢弃；inclusive 缺省按 true。
 // 运行中的会话会被拒绝（请先停止任务再分叉）。
 type ReactSessionForkReq struct {
-	SessionID        string   `json:"sessionId" binding:"required"`
-	ThroughMessageID string   `json:"throughMessageId" binding:"required"`
-	CallerKey        string   `json:"callerKey" binding:"required"`
+	SessionID string `json:"sessionId" binding:"required"`
+	// ThroughMessageID 与 ThroughRunID 必须恰好提供一个
+	ThroughMessageID string `json:"throughMessageId"`
+	ThroughRunID     string `json:"throughRunId"`
+	Inclusive        *bool  `json:"inclusive"`
+	CallerKey        string `json:"callerKey" binding:"required"`
 	RouteValues      []string `json:"routeValues"`
-	Title            string   `json:"title"`
+	Title            string `json:"title"`
 }
 
 // ReactSessionForkResp 是会话分叉响应：新会话 ID、截断口径与复制规模（排障友好）。

@@ -233,6 +233,43 @@ func TestBuildForkCopyPlanExclusive(t *testing.T) {
 	}
 }
 
+func TestResolveForkCutByRun(t *testing.T) {
+	_, runs, _ := forkFixture()
+
+	cases := []struct {
+		name        string
+		runID       string
+		inclusive   bool
+		wantAnchor  string
+		wantInclude bool
+		wantErr     string
+	}{
+		{name: "轮末入口 inclusive=true", runID: "run_src_2", inclusive: true, wantAnchor: "run_src_2", wantInclude: true},
+		{name: "回到提问前 inclusive=false", runID: "run_src_2", inclusive: false, wantAnchor: "run_src_2", wantInclude: false},
+		{name: "子 run 上溯外层", runID: "run_src_sub2", inclusive: true, wantAnchor: "run_src_2", wantInclude: true},
+		{name: "plan run 拒绝", runID: "run_src_plan", inclusive: true, wantErr: "Plan"},
+		{name: "run 不存在拒绝", runID: "run_elsewhere", inclusive: true, wantErr: "不存在"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cut, err := resolveForkCutByRun(runs, tc.runID, tc.inclusive)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("期望错误含 %q, got err=%v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveForkCutByRun 失败: %v", err)
+			}
+			if cut.anchorRun.RunID != tc.wantAnchor || cut.inclusive != tc.wantInclude {
+				t.Fatalf("anchor=%s inclusive=%v, want anchor=%s inclusive=%v",
+					cut.anchorRun.RunID, cut.inclusive, tc.wantAnchor, tc.wantInclude)
+			}
+		})
+	}
+}
+
 func TestForkHelpers(t *testing.T) {
 	// 非终态收敛（双保险）：active 集合 → expired，终态原样
 	for _, state := range []string{model.ReactRunStateRunning, model.ReactRunStateWaitingClientMessage,
@@ -312,13 +349,18 @@ func TestForkReactSessionE2E(t *testing.T) {
 			t.Fatalf("建 messages 失败: %v", err)
 		}
 	}
+	// 分叉产生的新会话是服务端生成的 session_<uuid>，按实际返回 ID 精确清理
+	forkedIDs := []string{}
 	cleanupForked := func(t *testing.T) {
-		for _, dest := range []interface{}{&model.ReactSession{}, &model.ReactRun{}, &model.ReactMessage{}} {
-			if err := model.GetLLMDB().WithContext(ctx).
-				Where("session_id LIKE ?", "session_e2e_fork_new%").Delete(dest).Error; err != nil {
-				t.Fatalf("清理分叉会话失败: %v", err)
+		if len(forkedIDs) > 0 {
+			for _, dest := range []interface{}{&model.ReactSession{}, &model.ReactRun{}, &model.ReactMessage{}} {
+				if err := model.GetLLMDB().WithContext(ctx).
+					Where("session_id IN ?", forkedIDs).Delete(dest).Error; err != nil {
+					t.Fatalf("清理分叉会话失败: %v", err)
+				}
 			}
 		}
+		forkedIDs = nil
 	}
 	cleanupAll := func(t *testing.T) { cleanupForked(t); seedAndCleanup(t) }
 	cleanupAll(t)
@@ -358,6 +400,17 @@ func TestForkReactSessionE2E(t *testing.T) {
 	if _, err := ForkReactSession(ctx, firstReq); err == nil || !strings.Contains(err.Error(), "无需分叉") {
 		t.Fatalf("首个 run 前 fork 应拒绝, got err=%v", err)
 	}
+	// 截断点两种给法必须恰好提供一个
+	bothReq := baseReq
+	bothReq.ThroughRunID = "run_src_2"
+	if _, err := ForkReactSession(ctx, bothReq); err == nil || !strings.Contains(err.Error(), "二选一") {
+		t.Fatalf("同时传 message/run 应拒绝, got err=%v", err)
+	}
+	neitherReq := baseReq
+	neitherReq.ThroughMessageID = ""
+	if _, err := ForkReactSession(ctx, neitherReq); err == nil || !strings.Contains(err.Error(), "二选一") {
+		t.Fatalf("截断点缺失应拒绝, got err=%v", err)
+	}
 
 	// 3. 正常分叉（inclusive：run1+run2+sub2）
 	resp, err := ForkReactSession(ctx, baseReq)
@@ -392,6 +445,34 @@ func TestForkReactSessionE2E(t *testing.T) {
 	if forked.Title == "" || forked.LastMessage != "第二个问题" {
 		t.Fatalf("分叉会话标题/预览异常: %+v", forked)
 	}
+	forkedIDs = append(forkedIDs, resp.SessionID)
+
+	// 3.5 run 级分叉（前端轮次入口）：inclusive=false 回到 run3 提问前 → 只保留 run1/run2(+sub2)
+	runReq := params.ReactSessionForkReq{
+		SessionID: baseReq.SessionID, ThroughRunID: "run_src_3", Inclusive: ptrBool(false),
+		CallerKey: "c1", RouteValues: []string{"r1"},
+	}
+	runResp, err := ForkReactSession(ctx, runReq)
+	if err != nil {
+		t.Fatalf("run 级分叉失败: %v", err)
+	}
+	forkedIDs = append(forkedIDs, runResp.SessionID)
+	if runResp.Runs != 3 || runResp.Messages != 8 || runResp.CutRunID != "run_src_3" || runResp.Inclusive {
+		t.Fatalf("run 级 exclusive 分叉响应不符: %+v", runResp)
+	}
+	// run 级 inclusive 缺省 true：不带 Inclusive 指针 → run1/2/3 全保留
+	runReq2 := params.ReactSessionForkReq{
+		SessionID: baseReq.SessionID, ThroughRunID: "run_src_3",
+		CallerKey: "c1", RouteValues: []string{"r1"},
+	}
+	runResp2, err := ForkReactSession(ctx, runReq2)
+	if err != nil {
+		t.Fatalf("run 级默认 inclusive 分叉失败: %v", err)
+	}
+	forkedIDs = append(forkedIDs, runResp2.SessionID)
+	if runResp2.Runs != 4 || runResp2.Messages != 9 || !runResp2.Inclusive {
+		t.Fatalf("run 级默认 inclusive 分叉响应不符: %+v", runResp2)
+	}
 
 	// 4. 独立性：删除源会话后分叉会话完好
 	if _, err := DeleteReactSession(ctx, params.ReactSessionDeleteReq{
@@ -404,3 +485,5 @@ func TestForkReactSessionE2E(t *testing.T) {
 	}
 	_ = gin.Mode()
 }
+
+func ptrBool(v bool) *bool { return &v }
