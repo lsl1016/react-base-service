@@ -135,7 +135,7 @@ func TestRuntimeToolDefinitionsAppendDelegate(t *testing.T) {
 			agents: []model.Agent{{AgentKey: "dba-agent"}},
 		},
 	}
-	profile := outerExecutionProfile()
+	profile := outerExecutionProfile(req)
 	defs := runtimeToolDefinitions(req, profile)
 	found := false
 	for _, def := range defs {

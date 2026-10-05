@@ -479,6 +479,9 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	if caller == nil {
 		return nil, components.ErrorCallerNotFound.Sprintf(payload.CallerKey)
 	}
+	// caller 级 allow_plan 覆盖快照：执行档案（create_plan 可见性/执行门控）与
+	// Plan 入口闸门共用同一口径（effectiveAllowPlan，见 execution_profile.go）。
+	callerAllowPlan := caller.AllowPlanOverride()
 
 	requestSource, err := parseControlContextRequestSource(payload.ControlContext)
 	if err != nil {
@@ -641,6 +644,7 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 			userName:             userName,
 			routeValuesJSON:      string(routeValuesBytes),
 			callerRuntimeContext: callerRuntimeCtx,
+			callerAllowPlan:      callerAllowPlan,
 		},
 		runtimeRequestModel: runtimeRequestModel{
 			apiKey:                   apiKey,

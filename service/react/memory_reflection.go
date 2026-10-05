@@ -40,34 +40,34 @@ func reflectionExecutionProfile() ExecutionProfile {
 	return ExecutionProfile{AllowMemory: true}
 }
 
-// executionProfileForSessionType 按会话类型选择执行档案。
-func executionProfileForSessionType(sessionType string) ExecutionProfile {
-	if sessionType == model.ReactSessionTypeReflection {
+// executionProfileForSessionType 按会话类型选择执行档案（caller 级能力覆盖随 req 传递）。
+func executionProfileForSessionType(req *runtimeRequest) ExecutionProfile {
+	if req.payload.Type == model.ReactSessionTypeReflection {
 		return reflectionExecutionProfile()
 	}
-	if sessionType == model.ReactSessionTypeScheduled {
-		return scheduledExecutionProfile()
+	if req.payload.Type == model.ReactSessionTypeScheduled {
+		return scheduledExecutionProfile(req)
 	}
-	return outerExecutionProfile()
+	return outerExecutionProfile(req)
 }
 
 // executionProfileForRun 按运行请求选择执行档案：delegate_agent 子 run 用受限的外层档案
 // （不注入会话级异步任务提醒），其余按会话类型；req 为 nil（单测最小状态）按外层对话处理。
 func executionProfileForRun(req *runtimeRequest) ExecutionProfile {
 	if req == nil {
-		return outerExecutionProfile()
+		return outerExecutionProfile(nil)
 	}
 	if strings.HasPrefix(strings.TrimSpace(req.agentPath), "plan/") {
 		// Plan Step 已由上层 Plan Runtime 负责计划编排，Scoped ReAct 只执行当前 Step。
 		// 禁止再次暴露 create_plan，避免 Step 内递归生成第二套计划。
-		profile := subAgentExecutionProfile()
+		profile := subAgentExecutionProfile(req)
 		profile.AllowPlan = false
 		return profile
 	}
 	if req.agentPath != "" {
-		return subAgentExecutionProfile()
+		return subAgentExecutionProfile(req)
 	}
-	return executionProfileForSessionType(req.payload.Type)
+	return executionProfileForSessionType(req)
 }
 
 // internalMetaToolDefinitionsForType 按会话类型裁剪内置工具声明：

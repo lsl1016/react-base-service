@@ -77,6 +77,12 @@ func PrepareExternalRun(ctx *gin.Context, payload params.ReactRunPayload, sessio
 	if err != nil {
 		return nil, err
 	}
+	// Plan 能力闸门（caller 级 allow_plan）：显式 executionMode=plan 的新 Plan 入口在
+	// caller 关闭 Plan 能力时拒绝。存量 WAIT 计划的 resume/retry/skip/cancel 走
+	// RestoreExternalRun（生命周期收尾，不属新计划能力），不受本闸门影响。
+	if payload.ExecutionMode == params.ReactExecutionModePlan && !effectiveAllowPlan(req.callerAllowPlan) {
+		return nil, components.ErrorParamInvalid.Sprintf("caller %s 未开启 Plan 能力（allow_plan=0），不支持 executionMode=plan", payload.CallerKey)
+	}
 	compactCfg := conf.GetReactRuntimeConfig().ContextCompact
 	initialTools := runtimeToolDefinitions(req, executionProfileForRun(req))
 	initialSystemContent := buildReactSystemContent(req.systemPrompt, renderToolIndexSummary(req.toolsIndexSnapshotJSON), renderSkillIndexSummary(req.skillsIndexSnapshotJSON), req.memoryContext, req.graphMemoryContext)

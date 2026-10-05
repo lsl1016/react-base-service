@@ -14,7 +14,7 @@ import (
 	"react-base-service/golib/zlog"
 )
 
-func RegisterCaller(ctx *gin.Context, callerKey, name, description, platform string, createdBy string) (*model.Caller, error) {
+func RegisterCaller(ctx *gin.Context, callerKey, name, description, platform string, allowPlan *int, createdBy string) (*model.Caller, error) {
 	// "default" 是默认作用域伪 caller 的保留字，不允许注册为真实 caller。
 	if model.IsReservedCallerKey(callerKey) {
 		return nil, components.ErrorCallerDuplicate.Sprintf(callerKey)
@@ -32,6 +32,7 @@ func RegisterCaller(ctx *gin.Context, callerKey, name, description, platform str
 		Name:        name,
 		Description: description,
 		Platform:    platform,
+		AllowPlan:   allowPlan,
 		Status:      1,
 		CreatedBy:   createdBy,
 	}

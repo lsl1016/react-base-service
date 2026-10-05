@@ -127,6 +127,8 @@ type RegisterCallerReq struct {
 	Name        string `json:"name" binding:"required"`
 	Description string `json:"description"`
 	Platform    string `json:"platform" binding:"required"`
+	// AllowPlan create_plan/Plan 模式 caller 级开关：nil=跟随全局配置；0=强制关；1=强制开。
+	AllowPlan *int `json:"allowPlan" binding:"omitempty,min=0,max=1"`
 }
 
 // UpdateCallerReq Caller 更新请求
@@ -136,6 +138,9 @@ type UpdateCallerReq struct {
 	Description string `json:"description"`
 	Platform    string `json:"platform"`
 	Status      *int   `json:"status"`
+	// AllowPlan create_plan/Plan 模式 caller 级开关：nil=不更新；0=强制关；1=强制开。
+	// 恢复「跟随全局」需直接置库 allow_plan=NULL（API 暂不提供该语义）。
+	AllowPlan *int `json:"allowPlan" binding:"omitempty,min=0,max=1"`
 }
 
 // ListCallersReq Caller 列表请求（预留扩展）
@@ -147,43 +152,45 @@ type CallerResp struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Platform    string `json:"platform"`
-	Status      int    `json:"status"`
-	CreatedAt   string `json:"createdAt"`
+	// AllowPlan create_plan/Plan 模式 caller 级开关：nil=跟随全局配置；0=强制关；1=强制开。
+	AllowPlan *int   `json:"allowPlan"`
+	Status    int    `json:"status"`
+	CreatedAt string `json:"createdAt"`
 }
 
 // CreateSkillReq Skill 创建请求
 type CreateSkillReq struct {
-	Name               string   `json:"name" binding:"required"`
-	Description        string   `json:"description" binding:"required"`
-	TriggerCondition   string   `json:"triggerCondition" binding:"required"`
-	ForbiddenCondition string   `json:"forbiddenCondition"`
-	ExecutionSteps     string   `json:"executionSteps" binding:"required"`
-	BusinessContext    string   `json:"businessContext" binding:"required"`
-	PromptSupplement   string   `json:"promptSupplement"`
+	Name               string `json:"name" binding:"required"`
+	Description        string `json:"description" binding:"required"`
+	TriggerCondition   string `json:"triggerCondition" binding:"required"`
+	ForbiddenCondition string `json:"forbiddenCondition"`
+	ExecutionSteps     string `json:"executionSteps" binding:"required"`
+	BusinessContext    string `json:"businessContext" binding:"required"`
+	PromptSupplement   string `json:"promptSupplement"`
 	// Triggers 关键词触发器（P2-2）：run 装配期命中用户消息时追加 skill 提示；空 = 仅摘要索引。
 	Triggers []string `json:"triggers"`
 	// Content SKILL.md 正文（文件导入形态）；get_skill 全量返回时注入模型。
-	Content    string   `json:"content"`
-	CallerKey  string   `json:"callerKey" binding:"required"`
+	Content     string   `json:"content"`
+	CallerKey   string   `json:"callerKey" binding:"required"`
 	RouteValues []string `json:"routeValues" binding:"required"`
-	Status     *int     `json:"status" binding:"required"`
-	IsDefault  *int     `json:"isDefault"`
+	Status      *int     `json:"status" binding:"required"`
+	IsDefault   *int     `json:"isDefault"`
 }
 
 // UpdateSkillReq Skill 更新请求
 type UpdateSkillReq struct {
-	SkillID            string   `json:"skillId" binding:"required"`
-	Name               string   `json:"name" binding:"required"`
-	Description        string   `json:"description" binding:"required"`
-	TriggerCondition   string   `json:"triggerCondition" binding:"required"`
-	ForbiddenCondition *string  `json:"forbiddenCondition"`
-	ExecutionSteps     string   `json:"executionSteps" binding:"required"`
-	BusinessContext    string   `json:"businessContext" binding:"required"`
-	PromptSupplement   *string  `json:"promptSupplement"`
+	SkillID            string    `json:"skillId" binding:"required"`
+	Name               string    `json:"name" binding:"required"`
+	Description        string    `json:"description" binding:"required"`
+	TriggerCondition   string    `json:"triggerCondition" binding:"required"`
+	ForbiddenCondition *string   `json:"forbiddenCondition"`
+	ExecutionSteps     string    `json:"executionSteps" binding:"required"`
+	BusinessContext    string    `json:"businessContext" binding:"required"`
+	PromptSupplement   *string   `json:"promptSupplement"`
 	Triggers           *[]string `json:"triggers"`
-	Content            *string  `json:"content"`
-	RouteValues        []string `json:"routeValues" binding:"required"`
-	Status             *int     `json:"status" binding:"required"`
+	Content            *string   `json:"content"`
+	RouteValues        []string  `json:"routeValues" binding:"required"`
+	Status             *int      `json:"status" binding:"required"`
 }
 
 // ImportSkillReq SKILL.md 粘贴导入请求（P2-2）；

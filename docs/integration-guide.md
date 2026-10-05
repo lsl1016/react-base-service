@@ -14,8 +14,10 @@
 
 ```
 POST /caller/register
-{ "callerKey": "my-app", "name": "我的应用", "description": "...", "platform": "web" }
+{ "callerKey": "my-app", "name": "我的应用", "description": "...", "platform": "web", "allowPlan": 1 }
 ```
+
+`allowPlan`（可选，caller 级 Plan 能力开关）：不传或 `null`=跟随全局配置 `llm.react.allow_plan`（默认开）；`0`=该 caller 强制关闭 create_plan 工具与 `executionMode: "plan"` 入口；`1`=强制开启。`/caller/update` 可修改（不传=不更新）。典型用法：纯文本端（QQ 机器人等）注册时设 `allowPlan: 0`。
 
 ### 1.2 API Key（caller 级模型凭证）
 

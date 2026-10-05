@@ -6,8 +6,8 @@ import (
 	"react-base-service/helpers"
 	callerService "react-base-service/service/caller"
 
-	"react-base-service/golib/zlog"
 	"github.com/gin-gonic/gin"
+	"react-base-service/golib/zlog"
 )
 
 // RegisterCaller 注册Caller
@@ -30,7 +30,7 @@ func RegisterCaller(ctx *gin.Context) {
 
 	userName := helpers.GetUserName(ctx)
 
-	caller, err := callerService.RegisterCaller(ctx, req.CallerKey, req.Name, req.Description, req.Platform, userName)
+	caller, err := callerService.RegisterCaller(ctx, req.CallerKey, req.Name, req.Description, req.Platform, req.AllowPlan, userName)
 	if err != nil {
 		zlog.Errorf(ctx, "[Caller.Register] 注册失败: callerKey=%s, err=%v", req.CallerKey, err)
 		components.RenderJsonFail(ctx, err)
@@ -42,6 +42,7 @@ func RegisterCaller(ctx *gin.Context) {
 		Name:        caller.Name,
 		Description: caller.Description,
 		Platform:    caller.Platform,
+		AllowPlan:   caller.AllowPlan,
 		Status:      caller.Status,
 		CreatedAt:   caller.CreatedAt.Format("2006-01-02 15:04:05"),
 	})
@@ -78,6 +79,9 @@ func UpdateCaller(ctx *gin.Context) {
 	if req.Status != nil {
 		updates["status"] = *req.Status
 	}
+	if req.AllowPlan != nil {
+		updates["allow_plan"] = *req.AllowPlan
+	}
 
 	if err := callerService.UpdateCaller(ctx, req.CallerKey, updates); err != nil {
 		zlog.Errorf(ctx, "[Caller.Update] 更新失败: callerKey=%s, err=%v", req.CallerKey, err)
@@ -111,6 +115,7 @@ func ListCallers(ctx *gin.Context) {
 			Name:        c.Name,
 			Description: c.Description,
 			Platform:    c.Platform,
+			AllowPlan:   c.AllowPlan,
 			Status:      c.Status,
 			CreatedAt:   c.CreatedAt.Format("2006-01-02 15:04:05"),
 		})

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmCaller` (
     `name`        VARCHAR(128) NOT NULL COMMENT 'caller名称',
     `description` TEXT         NULL     COMMENT '描述',
     `platform`    VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '兼容现有业务的平台标识',
+    `allow_plan`  TINYINT      NULL DEFAULT NULL COMMENT 'create_plan/Plan模式能力: NULL=跟随全局llm.react.allow_plan 0=caller级强制关 1=caller级强制开',
     `status`      TINYINT      NOT NULL DEFAULT 1 COMMENT '状态: 0=禁用 1=启用',
     `created_by`  VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

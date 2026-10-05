@@ -21,7 +21,8 @@ import (
 // 常量与判定已下沉 internal/core（metatool.go），本包经 core_bridge.go 以私有名复用。
 
 // internalMetaToolDefinitions 定义 Runtime 内置工具（稳定 Meta Tool 集合）。
-// allow_plan=false 时 create_plan 不进工具列表（模型不可见）。
+// create_plan 不在此注册：其可见性按 run 执行档案判定（runtimeToolDefinitions），
+// 与执行侧 AllowsInternalTool 门控同口径（caller 级 allow_plan 覆盖 > 全局配置）。
 func internalMetaToolDefinitions() []llm.ToolDefinition {
 	definitions := []llm.ToolDefinition{
 		// list_tools 已软下线：Business Tool 轻量索引在 run 初始化阶段注入 system 前缀，完整 parameters 仍通过 get_tool 按需加载。
@@ -39,9 +40,6 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 		getAsyncTaskToolDefinition(),
 		readAttachmentToolDefinition(),
 		inspectAttachmentToolDefinition(),
-	}
-	if conf.CustomConf.LLM.React.AllowPlanEnabled() {
-		definitions = append(definitions, createPlanToolDefinition())
 	}
 	// workspace.enabled=true 时注册 load_runtime_code（P2-1 代码工作区入口）。
 	if conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled() {
@@ -70,6 +68,11 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 // 供引擎每轮装配与 run/delegate 入口 token 检查两处共用，避免口径漂移。
 func runtimeToolDefinitions(req *runtimeRequest, profile ExecutionProfile) []llm.ToolDefinition {
 	definitions := internalMetaToolDefinitionsForType(req.payload.Type)
+	// create_plan 可见性按执行档案判定：caller 级 allow_plan 覆盖 > 全局配置；
+	// reflection 受限域与 plan step 防递归分支的档案 AllowPlan=false，天然不暴露。
+	if profile.AllowPlan {
+		definitions = append(definitions, createPlanToolDefinition())
+	}
 	if profile.AllowSubagent && req.delegationAllowed() {
 		definitions = append(definitions, delegateAgentToolDefinition(req.agents))
 		definitions = append(definitions, sendMessageToolDefinition())

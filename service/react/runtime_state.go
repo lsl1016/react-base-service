@@ -37,6 +37,10 @@ type runtimeRequestIdentity struct {
 	userName             string
 	routeValuesJSON      string
 	callerRuntimeContext components.CallerRuntimeContext
+	// callerAllowPlan 是 caller 级 allow_plan 覆盖快照（tblLlmCaller.allow_plan 三态）：
+	// nil=未覆盖（跟随全局配置），false=caller 级强制关，true=caller 级强制开。
+	// 在 prepareRuntimeRequest 解析一次，执行档案与 Plan 入口闸门共用同一口径。
+	callerAllowPlan *bool
 }
 
 // runtimeRequestModel 是模型路由与凭证快照。

@@ -54,8 +54,10 @@ func CopyConfig(ctx *gin.Context, req *params.CopyCallerConfigReq, operator stri
 			Name:        targetName,
 			Description: req.TargetCaller.Description,
 			Platform:    targetPlatform,
-			Status:      1,
-			CreatedBy:   operator,
+			// caller 级能力开关随配置复制（当前仅 allow_plan，三态原样拷贝）。
+			AllowPlan: source.AllowPlan,
+			Status:    1,
+			CreatedBy: operator,
 		}
 		if err := model.CreateCallerConfigWithDB(tx, targetCaller, snapshot); err != nil {
 			return err

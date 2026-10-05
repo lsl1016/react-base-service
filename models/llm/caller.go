@@ -13,20 +13,33 @@ import (
 )
 
 type Caller struct {
-	ID          uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
-	CallerKey   string                `json:"callerKey" gorm:"column:caller_key;not null"`
-	Name        string                `json:"name" gorm:"column:name;not null"`
-	Description string                `json:"description" gorm:"column:description"`
-	Platform    string                `json:"platform" gorm:"column:platform;not null;default:''"`
-	Status      int                   `json:"status" gorm:"column:status;not null;default:1"`
-	CreatedBy   string                `json:"createdBy" gorm:"column:created_by;not null;default:''"`
-	CreatedAt   time.Time             `json:"createdAt" gorm:"column:created_at"`
-	UpdatedAt   time.Time             `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt   soft_delete.DeletedAt `json:"deletedAt" gorm:"column:deleted_at;not null;default:0"`
+	ID          uint   `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	CallerKey   string `json:"callerKey" gorm:"column:caller_key;not null"`
+	Name        string `json:"name" gorm:"column:name;not null"`
+	Description string `json:"description" gorm:"column:description"`
+	Platform    string `json:"platform" gorm:"column:platform;not null;default:''"`
+	// AllowPlan 是 create_plan/Plan 模式的 caller 级开关（三态）：
+	// nil=跟随全局 custom.yaml llm.react.allow_plan；0=caller 级强制关；1=caller 级强制开。
+	AllowPlan *int                  `json:"allowPlan" gorm:"column:allow_plan"`
+	Status    int                   `json:"status" gorm:"column:status;not null;default:1"`
+	CreatedBy string                `json:"createdBy" gorm:"column:created_by;not null;default:''"`
+	CreatedAt time.Time             `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt time.Time             `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt soft_delete.DeletedAt `json:"deletedAt" gorm:"column:deleted_at;not null;default:0"`
 }
 
 func (c *Caller) TableName() string {
 	return "tblLlmCaller"
+}
+
+// AllowPlanOverride 把 allow_plan 列的三态（NULL/0/1）规整为布尔覆盖指针：
+// nil=未覆盖（跟随全局配置）；false=caller 级强制关；true=caller 级强制开。
+func (c *Caller) AllowPlanOverride() *bool {
+	if c.AllowPlan == nil {
+		return nil
+	}
+	v := *c.AllowPlan != 0
+	return &v
 }
 
 // DefaultCallerKey 是「默认作用域」伪 caller：工具/系统提示词/skill 挂在该 caller 下时，
