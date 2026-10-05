@@ -1009,6 +1009,10 @@ body.rp-col-resizing * {
   border-radius: 10px;
   background: var(--panel-3);
   overflow: hidden;
+  /* #management-cards 是纵向 flex 容器：卡片默认可收缩，且 overflow:hidden 使
+     min-height:auto 失效（自动最小高度归零），多卡总高超容器时卡片被压扁、内容被裁。
+     禁止收缩，卡片保持自然高度，超高交给外层列表滚动。 */
+  flex: none;
 }
 
 .rp-mcp-card-head {
@@ -1198,6 +1202,10 @@ body.rp-col-resizing * {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* 展开卡片的字段行限高内滚：行数多的卡片（如长期记忆策略 6 行）鼠标滚轮在卡内上下滑动，
+     底部说明与保存/放弃按钮不被推出视野（与 MCP 工具清单同一交互模式） */
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .rp-setting-row {
