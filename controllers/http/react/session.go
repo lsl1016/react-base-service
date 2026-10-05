@@ -129,3 +129,30 @@ func ForkSession(ctx *gin.Context) {
 	}
 	components.RenderJsonSucc(ctx, resp)
 }
+
+// RenameSession 重命名一个会话（仅标题元数据）
+// @Summary 重命名 ReAct 会话
+// @Description 更新会话标题：去首尾空白并按 rune 截断；归属五元组校验与其它会话接口同口径；不限制运行中的会话
+// @Tags React
+// @Accept json
+// @Produce json
+// @Param req body params.ReactSessionRenameReq true "会话重命名请求体"
+// @Success 200 {object} components.DefaultRenderWithTrace{data=params.ReactSessionRenameResp}
+// @Failure 400 {object} components.DefaultRenderWithTrace
+// @Router /react/session/rename [post]
+func RenameSession(ctx *gin.Context) {
+	var req params.ReactSessionRenameReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Errorf(ctx, "[React.RenameSession] 请求参数绑定失败: %v", err)
+		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf(err.Error()))
+		return
+	}
+
+	resp, err := reactService.RenameReactSession(ctx, req)
+	if err != nil {
+		zlog.Errorf(ctx, "[React.RenameSession] 重命名会话失败: sessionId=%s, err=%v", req.SessionID, err)
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	components.RenderJsonSucc(ctx, resp)
+}

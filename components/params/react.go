@@ -486,6 +486,21 @@ type ReactSessionForkResp struct {
 	Messages   int    `json:"messages"`
 }
 
+// ReactSessionRenameReq 重命名会话：仅更新标题元数据，去首尾空白并按 rune 截断；
+// 归属五元组校验与 list/events/delete/fork 同口径；不限制活跃 run（与数据级联操作不同）。
+type ReactSessionRenameReq struct {
+	SessionID   string   `json:"sessionId" binding:"required"`
+	Title       string   `json:"title" binding:"required"`
+	CallerKey   string   `json:"callerKey" binding:"required"`
+	RouteValues []string `json:"routeValues"`
+}
+
+// ReactSessionRenameResp 是会话重命名响应，回显归一化后的标题。
+type ReactSessionRenameResp struct {
+	Renamed bool   `json:"renamed"`
+	Title   string `json:"title"`
+}
+
 // ReactAsyncTaskListReq 查询当前会话第三方已终态但本地尚未处理的异步任务，使用稳定游标分页。
 type ReactAsyncTaskListReq struct {
 	SessionID string `json:"sessionId" binding:"required"`
