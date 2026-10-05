@@ -5,13 +5,13 @@
 <h3 align="center">可直接调用的 ReAct / Plan 双范式 Agent 基座服务</h3>
 
 <p align="center">
-  <a href="https://github.com/lsl1016/react-base-service/actions/workflows/ci.yml"><img src="https://github.com/lsl1016/react-base-service/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white" alt="Go">
-  <img src="https://img.shields.io/badge/Web-Gin-337FF3" alt="Gin">
-  <img src="https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white" alt="MySQL">
-  <img src="https://img.shields.io/badge/Redis-7-D82C20?logo=redis&logoColor=white" alt="Redis">
-  <img src="https://img.shields.io/badge/MCP-go--sdk-5E5CE6" alt="MCP">
-  <img src="https://img.shields.io/badge/Protocol-WebSocket-010101?logo=websocket" alt="WebSocket">
+  <img src="https://img.shields.io/badge/执行范式-ReAct%2BPlan-8A2BE2" alt="ReAct + Plan 双范式">
+  <img src="https://img.shields.io/badge/长期记忆-双层注入-0969DA" alt="长期记忆：常驻+按需双层注入">
+  <img src="https://img.shields.io/badge/多Agent-委派%C2%B7并行-BF3989" alt="多 Agent 委派·并行">
+  <img src="https://img.shields.io/badge/HITL-人机协同-2DA44E" alt="HITL 轮次反馈·中途引导">
+  <img src="https://img.shields.io/badge/会话-分叉%C2%B7回放-D29922" alt="会话分叉·历史回放">
+  <img src="https://img.shields.io/badge/Python-隔离沙箱-CF222E" alt="Python 网络硬隔离沙箱">
+  <img src="https://img.shields.io/badge/MCP-客户端%C3%97网关-5E5CE6" alt="MCP 客户端×服务端网关">
 </p>
 
 ---
