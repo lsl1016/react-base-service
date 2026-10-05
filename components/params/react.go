@@ -464,6 +464,28 @@ type ReactSessionDeleteResp struct {
 	PlanRows      int64 `json:"planRows"`
 }
 
+// ReactSessionForkReq 基于历史会话分叉出一个新会话：复制截断点之前的全部历史到全新 session。
+// 截断点按 run 边界对齐——throughMessageId 命中 run 起始用户输入时该轮起不复制
+// （回到这轮提问之前重新问），命中 run 内其它消息时该轮整轮复制（带着这轮回答继续）。
+// 运行中的会话会被拒绝（请先停止任务再分叉）。
+type ReactSessionForkReq struct {
+	SessionID        string   `json:"sessionId" binding:"required"`
+	ThroughMessageID string   `json:"throughMessageId" binding:"required"`
+	CallerKey        string   `json:"callerKey" binding:"required"`
+	RouteValues      []string `json:"routeValues"`
+	Title            string   `json:"title"`
+}
+
+// ReactSessionForkResp 是会话分叉响应：新会话 ID、截断口径与复制规模（排障友好）。
+type ReactSessionForkResp struct {
+	SessionID  string `json:"sessionId"`
+	ForkedFrom string `json:"forkedFrom"`
+	CutRunID   string `json:"cutRunId"`
+	Inclusive  bool   `json:"inclusive"`
+	Runs       int    `json:"runs"`
+	Messages   int    `json:"messages"`
+}
+
 // ReactAsyncTaskListReq 查询当前会话第三方已终态但本地尚未处理的异步任务，使用稳定游标分页。
 type ReactAsyncTaskListReq struct {
 	SessionID string `json:"sessionId" binding:"required"`

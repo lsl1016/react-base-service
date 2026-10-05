@@ -91,6 +91,18 @@ func CreateReactRunWithDB(ctx *gin.Context, db *gorm.DB, run *ReactRun) error {
 	return nil
 }
 
+// BatchCreateReactRunsWithDB 在指定连接（事务）内分批写入 run 行，供会话分叉复制使用。
+func BatchCreateReactRunsWithDB(ctx *gin.Context, db *gorm.DB, runs []ReactRun) error {
+	if len(runs) == 0 {
+		return nil
+	}
+	err := db.Model(&ReactRun{}).WithContext(ctx).CreateInBatches(&runs, 100).Error
+	if err != nil {
+		return components.ErrorDbInsert.Wrap(err)
+	}
+	return nil
+}
+
 func GetReactRunByRunID(ctx *gin.Context, runID string) (*ReactRun, error) {
 	var run ReactRun
 	err := helpers.MysqlClientLLM.Model(&ReactRun{}).WithContext(ctx).

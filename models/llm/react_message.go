@@ -74,10 +74,16 @@ func CreateReactMessageOnceWithDB(ctx *gin.Context, db *gorm.DB, message *ReactM
 }
 
 func BatchCreateReactMessages(ctx *gin.Context, messages []ReactMessage) error {
+	return BatchCreateReactMessagesWithDB(ctx, helpers.MysqlClientLLM, messages)
+}
+
+// BatchCreateReactMessagesWithDB 在指定连接（事务）内分批写入消息行：
+// 分叉复制的大会话消息量大，分批 INSERT 避免单条多值语句超过 max_allowed_packet。
+func BatchCreateReactMessagesWithDB(ctx *gin.Context, db *gorm.DB, messages []ReactMessage) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	err := helpers.MysqlClientLLM.WithContext(ctx).Create(&messages).Error
+	err := db.Model(&ReactMessage{}).WithContext(ctx).CreateInBatches(&messages, 100).Error
 	if err != nil {
 		return components.ErrorDbInsert.Wrap(err)
 	}

@@ -89,6 +89,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/session/events", react.GetSessionEvents)
 		// 会话删除（硬删级联）：运行中的会话拒绝，归属五元组校验与 list/events 同口径。
 		reactGroup.POST("/session/delete", react.DeleteSession)
+		// 会话分叉（复制式 fork）：截断点之前的历史复制成全新会话，运行中的会话拒绝。
+		reactGroup.POST("/session/fork", react.ForkSession)
 		reactGroup.POST("/async_task/list", react.ListAsyncTasks)
 		reactGroup.POST("/plan_execution/detail", react.GetPlanExecutionDetail)
 		reactGroup.POST("/plan_execution/events", react.GetPlanStepEvents)

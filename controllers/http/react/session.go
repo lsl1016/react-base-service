@@ -102,3 +102,30 @@ func DeleteSession(ctx *gin.Context) {
 	}
 	components.RenderJsonSucc(ctx, resp)
 }
+
+// ForkSession 基于历史会话分叉出一个新会话（复制截断点之前的全部历史）
+// @Summary 分叉 ReAct 会话
+// @Description 以 throughMessageId 为分叉点，把该点之前的历史（按 run 边界对齐）复制成一个全新会话：全部业务 ID 重生成、compact 游标重写、created_at 保序；运行中的会话会被拒绝
+// @Tags React
+// @Accept json
+// @Produce json
+// @Param req body params.ReactSessionForkReq true "会话分叉请求体"
+// @Success 200 {object} components.DefaultRenderWithTrace{data=params.ReactSessionForkResp}
+// @Failure 400 {object} components.DefaultRenderWithTrace
+// @Router /react/session/fork [post]
+func ForkSession(ctx *gin.Context) {
+	var req params.ReactSessionForkReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Errorf(ctx, "[React.ForkSession] 请求参数绑定失败: %v", err)
+		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf(err.Error()))
+		return
+	}
+
+	resp, err := reactService.ForkReactSession(ctx, req)
+	if err != nil {
+		zlog.Errorf(ctx, "[React.ForkSession] 分叉会话失败: sessionId=%s, throughMessageId=%s, err=%v", req.SessionID, req.ThroughMessageID, err)
+		components.RenderJsonFail(ctx, err)
+		return
+	}
+	components.RenderJsonSucc(ctx, resp)
+}
