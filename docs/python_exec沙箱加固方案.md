@@ -1,6 +1,7 @@
 # python_exec 沙箱加固方案(参考 Codex 实现)
 
 > 背景:对照 [codex沙箱学习.md](./codex沙箱学习.md) 中提炼的设计原则,评估并加固 react-base-service 的 python_exec 沙箱链路。
+> 续篇(2026-10-05):[ZCode与deepseek-harness沙箱学习.md](./ZCode与deepseek-harness沙箱学习.md) 对照另外两个 harness 提取了第二轮优化项(Z1 输出直写文件 / D2 denyReason 结构化 / Z2 API 面 registry 等),其 §5.5 排期与本文路线图互补。
 > 沙箱当前能力全景(能做什么/不能做什么/各防线实况)见 §一之二;§二 风险项 R1~R7 中 **P0-1(网络硬隔离)与 P0-3(Cookie 透传)已于 2026-10-03 落地**,R1 的静态扫描绕过仍存在(但可达面已被网络层封死),N2(工作目录不清理)一并修复;其余 ⚠️ 项仍未实施。
 > 威胁模型前提:**react-base-service 是多用户服务端**,python 执行的代码由 LLM 生成(可能被数据/prompt 注入影响);Codex 是本地单用户 CLI。**我们的威胁模型更严苛,没有"本地用户兜底审批"这一层**,因此对硬隔离的要求高于 Codex。
 
