@@ -1,132 +1,190 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="840" viewBox="0 0 1240 840" font-family="'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1030" viewBox="0 0 1400 1030" role="img" aria-labelledby="title desc" font-family="'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif">
+  <title id="title">react-base-service architecture</title>
+  <desc id="desc">Architecture of access channels, control plane, agent runtime, capability services and infrastructure.</desc>
   <defs>
-    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10Z" fill="#94A3B8"/>
     </marker>
+    <linearGradient id="runtime" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#EEF2FF"/>
+      <stop offset="1" stop-color="#F5F3FF"/>
+    </linearGradient>
+    <linearGradient id="control" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F0FDFA"/>
+      <stop offset="1" stop-color="#ECFEFF"/>
+    </linearGradient>
   </defs>
-  <rect width="1240" height="840" fill="#FFFFFF"/>
+  <rect width="1400" height="1030" fill="#FFFFFF"/>
 
-  <!-- ===== 客户端层 ===== -->
-  <rect x="30" y="28" width="1180" height="104" rx="16" fill="#F8FAFC" stroke="#E2E8F0"/>
-  <text x="46" y="52" font-size="14" font-weight="700" fill="#64748B">客户端</text>
-  <g fill="#FFFFFF" stroke="#E2E8F0">
-    <rect x="46"  y="62" width="272" height="44" rx="10"/>
-    <rect x="334" y="62" width="272" height="44" rx="10"/>
-    <rect x="622" y="62" width="272" height="44" rx="10"/>
-    <rect x="910" y="62" width="272" height="44" rx="10"/>
+  <text x="44" y="46" font-size="23" font-weight="800" fill="#0F172A">react-base-service · System Architecture</text>
+  <text x="44" y="72" font-size="14" fill="#64748B">Access channels → control plane → durable agent runtime → capability services → infrastructure</text>
+
+  <!-- Access -->
+  <rect x="40" y="96" width="1320" height="116" rx="18" fill="#F8FAFC" stroke="#E2E8F0"/>
+  <text x="58" y="122" font-size="13" font-weight="800" fill="#64748B">ACCESS CHANNELS</text>
+  <g fill="#FFFFFF" stroke="#CBD5E1">
+    <rect x="58" y="138" width="230" height="52" rx="11"/>
+    <rect x="304" y="138" width="230" height="52" rx="11"/>
+    <rect x="550" y="138" width="230" height="52" rx="11"/>
+    <rect x="796" y="138" width="230" height="52" rx="11"/>
+    <rect x="1042" y="138" width="300" height="52" rx="11"/>
   </g>
-  <g font-size="15" fill="#334155" text-anchor="middle">
-    <text x="182"  y="89">Web SDK（TypeScript）</text>
-    <text x="470"  y="89">Playground 联调页</text>
-    <text x="758"  y="89">Replay 回放页</text>
-    <text x="1046" y="89">业务方 Caller 服务</text>
-  </g>
-
-  <line x1="620" y1="132" x2="620" y2="158" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
-  <text x="640" y="152" font-size="14" fill="#64748B">WebSocket / HTTP · 免鉴权（X-User-Name）</text>
-
-  <!-- ===== 接入层 ===== -->
-  <rect x="30" y="162" width="1180" height="52" rx="12" fill="#EEF2FF" stroke="#C7D2FE"/>
-  <text x="620" y="194" font-size="16" font-weight="700" fill="#3730A3" text-anchor="middle">router + middleware — 路由注册 · 免鉴权中间件 · 静态资源 embed</text>
-
-  <line x1="620" y1="214" x2="620" y2="240" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
-
-  <!-- ===== 控制器层 ===== -->
-  <g fill="#FFFFFF" stroke="#E2E8F0">
-    <rect x="30"  y="244" width="470" height="100" rx="12"/>
-    <rect x="516" y="244" width="470" height="100" rx="12"/>
-    <rect x="1002" y="244" width="208" height="100" rx="12"/>
-  </g>
-  <text x="46"  y="278" font-size="15" font-weight="700" fill="#0F172A">controllers/http/react</text>
-  <text x="46"  y="306" font-size="13" fill="#64748B">WS 入口 · 会话 / 历史 / 异步任务 / 反馈 API</text>
-  <text x="532" y="278" font-size="15" font-weight="700" fill="#0F172A">controllers/http/{管理面}</text>
-  <text x="532" y="306" font-size="13" fill="#64748B">caller · agent · skill · tool · apikey</text>
-  <text x="532" y="328" font-size="13" fill="#64748B">mcp · systemprompt · llmmodel（注册类管理）</text>
-  <text x="1018" y="278" font-size="15" font-weight="700" fill="#0F172A">attachment</text>
-  <text x="1018" y="306" font-size="13" fill="#64748B">附件上传</text>
-
-  <line x1="620" y1="344" x2="620" y2="370" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
-
-  <!-- ===== service 层 ===== -->
-  <rect x="30" y="372" width="1180" height="300" rx="16" fill="#F8FAFC" stroke="#E2E8F0"/>
-  <text x="46" y="396" font-size="14" font-weight="700" fill="#64748B">service 层</text>
-
-  <!-- ReAct 运行时核心 -->
-  <rect x="46" y="406" width="640" height="250" rx="14" fill="#EEF2FF" stroke="#A5B4FC"/>
-  <text x="62" y="434" font-size="17" font-weight="700" fill="#312E81">service/react — ReAct 运行时核心</text>
-  <g fill="#FFFFFF" stroke="#C7D2FE">
-    <rect x="62"  y="450" width="300" height="40" rx="8"/>
-    <rect x="378" y="450" width="300" height="40" rx="8"/>
-    <rect x="62"  y="502" width="300" height="40" rx="8"/>
-    <rect x="378" y="502" width="300" height="40" rx="8"/>
-    <rect x="62"  y="554" width="300" height="40" rx="8"/>
-    <rect x="378" y="554" width="300" height="40" rx="8"/>
-    <rect x="62"  y="606" width="300" height="40" rx="8"/>
-    <rect x="378" y="606" width="300" height="40" rx="8"/>
-  </g>
-  <g font-size="13" fill="#3730A3" text-anchor="middle">
-    <text x="212" y="475">engine — ReAct 主循环</text>
-    <text x="528" y="475">Meta Tool · 两段式工具加载</text>
-    <text x="212" y="527">delegate_agent 多 Agent 委派</text>
-    <text x="528" y="527">Plan 模式（结构化计划）</text>
-    <text x="212" y="579">长期记忆 / 图谱记忆注入</text>
-    <text x="528" y="579">上下文压缩（语义摘要）</text>
-    <text x="212" y="631">模型互备 model_fallback</text>
-    <text x="528" y="631">HITL：ask_question · 确认</text>
+  <g text-anchor="middle" font-size="14" fill="#334155">
+    <text x="173" y="169">Web SDK / Business Caller</text>
+    <text x="419" y="169">Playground / Replay</text>
+    <text x="665" y="169">Workflow Admin</text>
+    <text x="911" y="169">External MCP Clients</text>
+    <text x="1192" y="169">Headless / Scheduled Trigger</text>
   </g>
 
-  <!-- 右列服务 -->
-  <g fill="#FFFFFF" stroke="#E2E8F0">
-    <rect x="710" y="406" width="500" height="56" rx="10"/>
-    <rect x="710" y="472" width="500" height="56" rx="10"/>
-    <rect x="710" y="538" width="500" height="56" rx="10"/>
-    <rect x="710" y="604" width="500" height="56" rx="10"/>
+  <line x1="700" y1="212" x2="700" y2="242" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Gateway -->
+  <rect x="40" y="248" width="1320" height="66" rx="14" fill="#EEF2FF" stroke="#C7D2FE"/>
+  <text x="700" y="276" text-anchor="middle" font-size="16" font-weight="800" fill="#3730A3">Router · Middleware · HTTP / WebSocket / MCP Streamable HTTP</text>
+  <text x="700" y="298" text-anchor="middle" font-size="12.5" fill="#6366F1">caller / user identity · admin token · MCP app auth · embedded web assets</text>
+
+  <line x1="700" y1="314" x2="700" y2="344" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Main planes -->
+  <rect x="40" y="350" width="410" height="334" rx="18" fill="url(#control)" stroke="#99F6E4"/>
+  <text x="60" y="378" font-size="15" font-weight="800" fill="#115E59">CONTROL PLANE</text>
+  <text x="60" y="401" font-size="12.5" fill="#0F766E">Configuration, registry and operational management</text>
+
+  <g fill="#FFFFFF" stroke="#CCFBF1">
+    <rect x="60" y="422" width="370" height="52" rx="10"/>
+    <rect x="60" y="486" width="370" height="52" rx="10"/>
+    <rect x="60" y="550" width="370" height="52" rx="10"/>
+    <rect x="60" y="614" width="370" height="52" rx="10"/>
   </g>
-  <g font-size="14" font-weight="700" fill="#0F172A">
-    <text x="726" y="429">service/{tool, skill, agent, systemprompt, caller}</text>
-    <text x="726" y="495">service/mcpclient — MCP 客户端</text>
-    <text x="726" y="561">service/workspace — 代码工作区</text>
-    <text x="726" y="627">service/{asynctask, skillchatfile}</text>
-  </g>
-  <g font-size="12.5" fill="#64748B">
-    <text x="726" y="450">注册类资源管理 · 白名单 · default 作用域</text>
-    <text x="726" y="516">custom.yaml 静态声明 + DB 动态登记（工具同步）</text>
-    <text x="726" y="582">git worktree 隔离 + 只读 repo MCP 检索（ws_*）</text>
-    <text x="726" y="648">异步任务 Provider 框架 · 附件 / 产物存储（COS）</text>
+  <g font-size="13.5" fill="#134E4A">
+    <text x="76" y="446" font-weight="700">Resource Registry</text>
+    <text x="76" y="465" font-size="12">caller · tool · skill · agent · prompt · model</text>
+    <text x="76" y="510" font-weight="700">MCP & Bundle</text>
+    <text x="76" y="529" font-size="12">client connections · gateway apps · plugin packages</text>
+    <text x="76" y="574" font-weight="700">Runtime Settings</text>
+    <text x="76" y="593" font-size="12">DB override &gt; YAML baseline · caller-level allow_plan</text>
+    <text x="76" y="638" font-weight="700">Workflow Manager</text>
+    <text x="76" y="657" font-size="12">cron · dispatch · history · breaker · notifications</text>
   </g>
 
-  <line x1="250" y1="672" x2="250" y2="706" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
-  <line x1="620" y1="672" x2="620" y2="706" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
-  <line x1="990" y1="672" x2="990" y2="706" stroke="#94A3B8" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="474" y="350" width="886" height="334" rx="18" fill="url(#runtime)" stroke="#C4B5FD"/>
+  <text x="494" y="378" font-size="15" font-weight="800" fill="#4338CA">EXECUTION PLANE · AGENT RUNTIME</text>
+  <text x="494" y="401" font-size="12.5" fill="#6366F1">A durable run engine; no hard stop based on tool-call count</text>
 
-  <!-- ===== 基础设施层 ===== -->
-  <rect x="30"  y="710" width="270" height="110" rx="12" fill="#ECFDF5" stroke="#A7F3D0"/>
-  <text x="46"  y="744" font-size="16" font-weight="700" fill="#065F46">LLM 网关</text>
-  <text x="46"  y="770" font-size="13" fill="#047857">claude / gpt 兼容 / minimax</text>
-  <text x="46"  y="794" font-size="13" fill="#047857">流式输出 + 工具调用</text>
+  <!-- Runtime top row -->
+  <g fill="#FFFFFF" stroke="#DDD6FE">
+    <rect x="494" y="422" width="200" height="74" rx="11"/>
+    <rect x="708" y="422" width="200" height="74" rx="11"/>
+    <rect x="922" y="422" width="200" height="74" rx="11"/>
+    <rect x="1136" y="422" width="204" height="74" rx="11"/>
+  </g>
+  <g text-anchor="middle">
+    <text x="594" y="449" font-size="14" font-weight="800" fill="#312E81">ReAct Engine</text>
+    <text x="594" y="470" font-size="11.5" fill="#6D28D9">stream · tool loop · retry</text>
+    <text x="594" y="486" font-size="11.5" fill="#6D28D9">compact · soft landing</text>
 
-  <rect x="316" y="710" width="170" height="110" rx="12" fill="#F0F9FF" stroke="#BAE6FD"/>
-  <text x="332" y="744" font-size="16" font-weight="700" fill="#0C4A6E">MySQL</text>
-  <text x="332" y="770" font-size="13" fill="#0369A1">GORM · 26 张表</text>
-  <text x="332" y="794" font-size="13" fill="#0369A1">sql/init.sql</text>
+    <text x="808" y="449" font-size="14" font-weight="800" fill="#312E81">Plan Runtime</text>
+    <text x="808" y="470" font-size="11.5" fill="#6D28D9">planner · scoped runs</text>
+    <text x="808" y="486" font-size="11.5" fill="#6D28D9">wait / resume / retry</text>
 
-  <rect x="502" y="710" width="140" height="110" rx="12" fill="#FFF1F2" stroke="#FECDD3"/>
-  <text x="518" y="744" font-size="16" font-weight="700" fill="#881337">Redis</text>
-  <text x="518" y="770" font-size="13" fill="#9F1239">redigo</text>
-  <text x="518" y="794" font-size="13" fill="#9F1239">元数据缓存</text>
+    <text x="1022" y="449" font-size="14" font-weight="800" fill="#312E81">Multi-Agent</text>
+    <text x="1022" y="470" font-size="11.5" fill="#6D28D9">delegate · wait_agent</text>
+    <text x="1022" y="486" font-size="11.5" fill="#6D28D9">background · continue</text>
 
-  <rect x="658" y="710" width="130" height="110" rx="12" fill="#FFFBEB" stroke="#FDE68A"/>
-  <text x="674" y="744" font-size="16" font-weight="700" fill="#78350F">COS</text>
-  <text x="674" y="770" font-size="13" fill="#92400E">对象存储</text>
-  <text x="674" y="794" font-size="13" fill="#92400E">产物 / 附件</text>
+    <text x="1238" y="449" font-size="14" font-weight="800" fill="#312E81">Steering & Queue</text>
+    <text x="1238" y="470" font-size="11.5" fill="#6D28D9">guided input · pending input</text>
+    <text x="1238" y="486" font-size="11.5" fill="#6D28D9">runtime command box</text>
+  </g>
 
-  <rect x="804" y="710" width="160" height="110" rx="12" fill="#F5F3FF" stroke="#DDD6FE"/>
-  <text x="820" y="744" font-size="16" font-weight="700" fill="#4C1D95">Python 沙箱</text>
-  <text x="820" y="770" font-size="13" fill="#5B21B6">python_exec</text>
-  <text x="820" y="794" font-size="13" fill="#5B21B6">数据分析产物</text>
+  <!-- Runtime second row -->
+  <g fill="#FFFFFF" stroke="#DDD6FE">
+    <rect x="494" y="510" width="260" height="70" rx="11"/>
+    <rect x="768" y="510" width="260" height="70" rx="11"/>
+    <rect x="1042" y="510" width="298" height="70" rx="11"/>
+    <rect x="494" y="594" width="260" height="70" rx="11"/>
+    <rect x="768" y="594" width="260" height="70" rx="11"/>
+    <rect x="1042" y="594" width="298" height="70" rx="11"/>
+  </g>
+  <g font-size="13.5" fill="#3730A3">
+    <text x="510" y="536" font-weight="800">Two-stage Tool Loading</text>
+    <text x="510" y="557" font-size="11.5">summary index → get_tool → execute_tool</text>
 
-  <rect x="980" y="710" width="230" height="110" rx="12" fill="#F0FDFA" stroke="#99F6E4"/>
-  <text x="996" y="744" font-size="16" font-weight="700" fill="#134E4A">Graphiti</text>
-  <text x="996" y="770" font-size="13" fill="#0F766E">时序事实图谱</text>
-  <text x="996" y="794" font-size="13" fill="#0F766E">graph_memory_* 工具</text>
+    <text x="784" y="536" font-weight="800">HITL & Permission</text>
+    <text x="784" y="557" font-size="11.5">ask_question · tool_confirm · client tool</text>
+
+    <text x="1058" y="536" font-weight="800">Context & Memory Injection</text>
+    <text x="1058" y="557" font-size="11.5">compact · resultRef · long-term · Graphiti</text>
+
+    <text x="510" y="620" font-weight="800">Headless Workflow Run</text>
+    <text x="510" y="641" font-size="11.5">scheduled profile · timeout · artifact report</text>
+
+    <text x="784" y="620" font-weight="800">Judge Outer Loop</text>
+    <text x="784" y="641" font-size="11.5">goal review · follow-up · semantic risk</text>
+
+    <text x="1058" y="620" font-weight="800">Durable Session / Event History</text>
+    <text x="1058" y="641" font-size="11.5">session · run · message · replay · feedback</text>
+  </g>
+
+  <!-- Cross-plane arrow -->
+  <line x1="450" y1="517" x2="474" y2="517" stroke="#14B8A6" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <line x1="700" y1="684" x2="700" y2="714" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Capability services -->
+  <rect x="40" y="720" width="1320" height="144" rx="18" fill="#F8FAFC" stroke="#E2E8F0"/>
+  <text x="58" y="746" font-size="13" font-weight="800" fill="#64748B">CAPABILITY SERVICES</text>
+  <g fill="#FFFFFF" stroke="#CBD5E1">
+    <rect x="58" y="762" width="244" height="82" rx="11"/>
+    <rect x="316" y="762" width="244" height="82" rx="11"/>
+    <rect x="574" y="762" width="244" height="82" rx="11"/>
+    <rect x="832" y="762" width="244" height="82" rx="11"/>
+    <rect x="1090" y="762" width="252" height="82" rx="11"/>
+  </g>
+  <g text-anchor="middle">
+    <text x="180" y="789" font-size="13.5" font-weight="800" fill="#334155">MCP Client / Gateway</text>
+    <text x="180" y="811" font-size="11.5" fill="#64748B">stdio · HTTP · official SDK</text>
+    <text x="180" y="828" font-size="11.5" fill="#64748B">tool registry synchronization</text>
+
+    <text x="438" y="789" font-size="13.5" font-weight="800" fill="#334155">Workspace</text>
+    <text x="438" y="811" font-size="11.5" fill="#64748B">(service, commit) shared entry</text>
+    <text x="438" y="828" font-size="11.5" fill="#64748B">bare mirror · worktree · repo MCP</text>
+
+    <text x="696" y="789" font-size="13.5" font-weight="800" fill="#334155">Memory</text>
+    <text x="696" y="811" font-size="11.5" fill="#64748B">resident / index / detached</text>
+    <text x="696" y="828" font-size="11.5" fill="#64748B">extractor · revisions · Graphiti</text>
+
+    <text x="954" y="789" font-size="13.5" font-weight="800" fill="#334155">Tool & Artifact</text>
+    <text x="954" y="811" font-size="11.5" fill="#64748B">HTTP · MCP · client · Python</text>
+    <text x="954" y="828" font-size="11.5" fill="#64748B">attachment · async task · resultRef</text>
+
+    <text x="1216" y="789" font-size="13.5" font-weight="800" fill="#334155">Web Capability</text>
+    <text x="1216" y="811" font-size="11.5" fill="#64748B">web_search · web_fetch</text>
+    <text x="1216" y="828" font-size="11.5" fill="#64748B">SearXNG · public HTTP fetch</text>
+  </g>
+
+  <line x1="700" y1="864" x2="700" y2="894" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Infrastructure -->
+  <rect x="40" y="900" width="1320" height="104" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+  <text x="58" y="926" font-size="13" font-weight="800" fill="#64748B">INFRASTRUCTURE</text>
+  <g font-size="13" fill="#334155" text-anchor="middle">
+    <text x="150" y="962" font-weight="700">LLM Providers</text>
+    <text x="150" y="982" font-size="11.5" fill="#64748B">Claude / GPT-compatible / MiniMax</text>
+
+    <text x="380" y="962" font-weight="700">MySQL · 38 tables</text>
+    <text x="380" y="982" font-size="11.5" fill="#64748B">durable runtime & registry state</text>
+
+    <text x="590" y="962" font-weight="700">Redis</text>
+    <text x="590" y="982" font-size="11.5" fill="#64748B">metadata / runtime helpers</text>
+
+    <text x="790" y="962" font-weight="700">MinIO / S3 / COS</text>
+    <text x="790" y="982" font-size="11.5" fill="#64748B">artifacts & attachments</text>
+
+    <text x="1010" y="962" font-weight="700">Python Sandbox</text>
+    <text x="1010" y="982" font-size="11.5" fill="#64748B">isolated network · read-only FS</text>
+
+    <text x="1240" y="962" font-weight="700">Observability</text>
+    <text x="1240" y="982" font-size="11.5" fill="#64748B">Prometheus · Loki · Grafana</text>
+  </g>
 </svg>
