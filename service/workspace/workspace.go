@@ -1,18 +1,22 @@
-// Package workspace 实现服务端代码工作区（P2-1，方案 §4.2.1）：
+// Package workspace 实现服务端代码工作区（P2-1，方案 §4.2.1；共享化改造见
+// docs/todo/20261004_代码工作区共享化改造方案.md）：
 //
 //	A. RuntimeSourceResolver：service+env → repo_url+ref。P2 首版为静态配置白名单
 //	   （llm.react.workspace.resolvers），线上镜像 digest → commit 的真实解析后续接公司基建；
 //	B. RepoMirrorCache：bare mirror 单副本缓存（git clone --mirror / fetch --prune），
-//	   全部 worktree 共享对象库，避免每次完整 clone；
-//	C. WorkspaceAllocator：每 run 一个 git worktree（秒级、按 commit 精确锁定），
-//	   run 终态时统一 release（worktree remove + 目录清理 + 动态 MCP 卸载）；
-//	D. 挂载：为该 run 动态实例化只读 repo MCP（复用 mcpclient stdio 适配器，
-//	   REPO_ROOT=worktree，工具同步为 caller 名下副本，工具名前缀 = ws_<service>_）。
+//	   全部 worktree 共享对象库，避免每次完整 clone；同一 mirror 的 clone/fetch 按
+//	   fetchMu 串行化，防止并发 fetch 抢 git .lock 报错；
+//	C. WorkspaceAllocator：(service, commit) 粒度共享分配——同一 commit 的 worktree 与
+//	   repo MCP 子进程全局仅一份，多 run / 多 caller 引用计数复用（检索只读无写，共享安全）；
+//	   run 终态减计数，caller 归零清其工具副本、总归零才回收 worktree 与 MCP 子进程；
+//	D. 挂载：共享实例动态挂载只读 repo MCP（复用 mcpclient stdio 适配器，REPO_ROOT=worktree，
+//	   工具同步为 caller 名下副本，工具名前缀 = ws_<service>_<commit8>_——名字带 commit 天然
+//	   唯一，不再触达 EnsureServer 的同名替换语义，多 run 并发加载互不顶替）。
 //
 // 安全面：service/env 仅允许字母数字下划线中划线（防路径穿越）；ref 来自配置白名单并经
 // refPattern 字符校验；git 子命令有白名单；全部动态参数进入子进程前均做过字符正则校验
 // （禁止空白与 shell 元字符），且不经 shell 执行；resolver 静态白名单不接收任意仓库地址；
-// worktree 只读语义由 repo-mcp 工具集保证（无写工具）。
+// worktree 只读语义由 repo-mcp 工具集保证（无写工具），共享不引入并发写风险。
 package workspace
 
 import (
@@ -49,7 +53,16 @@ var (
 	}
 )
 
-// Allocation 是一次成功的工作区分配。
+// mcpclient 触点抽成变量便于单测注入替身（与 pyexec.pythonExecArtifactUploader 同一模式）；
+// 生产路径就是直连 mcpclient 包函数。
+var (
+	ensureRepoServer  = mcpclient.EnsureServer
+	syncCallerTools   = mcpclient.SyncServerRegistryScoped
+	removeCallerTools = mcpclient.RemoveRegistryToolsForCaller
+	removeRepoServer  = mcpclient.RemoveServer
+)
+
+// Allocation 是一次成功的工作区分配（共享实例的快照视图）。
 type Allocation struct {
 	Service string `json:"service"`
 	Env     string `json:"env"`
@@ -57,20 +70,63 @@ type Allocation struct {
 	Ref     string `json:"ref"`
 	Commit  string `json:"commit"`
 	Path    string `json:"path"`
-	// MCPServerName 是动态挂载的 repo MCP 名（工具名前缀 = <name>_）。
+	// MCPServerName 是共享实例挂载的 repo MCP 名（工具名前缀 = <name>_）。
 	MCPServerName string `json:"mcpServerName"`
-	// CallerKey 是工具副本同步的归属 caller（release 时按此清理）。
+	// CallerKey 是本次分配的归属 caller（caller 计数归零时清理其工具副本）。
 	CallerKey string `json:"callerKey"`
-	// LoadedAt 是分配完成时间（管理面运行视图展示）。
+	// LoadedAt 是共享实例冷启动完成时间（管理面运行视图展示）。
 	LoadedAt *time.Time `json:"loadedAt"`
 }
 
-// Manager 管理工作区分配与释放；进程内单例（Default()）。
+// wsEntry 是一个 (service, commit) 粒度的共享工作区实例：worktree 与 repo MCP 子进程
+// 全局仅此一份，holders 记录 callerKey → 引用它的活跃 run 数。检索只读，多 run 共享安全。
+type wsEntry struct {
+	key        string
+	service    string
+	env        string
+	repoURL    string
+	ref        string
+	commit     string
+	mirrorPath string
+	worktree   string
+	serverName string
+	loadedAt   time.Time
+
+	// started 由 keyMu（entry key 生命周期锁）保护；holders 由 Manager.mu 保护。
+	started bool
+	holders map[string]int
+}
+
+// allocation 生成对外快照。
+func (e *wsEntry) allocation() *Allocation {
+	loaded := e.loadedAt
+	return &Allocation{
+		Service:       e.service,
+		Env:           e.env,
+		RepoURL:       e.repoURL,
+		Ref:           e.ref,
+		Commit:        e.commit,
+		Path:          e.worktree,
+		MCPServerName: e.serverName,
+		LoadedAt:      &loaded,
+	}
+}
+
+// runRef 是 runID 名下的一次引用登记。
+type runRef struct {
+	entry     *wsEntry
+	callerKey string
+}
+
+// Manager 管理共享工作区实例与引用计数；进程内单例（Default()）。
 type Manager struct {
 	mu      sync.Mutex
 	root    string
 	mirrors string
-	active  map[string][]*Allocation // runID → allocations
+	entries map[string]*wsEntry           // service@commit → 共享实例
+	runRefs map[string]map[string]*runRef // runID → service → 引用（ReleaseRun 索引）
+	fetchMu map[string]*sync.Mutex        // mirrorPath → clone/fetch 互斥
+	keyMu   map[string]*sync.Mutex        // entry key → 生命周期互斥（冷启动与回收串行）
 }
 
 var (
@@ -91,14 +147,18 @@ func Default() *Manager {
 		defaultManager = &Manager{
 			root:    root,
 			mirrors: mirrors,
-			active:  map[string][]*Allocation{},
+			entries: map[string]*wsEntry{},
+			runRefs: map[string]map[string]*runRef{},
+			fetchMu: map[string]*sync.Mutex{},
+			keyMu:   map[string]*sync.Mutex{},
 		}
 		defaultManager.cleanupOrphans()
 	})
 	return defaultManager
 }
 
-// Load 解析服务代码并分配 worktree + 挂载 repo MCP。同一 run 内同一 service 幂等。
+// Load 解析服务代码并接入 (service, commit) 共享工作区。同一 run 内同一 service 幂等；
+// 热路径（实例已就绪）零 git 操作、零 MCP 拉起，冷路径仅首个加载方创建 worktree 与 repo MCP。
 func (m *Manager) Load(ctx *gin.Context, runID, callerKey, service, env string) (*Allocation, error) {
 	if !conf.GetReactRuntimeConfig().Workspace.WorkspaceEnabled() {
 		return nil, components.ErrorParamInvalid.Sprintf("workspace 未启用（llm.react.workspace.enabled）")
@@ -113,18 +173,18 @@ func (m *Manager) Load(ctx *gin.Context, runID, callerKey, service, env string) 
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, alloc := range m.active[runID] {
-		if alloc.Service == service {
-			return alloc, nil
-		}
+	if ref, ok := m.runRefs[runID][service]; ok { // 同 run 同 service：幂等复用，不重复计数
+		m.mu.Unlock()
+		alloc := ref.entry.allocation()
+		alloc.CallerKey = callerKey
+		return alloc, nil
 	}
+	m.mu.Unlock()
 
 	repoURL, ref, err := Resolve(service, env)
 	if err != nil {
 		return nil, err
 	}
-
 	mirrorPath, err := m.ensureMirror(repoURL)
 	if err != nil {
 		return nil, err
@@ -133,112 +193,226 @@ func (m *Manager) Load(ctx *gin.Context, runID, callerKey, service, env string) 
 	if err != nil {
 		return nil, err
 	}
-
 	// worktree 必须用绝对路径：git 在 mirror 目录内执行，相对路径会相对 mirror 解析。
-	worktree, err := filepath.Abs(filepath.Join(m.root, runID, service))
+	worktree, err := filepath.Abs(filepath.Join(m.root, service, commit[:12]))
 	if err != nil {
 		return nil, err
 	}
-	if err := m.git(mirrorPath, "worktree", "add", "--detach", worktree, commit); err != nil {
-		// 已存在（异常残留）时先移除再重试一次。
-		_ = m.git(mirrorPath, "worktree", "remove", "--force", worktree)
-		_ = m.git(mirrorPath, "worktree", "add", "--detach", worktree, commit)
+	// server 名受 mcpclient validateServerName 的 32 字符上限约束（ws_ + service + _ + commit8），
+	// 超长 service 提前给出可读错误，而不是挂载阶段才报晦涩失败。
+	serverName := fmt.Sprintf("ws_%s_%s", service, commit[:8])
+	if len(serverName) > 32 {
+		return nil, components.ErrorParamInvalid.Sprintf("service 名过长: %q（server 名 %q 超出 MCP 32 字符上限，service 须 ≤ 20 字符）", service, serverName)
 	}
 
-	// 动态挂载只读 repo MCP 并同步工具副本到该 caller（工具名 ws_<service>_<tool>）。
-	serverName := "ws_" + service
-	if _, err := mcpclient.EnsureServer(mcpclient.ServerConfig{
-		Name: serverName,
-		Kind: "repo",
-		Env:  map[string]string{"REPO_ROOT": worktree},
-	}); err != nil {
-		_ = m.git(mirrorPath, "worktree", "remove", "--force", worktree)
-		return nil, components.ErrorToolExecFailed.Sprintf("挂载 repo MCP 失败: %v", err)
+	key := service + "@" + commit
+	m.mu.Lock()
+	if ref, ok := m.runRefs[runID][service]; ok { // 解析期间同 run 已加载：复用，避免双计数
+		m.mu.Unlock()
+		alloc := ref.entry.allocation()
+		alloc.CallerKey = callerKey
+		return alloc, nil
 	}
-	if _, err := mcpclient.SyncServerRegistryScoped(callerKey, serverName, false); err != nil {
-		zlog.Warnf(ctx, "[Workspace] 工具同步失败(尝试继续): server=%s, err=%v", serverName, err)
+	e, ok := m.entries[key]
+	if !ok {
+		e = &wsEntry{
+			key:        key,
+			service:    service,
+			env:        env,
+			repoURL:    repoURL,
+			ref:        ref,
+			commit:     commit,
+			mirrorPath: mirrorPath,
+			worktree:   worktree,
+			serverName: serverName,
+			loadedAt:   time.Now(),
+			holders:    map[string]int{},
+		}
+		m.entries[key] = e
+	}
+	if m.runRefs[runID] == nil {
+		m.runRefs[runID] = map[string]*runRef{}
+	}
+	m.runRefs[runID][service] = &runRef{entry: e, callerKey: callerKey}
+	e.holders[callerKey]++
+	m.mu.Unlock()
+
+	if err := e.ensureStarted(m); err != nil {
+		m.rollbackRegistration(runID, callerKey, service, e)
+		return nil, err
+	}
+	// 每个 caller 一份工具副本（名字 ws_<service>_<commit8>_<tool>）。
+	if _, err := syncCallerTools(callerKey, e.serverName, false); err != nil {
+		zlog.Warnf(ctx, "[Workspace] 工具同步失败(尝试继续): server=%s, err=%v", e.serverName, err)
 	}
 
-	now := time.Now()
-	alloc := &Allocation{
-		Service:       service,
-		Env:           env,
-		RepoURL:       repoURL,
-		Ref:           ref,
-		Commit:        commit,
-		Path:          worktree,
-		MCPServerName: serverName,
-		CallerKey:     callerKey,
-		LoadedAt:      &now,
-	}
-	m.active[runID] = append(m.active[runID], alloc)
-	zlog.Infof(ctx, "[Workspace] 工作区就绪: runId=%s, service=%s@%s(ref=%s), path=%s, tools=%s_*", runID, service, commit, ref, worktree, serverName)
+	zlog.Infof(ctx, "[Workspace] 工作区就绪: runId=%s, service=%s@%s(ref=%s), path=%s, tools=%s_*", runID, service, commit, ref, worktree, e.serverName)
+	alloc := e.allocation()
+	alloc.CallerKey = callerKey
 	return alloc, nil
 }
 
-// ReleaseRun 释放一个 run 的全部工作区（幂等，run 终态统一调用）。
+// ReleaseRun 释放一个 run 的全部工作区引用（幂等，run 终态统一调用）：
+// caller 计数归零时清理该 caller 的工具副本；总引用归零时回收 worktree 与 repo MCP。
+// IO（DB/进程/目录）在锁外执行，不阻塞其它 Load/Release。
 func (m *Manager) ReleaseRun(ctx *gin.Context, runID string) {
 	m.mu.Lock()
-	allocs := m.active[runID]
-	delete(m.active, runID)
-	m.mu.Unlock()
+	refs := m.runRefs[runID]
+	delete(m.runRefs, runID)
 
-	for _, alloc := range allocs {
-		m.release(ctx, alloc)
-	}
-}
-
-// ActiveAllocation 是管理面运行视图条目（/react/workspace/active）。
-type ActiveAllocation struct {
-	RunID   string     `json:"runId"`
-	Service string     `json:"service"`
-	Env     string     `json:"env"`
-	Ref     string     `json:"ref"`
-	Commit  string     `json:"commit"`
-	Path    string     `json:"path"`
-	Tools   string     `json:"tools"`
-	Caller  string     `json:"callerKey"`
-	Loaded  *time.Time `json:"loadedAt"`
-}
-
-// ActiveSnapshot 返回当前活跃 worktree 清单（值拷贝，含挂载时间）。
-func (m *Manager) ActiveSnapshot() []ActiveAllocation {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	snapshot := make([]ActiveAllocation, 0, len(m.active))
-	for runID, allocs := range m.active {
-		for _, alloc := range allocs {
-			snapshot = append(snapshot, ActiveAllocation{
-				RunID:   runID,
-				Service: alloc.Service,
-				Env:     alloc.Env,
-				Ref:     alloc.Ref,
-				Commit:  alloc.Commit,
-				Path:    alloc.Path,
-				Tools:   alloc.MCPServerName + "_*",
-				Caller:  alloc.CallerKey,
-				Loaded:  alloc.LoadedAt,
-			})
+	type toolCleanup struct{ server, caller string }
+	var toolCleanups []toolCleanup
+	var teardowns []*wsEntry
+	for _, ref := range refs {
+		e := ref.entry
+		if n, ok := e.holders[ref.callerKey]; ok {
+			if n <= 1 {
+				delete(e.holders, ref.callerKey)
+				toolCleanups = append(toolCleanups, toolCleanup{server: e.serverName, caller: ref.callerKey})
+			} else {
+				e.holders[ref.callerKey] = n - 1
+			}
+		}
+		if len(e.holders) == 0 {
+			if _, live := m.entries[e.key]; live {
+				delete(m.entries, e.key)
+				teardowns = append(teardowns, e)
+			}
 		}
 	}
+	m.mu.Unlock()
+
+	for _, c := range toolCleanups {
+		// 先摘工具副本（模型侧 get_tool 不再命中），再由 teardown 回收 server 与 worktree。
+		if _, err := removeCallerTools(ctx, c.server, c.caller); err != nil {
+			zlog.Warnf(ctx, "[Workspace] 清理工具副本失败(忽略): server=%s, err=%v", c.server, err)
+		}
+	}
+	for _, e := range teardowns {
+		m.teardown(ctx, e)
+	}
+}
+
+// rollbackRegistration 撤销 Load 的登记（冷启动失败路径）：减 run/caller 引用；
+// 总引用归零时把 entry 从索引摘除（未 started，无 worktree/MCP 需要回收）。
+func (m *Manager) rollbackRegistration(runID, callerKey, service string, e *wsEntry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if refs, ok := m.runRefs[runID]; ok && refs[service] != nil && refs[service].entry == e {
+		delete(refs, service)
+		if len(refs) == 0 {
+			delete(m.runRefs, runID)
+		}
+	}
+	if n, ok := e.holders[callerKey]; ok {
+		if n <= 1 {
+			delete(e.holders, callerKey)
+		} else {
+			e.holders[callerKey] = n - 1
+		}
+	}
+	if len(e.holders) == 0 {
+		delete(m.entries, e.key)
+	}
+}
+
+// ActiveEntry 是管理面运行视图条目（/react/workspace/active）：一个 (service, commit)
+// 共享实例及其引用方。多 run 共享后，视图按实例聚合而非按 run 罗列。
+type ActiveEntry struct {
+	Service string         `json:"service"`
+	Commit  string         `json:"commit"`
+	Ref     string         `json:"ref"`
+	Path    string         `json:"path"`
+	Server  string         `json:"server"`
+	Tools   string         `json:"tools"`
+	Runs    []string       `json:"runs"`
+	Callers map[string]int `json:"callers"`
+	Loaded  *time.Time     `json:"loadedAt"`
+}
+
+// ActiveSnapshot 返回当前活跃共享实例清单（值拷贝，含引用 run、caller 计数与挂载时间）。
+func (m *Manager) ActiveSnapshot() []ActiveEntry {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	runsByKey := make(map[string][]string, len(m.runRefs))
+	for runID, refs := range m.runRefs {
+		for _, ref := range refs {
+			runsByKey[ref.entry.key] = append(runsByKey[ref.entry.key], runID)
+		}
+	}
+	snapshot := make([]ActiveEntry, 0, len(m.entries))
+	for _, e := range m.entries {
+		callers := make(map[string]int, len(e.holders))
+		for k, v := range e.holders {
+			callers[k] = v
+		}
+		loaded := e.loadedAt
+		snapshot = append(snapshot, ActiveEntry{
+			Service: e.service,
+			Commit:  e.commit,
+			Ref:     e.ref,
+			Path:    e.worktree,
+			Server:  e.serverName,
+			Tools:   e.serverName + "_*",
+			Runs:    runsByKey[e.key],
+			Callers: callers,
+			Loaded:  &loaded,
+		})
+	}
+	sort.Slice(snapshot, func(i, j int) bool {
+		if snapshot[i].Service != snapshot[j].Service {
+			return snapshot[i].Service < snapshot[j].Service
+		}
+		return snapshot[i].Commit < snapshot[j].Commit
+	})
 	return snapshot
 }
 
-func (m *Manager) release(ctx *gin.Context, alloc *Allocation) {
-	// 先摘工具与 MCP 客户端，再回收 worktree，模型侧 get_tool 不再命中。
-	if _, err := mcpclient.RemoveRegistryToolsForCaller(ctx, alloc.MCPServerName, alloc.CallerKey); err != nil {
-		zlog.Warnf(ctx, "[Workspace] 清理工具副本失败(忽略): server=%s, err=%v", alloc.MCPServerName, err)
+// ensureStarted 冷启动共享实例（幂等）：创建 worktree 与 repo MCP 子进程。
+// 生命周期锁按 entry key 序列化（跨 entry 对象）：首个加载方创建，后来者等锁后经 started
+// 双检直接返回；也防止与旧实例的 teardown 交叉重建同一 worktree 路径。
+// worktree 残留只可能来自异常退出（key 锁下无人同时在用该路径），强删安全。
+func (e *wsEntry) ensureStarted(m *Manager) error {
+	lock := m.entryLock(e.key)
+	lock.Lock()
+	defer lock.Unlock()
+	if e.started {
+		return nil
 	}
-	if err := mcpclient.RemoveServer(alloc.MCPServerName); err != nil {
-		zlog.Warnf(ctx, "[Workspace] 停止 repo MCP 失败(忽略): server=%s, err=%v", alloc.MCPServerName, err)
+	if _, err := runGitIn(e.mirrorPath, "worktree", "add", "--detach", e.worktree, e.commit); err != nil {
+		_, _ = runGitIn(e.mirrorPath, "worktree", "remove", "--force", e.worktree)
+		if _, err := runGitIn(e.mirrorPath, "worktree", "add", "--detach", e.worktree, e.commit); err != nil {
+			return components.ErrorToolExecFailed.Sprintf("创建 worktree 失败: %v", err)
+		}
 	}
-	mirrorPath := m.mirrorPath(alloc.RepoURL)
-	if err := m.git(mirrorPath, "worktree", "remove", "--force", alloc.Path); err != nil {
-		_ = os.RemoveAll(alloc.Path)
-		_ = m.git(mirrorPath, "worktree", "prune")
+	if _, err := ensureRepoServer(mcpclient.ServerConfig{
+		Name: e.serverName,
+		Kind: "repo",
+		Env:  map[string]string{"REPO_ROOT": e.worktree},
+	}); err != nil {
+		_, _ = runGitIn(e.mirrorPath, "worktree", "remove", "--force", e.worktree)
+		return components.ErrorToolExecFailed.Sprintf("挂载 repo MCP 失败: %v", err)
 	}
-	_ = os.RemoveAll(filepath.Dir(alloc.Path)) // runID 目录空了顺带删
-	zlog.Infof(ctx, "[Workspace] 工作区已释放: service=%s", alloc.Service)
+	e.started = true
+	return nil
+}
+
+// teardown 回收共享实例（总引用归零时调用）：停 repo MCP、删 worktree 与空服务目录。
+// 与 ensureStarted 共用 entry key 生命周期锁：旧实例回收与新实例重建同一 worktree 路径
+// 不可能交叉执行。
+func (m *Manager) teardown(ctx *gin.Context, e *wsEntry) {
+	lock := m.entryLock(e.key)
+	lock.Lock()
+	defer lock.Unlock()
+	if err := removeRepoServer(e.serverName); err != nil {
+		zlog.Warnf(ctx, "[Workspace] 停止 repo MCP 失败(忽略): server=%s, err=%v", e.serverName, err)
+	}
+	if err := m.git(e.mirrorPath, "worktree", "remove", "--force", e.worktree); err != nil {
+		_ = os.RemoveAll(e.worktree)
+		_ = m.git(e.mirrorPath, "worktree", "prune")
+	}
+	_ = os.Remove(filepath.Dir(e.worktree)) // 服务目录空了顺带删（非空则失败，忽略）
+	zlog.Infof(ctx, "[Workspace] 共享工作区已回收: service=%s@%s", e.service, e.commit)
 }
 
 // Resolve 按 service+env 查静态白名单：env 命中 refs 则用之，否则回退 default_ref（空为 HEAD）。
@@ -272,9 +446,42 @@ func (m *Manager) mirrorPath(repoURL string) string {
 	return filepath.Join(m.mirrors, name+".git")
 }
 
-// ensureMirror 保证 bare mirror 存在并刷新到远端最新。
+// fetchLock 返回 mirror 级 clone/fetch 互斥锁（懒创建）。
+func (m *Manager) fetchLock(mirror string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lock, ok := m.fetchMu[mirror]
+	if !ok {
+		lock = &sync.Mutex{}
+		m.fetchMu[mirror] = lock
+	}
+	return lock
+}
+
+// entryLock 返回 entry key 级生命周期互斥锁（懒创建）：序列化同 key 的冷启动（ensureStarted）
+// 与回收（teardown）。锁按 key 而非 entry 对象索引——回收窗口内新建的同 key entry 也要与
+// 旧实例的物理回收互斥，防止重建同一 worktree 路径时交叉执行。锁条目不随 entry 回收删除
+// （删锁与持锁等待方之间存在竞态），数量以不同 (service, commit) 组合为界，量级可控。
+func (m *Manager) entryLock(key string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lock, ok := m.keyMu[key]
+	if !ok {
+		lock = &sync.Mutex{}
+		m.keyMu[key] = lock
+	}
+	return lock
+}
+
+// ensureMirror 保证 bare mirror 存在并刷新到远端最新。同一 mirror 的 clone/fetch 由
+// fetchMu 串行化：并发 fetch 同一 mirror 会抢 git .lock 直接报错（锁内含网络耗时，
+// 不同 mirror 之间仍并行）。
 func (m *Manager) ensureMirror(repoURL string) (string, error) {
 	mirror := m.mirrorPath(repoURL)
+	lock := m.fetchLock(mirror)
+	lock.Lock()
+	defer lock.Unlock()
+
 	if info, err := os.Stat(filepath.Join(mirror, "HEAD")); err == nil && !info.IsDir() {
 		if err := m.git(mirror, "fetch", "--prune", "origin"); err != nil {
 			return "", components.ErrorToolExecFailed.Sprintf("mirror 刷新失败(%s): %v", repoURL, err)
@@ -318,20 +525,20 @@ func (m *Manager) resolveCommit(mirrorPath, ref string) (string, error) {
 
 // git 在指定目录执行白名单内的 git 子命令。
 func (m *Manager) git(dir string, args ...string) error {
-	_, err := m.runGit(dir, args...)
+	_, err := runGitIn(dir, args...)
 	return err
 }
 
 func (m *Manager) gitOutput(dir string, args ...string) ([]byte, error) {
-	return m.runGit(dir, args...)
+	return runGitIn(dir, args...)
 }
 
-// runGit 执行白名单内的 git 子命令。安全属性：
+// runGitIn 执行白名单内的 git 子命令。安全属性：
 //   - 可执行文件是编译期常量 "git"，不经 shell（无 sh -c），argv 直传内核；
 //   - 子命令必须在 gitSubcommands 白名单内；
 //   - 全部动态参数（ref/commit/service/路径）在进入本函数前均已通过字符正则校验
 //     （禁止空白与 shell 元字符），路径参数由 filepath.Join 生成且各段已校验。
-func (m *Manager) runGit(dir string, args ...string) ([]byte, error) {
+func runGitIn(dir string, args ...string) ([]byte, error) {
 	if len(args) == 0 || !gitSubcommands[args[0]] {
 		return nil, fmt.Errorf("git subcommand not allowed: %q", args[0])
 	}
@@ -350,7 +557,7 @@ func (m *Manager) runGit(dir string, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// cleanupOrphans 清理上次进程遗留的 worktree 目录：worktree 生命周期不超过单个 run，
+// cleanupOrphans 清理上次进程遗留的 worktree 目录：worktree 生命周期由引用计数管理，
 // 进程重启意味着全部 run 已终态（active 索引丢失），目录级全清即可。
 func (m *Manager) cleanupOrphans() {
 	if err := os.RemoveAll(m.root); err != nil {

@@ -196,7 +196,7 @@ type ToolMeta struct {
 | resolve_async_task / get_async_task | 异步任务完结标记 / 完整记录回读 | 总是 |
 | read_attachment / inspect_attachment | 附件读取 / csv 表结构探查 | 总是 |
 | create_plan | 计划确认卡片（ReAct 内的轻量计划确认，§10） | `allow_plan` |
-| load_runtime_code | 加载服务线上代码到 run 专属工作区并挂只读检索工具 | `workspace.enabled` |
+| load_runtime_code | 加载服务线上代码到 (service, commit) 共享只读工作区并挂检索工具 | `workspace.enabled` |
 | web_fetch | 抓取公开网页正文，按预算截断 + resultRef 续读 | `web_fetch.enabled` |
 | web_search | SearXNG 网页检索（标题/链接/摘要清单） | `web_search` 启用且已配置 |
 | memory_list / memory_read / memory_write | 长期记忆列表/读取/写入 | `memory.enabled` |
@@ -228,7 +228,7 @@ type ToolMeta struct {
 | general-purpose | `[]`（继承全部业务工具） | 否 | 自包含独立子任务多步查证/批量处理 |
 | researcher | `@readonly` | 是 | 只读调查员，非只读工具被硬拦截 |
 | report-writer | `@none`（显式不继承） | 否 | 零业务工具，靠 python_exec 产出报告 |
-| code-reader | `@readonly` + 内置技能"代码工作区调查" | 是 | load_runtime_code + `ws_<service>_*` 只读代码检索 |
+| code-reader | `@readonly` + 内置技能"代码工作区调查" | 是 | load_runtime_code + `ws_<service>_<commit短哈希>_*` 只读代码检索 |
 
 白名单约定 token：`@none` = 显式为空（区别于空数组=继承全部）；`@readonly` = 仅继承声明了 `config.readOnly` 的工具。内置 profile 均为 MaxSteps 64（DB 自定义默认 8）。
 
@@ -325,7 +325,7 @@ conf 加载支持 `${VAR}` / `${VAR:-default}` 环境引用（仓库不落明文
 
 - `repotools/` 只读仓库访问：ast-grep 风格结构化搜索（pattern 元变量 `$NAME`/`$$$NAME`）、go/ast 声明感知检索、路径全部限制在 REPO_ROOT 内（含符号链接逃逸校验）。
 - `cmd/repo-mcp` 注册 9 个工具：list_repositories / list_files / read_file / search_code / search_pattern / find_symbol / get_file_symbols / find_references / get_repo_map。
-- `service/workspace` 四件套：静态 resolver 白名单（service+env → repo_url+ref）→ bare mirror 缓存（clone --mirror / fetch --prune）→ **每 run 一个 git worktree 锁定 commit** → 动态挂载只读 repo MCP（工具名 `ws_<service>_<tool>`）；run 终态统一 Release（先摘工具再回收 worktree）。安全面：service/env/ref 正则白名单、git 子命令白名单、不经 shell。
+- `service/workspace` 四件套：静态 resolver 白名单（service+env → repo_url+ref）→ bare mirror 缓存（clone --mirror / fetch --prune，mirror 级互斥防 .lock 冲突）→ **(service, commit) 粒度共享 worktree + repo MCP（引用计数，多 run/caller 复用一份）** → 动态挂载只读 repo MCP（工具名 `ws_<service>_<commit8>_<tool>`，带 commit 天然唯一）；run 终态 ReleaseRun 减引用：caller 归零摘其工具副本、总归零才回收 worktree 与 MCP。安全面：service/env/ref 正则白名单、git 子命令白名单、不经 shell。
 - 模型入口：`load_runtime_code` Meta Tool；code-reader 内置子代理的标准工作流。
 
 ## 9. 长期记忆

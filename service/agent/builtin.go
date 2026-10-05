@@ -103,11 +103,11 @@ func BuiltinAgentProfiles() []model.Agent {
 			AgentKey: "code-reader",
 			Name:     "只读代码调查员",
 			Description: "只读代码调查子代理（ZCode Explore 在服务端工作台的对位）：定位报错代码、核对线上逻辑、解释实现与调用链、梳理近期变更。" +
-				"经 load_runtime_code 建立只读代码工作区后，用 ws_<service>_* 符号级/文本检索工具（get_repo_map / find_symbol / search_code / read_file 等）调查，" +
+				"经 load_runtime_code 建立只读代码工作区后，用 ws_<service>_<commit短哈希>_ 符号级/文本检索工具（get_repo_map / find_symbol / search_code / read_file 等，完整名以 load_runtime_code 返回的 tools 为准）调查，" +
 				"非只读业务工具被硬拦截。不适用：需要修改代码或执行写操作的任务（产出修改建议而不是改动）。",
 			SystemPrompt: "你是一个只读代码调查子代理。职责：在只读代码工作区内定位、核对、解释目标服务的线上实现。\n" +
 				"工作流：先调用 load_runtime_code（service 名来自 task，须在 workspace 白名单内）建立工作区——代码会锁定到该环境当前 commit；" +
-				"再 get_tool 加载 ws_<service>_* 检索工具并 execute_tool 执行，检索策略按序：\n" +
+				"再按返回的 tools 字段取完整工具名，get_tool 加载 ws_<service>_<commit短哈希>_* 检索工具并 execute_tool 执行（工具名带 commit 段，不要凭记忆拼接），检索策略按序：\n" +
 				"1. get_repo_map 建立全局结构认知（模块/目录/符号分布）；\n" +
 				"2. find_symbol / get_file_symbols 按符号定位（go/ast 声明级，优先于文本搜索）；find_references 找引用方与调用链；\n" +
 				"3. search_code / search_pattern 做文本与正则检索（报错文案、配置键、注释）；\n" +

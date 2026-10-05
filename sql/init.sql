@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmSystemPrompt` (
 -- Tool 表（Business Tool：http 类型由后端代理执行，client 类型由前端执行）
 CREATE TABLE IF NOT EXISTS `tblLlmTool` (
     `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `tool_id`      VARCHAR(64)  NOT NULL COMMENT '工具唯一标识(UUID)',
+    `tool_id`      VARCHAR(128) NOT NULL COMMENT '工具唯一标识(UUID/MCP工具mcp_<server>_<tool>__<caller>)',
     `name`         VARCHAR(128) NOT NULL COMMENT '工具名称(英文标识)',
     `description`  TEXT         NULL COMMENT '工具描述',
     `tool_type`    VARCHAR(32)  NOT NULL COMMENT '工具类型: http/client',
@@ -73,10 +73,16 @@ CREATE TABLE IF NOT EXISTS `tblLlmTool` (
 
 -- 存量环境增量：ALTER TABLE `tblLlmTool` ADD COLUMN `permission_mode` VARCHAR(16) NOT NULL DEFAULT 'auto' COMMENT '权限模式: auto/confirm/confirm_risky' AFTER `config`;
 
+-- 存量环境增量（代码工作区共享化，2026-10）：workspace 动态工具名带 commit 段
+-- （mcp_ws_<service>_<commit8>_<tool>__<callerKey>，最长约 86 字符），tool_id 列 64 → 128：
+-- ALTER TABLE `tblLlmTool`    MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL COMMENT '工具唯一标识(UUID/MCP工具mcp_<server>_<tool>__<caller>)';
+-- ALTER TABLE `tblLlmToolUserPolicy` MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'tblLlmTool.tool_id';
+-- ALTER TABLE `tblLlmMcpAppTool`  MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL COMMENT 'tblLlmTool.tool_id';
+
 -- 工具用户访问策略表（白名单）
 CREATE TABLE IF NOT EXISTS `tblLlmToolUserPolicy` (
     `id`              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `tool_id`         VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'tblLlmTool.tool_id',
+    `tool_id`         VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'tblLlmTool.tool_id',
     `white_user_list` TEXT COMMENT '允许使用工具的用户名JSON数组',
     `black_user_list` TEXT COMMENT '禁止使用工具的用户名JSON数组，预留字段',
     `created_by`      VARCHAR(64) NOT NULL DEFAULT '' COMMENT '创建人',
@@ -771,7 +777,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmMcpApp` (
 CREATE TABLE IF NOT EXISTS `tblLlmMcpAppTool` (
     `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
     `app_id`     VARCHAR(64) NOT NULL COMMENT 'tblLlmMcpApp.app_id',
-    `tool_id`    VARCHAR(64) NOT NULL COMMENT 'tblLlmTool.tool_id',
+    `tool_id`    VARCHAR(128) NOT NULL COMMENT 'tblLlmTool.tool_id',
     `status`     TINYINT     NOT NULL DEFAULT 1 COMMENT '状态: 0=停用 1=绑定生效',
     `created_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '操作人',
     `created_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
