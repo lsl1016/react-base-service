@@ -66,6 +66,8 @@ export interface MessageListProps {
   feedbackByRunId?: Record<string, RunFeedbackState>;
   /** 提交某一轮反馈；不传则不渲染反馈条 */
   onFeedback?: (runId: string, payload: RunFeedbackPayload) => void | Promise<void>;
+  /** 从某轮末尾分叉出新会话（带着该轮及之前的历史）；传入时与反馈条一起渲染入口 */
+  onFork?: (runId: string) => void | Promise<void>;
   /** 复制助手代码块 */
   onCodeCopy?: (step: Step, data: CodeBlockCopyData) => void;
   /** 复制助手代码选区 */
@@ -392,7 +394,7 @@ export function MessageList(props: MessageListProps) {
                   )}
                 </For>
 
-                <Show when={props.onFeedback && section().runId && isCompletedTurn()}>
+                <Show when={(props.onFeedback || props.onFork) && section().runId && isCompletedTurn()}>
                   <TurnFeedbackBar
                     runId={section().runId}
                     sessionId={props.sessionId}
@@ -400,8 +402,9 @@ export function MessageList(props: MessageListProps) {
                     routeValues={props.routeValues}
                     state={props.feedbackByRunId?.[section().runId]}
                     copyContent={getSectionAssistantContent(section())}
-                    onSubmit={props.onFeedback!}
+                    onSubmit={props.onFeedback}
                     onProblemFeedbackOpen={props.onProblemFeedbackOpen}
+                    onFork={props.onFork}
                   />
                 </Show>
               </section>

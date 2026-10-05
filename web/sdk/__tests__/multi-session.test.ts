@@ -99,6 +99,21 @@ function createMockFetch() {
       });
     }
 
+    if (path === '/react/session/fork') {
+      return jsonOk({
+        sessionId: `session_forked_${String(body.throughRunId ?? 'msg')}`,
+        forkedFrom: body.sessionId,
+        cutRunId: String(body.throughRunId ?? ''),
+        inclusive: body.inclusive !== false,
+        runs: 2,
+        messages: 5,
+      });
+    }
+
+    if (path === '/react/session/rename') {
+      return jsonOk({ renamed: true, title: String(body.title ?? '').trim() });
+    }
+
     return { ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) };
   });
 }
@@ -325,5 +340,56 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
     expect((client as any).runtimes.get('session_del_other')).toBeUndefined();
     expect(wsOther.readyState).toBe(FakeWebSocket.CLOSED);
     expect(client.getState().sessionId).toBe('session_del_keep');
+  });
+
+  it('forkSession：调 REST 带轮次截断点，成功后切到新会话并恢复历史', async () => {
+    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client.connect();
+    await waitForConnected(client);
+    await client.switchSession('session_fork_src');
+    await waitForConnected(client);
+
+    const newSessionId = await client.forkSession('session_fork_src', { throughRunId: 'run_cut', inclusive: true });
+
+    // REST 已发出且带 run 级截断点与归属五元组
+    const calls = ((globalThis.fetch as any).mock.calls as Array<[string, RequestInit]>)
+      .filter(([url]) => new URL(url, 'http://test').pathname === '/react/session/fork');
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0][1].body)).toMatchObject({
+      sessionId: 'session_fork_src',
+      throughRunId: 'run_cut',
+      inclusive: true,
+      callerKey: 'report-editor',
+    });
+
+    // 视图切到新会话且历史已懒恢复（/session/events mock 的 run 事件还原出用户消息）
+    expect(newSessionId).toBe('session_forked_run_cut');
+    expect(client.getState().sessionId).toBe('session_forked_run_cut');
+    expect(client.getState().steps.some((step) => step.role === 'user')).toBe(true);
+    // 源会话 runtime 保留在后台（多会话架构：分叉不销毁源会话）
+    expect((client as any).runtimes.get('session_fork_src')).toBeTruthy();
+  });
+
+  it('renameSession：调 REST 并把归一化标题写入本地会话缓存', async () => {
+    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client.connect();
+    await waitForConnected(client);
+
+    const title = await client.renameSession('session_rename_target', '  重命名后  ');
+
+    expect(title).toBe('重命名后');
+    const calls = ((globalThis.fetch as any).mock.calls as Array<[string, RequestInit]>)
+      .filter(([url]) => new URL(url, 'http://test').pathname === '/react/session/rename');
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0][1].body)).toMatchObject({
+      sessionId: 'session_rename_target',
+      title: '  重命名后  ',
+      callerKey: 'report-editor',
+    });
+    // 本地缓存（调用方作用域列表）已带新标题
+    const cached = await client.listCachedSessions();
+    const found = cached.find((session) => session.sessionId === 'session_rename_target');
+    expect(found?.title).toBe('重命名后');
+    expect(found?.callerKey).toBe('report-editor');
   });
 });

@@ -10,6 +10,7 @@ import { Show, createEffect, createSignal, type JSX } from "solid-js";
 import IconIcRoundContentCopy from "~icons/ic/round-content-copy";
 import IconMdiBugOutline from "~icons/mdi/bug-outline";
 import IconMdiCommentQuestionOutline from "~icons/mdi/comment-question-outline";
+import IconMdiSourceBranch from "~icons/mdi/source-branch";
 import IconMdiThumbDown from "~icons/mdi/thumb-down";
 import IconMdiThumbDownOutline from "~icons/mdi/thumb-down-outline";
 import IconMdiThumbUp from "~icons/mdi/thumb-up";
@@ -25,8 +26,11 @@ export interface TurnFeedbackBarProps {
   routeValues?: string[];
   state?: RunFeedbackState;
   copyContent?: string;
-  onSubmit: (runId: string, payload: RunFeedbackPayload) => void | Promise<void>;
+  /** 提交轮次反馈；不传则隐藏点赞/点踩/问题反馈按钮（可只保留分叉入口） */
+  onSubmit?: (runId: string, payload: RunFeedbackPayload) => void | Promise<void>;
   onProblemFeedbackOpen?: (runId: string) => void;
+  /** 从该轮末尾分叉出新会话（带着该轮及之前的历史继续）；不传则不渲染分叉入口 */
+  onFork?: (runId: string) => void | Promise<void>;
 }
 
 export function TurnFeedbackBar(props: TurnFeedbackBarProps): JSX.Element {
@@ -35,6 +39,7 @@ export function TurnFeedbackBar(props: TurnFeedbackBarProps): JSX.Element {
   const [submitting, setSubmitting] = createSignal(false);
   const [contentCopied, setContentCopied] = createSignal(false);
   const [sessionIdCopied, setSessionIdCopied] = createSignal(false);
+  const [forking, setForking] = createSignal(false);
 
   createEffect(() => {
     void props.runId;
@@ -51,7 +56,7 @@ export function TurnFeedbackBar(props: TurnFeedbackBarProps): JSX.Element {
   const hasProblem = () => !!props.state?.problemFeedback;
 
   const submit = async (payload: RunFeedbackPayload) => {
-    if (submitting()) return;
+    if (!props.onSubmit || submitting()) return;
     setSubmitting(true);
     try {
       await props.onSubmit(props.runId, payload);
@@ -90,47 +95,59 @@ export function TurnFeedbackBar(props: TurnFeedbackBarProps): JSX.Element {
     setSessionIdCopied(true);
   };
 
+  const handleFork = async () => {
+    if (!props.onFork || forking()) return;
+    setForking(true);
+    try {
+      await props.onFork(props.runId);
+    } finally {
+      setForking(false);
+    }
+  };
+
   return (
     <div class="agent-ui-feedback-bar">
       <div class="agent-ui-feedback-actions">
-        <button
-          type="button"
-          class="agent-ui-feedback-btn"
-          classList={{ "is-active": isLiked() }}
-          disabled={submitting()}
-          title="点赞"
-          aria-label="点赞"
-          onClick={handleLike}
-        >
-          <Show when={isLiked()} fallback={<IconMdiThumbUpOutline width="16" height="16" />}>
-            <IconMdiThumbUp width="16" height="16" />
-          </Show>
-        </button>
-        <button
-          type="button"
-          class="agent-ui-feedback-btn"
-          classList={{ "is-active": isDisliked() }}
-          disabled={submitting()}
-          title="点踩"
-          aria-label="点踩"
-          onClick={handleDislike}
-        >
-          <Show when={isDisliked()} fallback={<IconMdiThumbDownOutline width="16" height="16" />}>
-            <IconMdiThumbDown width="16" height="16" />
-          </Show>
-        </button>
-        <button
-          type="button"
-          class="agent-ui-feedback-btn agent-ui-feedback-problem-btn"
-          classList={{ "is-active": showForm() || hasProblem() }}
-          disabled={submitting()}
-          title="问题反馈"
-          aria-label="问题反馈"
-          onClick={() => (showForm() ? setShowForm(false) : openForm())}
-        >
-          <IconMdiCommentQuestionOutline width="16" height="16" />
-          <span class="agent-ui-feedback-btn-text">问题反馈</span>
-        </button>
+        <Show when={!!props.onSubmit}>
+          <button
+            type="button"
+            class="agent-ui-feedback-btn"
+            classList={{ "is-active": isLiked() }}
+            disabled={submitting()}
+            title="点赞"
+            aria-label="点赞"
+            onClick={handleLike}
+          >
+            <Show when={isLiked()} fallback={<IconMdiThumbUpOutline width="16" height="16" />}>
+              <IconMdiThumbUp width="16" height="16" />
+            </Show>
+          </button>
+          <button
+            type="button"
+            class="agent-ui-feedback-btn"
+            classList={{ "is-active": isDisliked() }}
+            disabled={submitting()}
+            title="点踩"
+            aria-label="点踩"
+            onClick={handleDislike}
+          >
+            <Show when={isDisliked()} fallback={<IconMdiThumbDownOutline width="16" height="16" />}>
+              <IconMdiThumbDown width="16" height="16" />
+            </Show>
+          </button>
+          <button
+            type="button"
+            class="agent-ui-feedback-btn agent-ui-feedback-problem-btn"
+            classList={{ "is-active": showForm() || hasProblem() }}
+            disabled={submitting()}
+            title="问题反馈"
+            aria-label="问题反馈"
+            onClick={() => (showForm() ? setShowForm(false) : openForm())}
+          >
+            <IconMdiCommentQuestionOutline width="16" height="16" />
+            <span class="agent-ui-feedback-btn-text">问题反馈</span>
+          </button>
+        </Show>
         <Show when={!!props.copyContent?.trim()}>
           <button
             type="button"
@@ -153,6 +170,19 @@ export function TurnFeedbackBar(props: TurnFeedbackBarProps): JSX.Element {
           >
             <IconMdiBugOutline width="16" height="16" />
             <span class="agent-ui-feedback-btn-text">{sessionIdCopied() ? "已复制" : "Copy ID"}</span>
+          </button>
+        </Show>
+        <Show when={!!props.onFork}>
+          <button
+            type="button"
+            class="agent-ui-feedback-btn agent-ui-feedback-fork-btn"
+            disabled={forking()}
+            title={forking() ? "分叉中..." : "从这里分叉出新会话"}
+            aria-label="从这里分叉出新会话"
+            onClick={() => void handleFork()}
+          >
+            <IconMdiSourceBranch width="16" height="16" />
+            <span class="agent-ui-feedback-btn-text">分叉</span>
           </button>
         </Show>
       </div>

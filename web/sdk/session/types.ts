@@ -204,6 +204,45 @@ export interface SessionDeleteResp {
   planRows: number;
 }
 
+/** session/fork 请求参数：throughMessageId 与 throughRunId 必须恰好提供一个 */
+export interface SessionForkParams {
+  sessionId: string;
+  /** 消息级分叉点：命中 run 起始用户输入则该轮起丢弃，否则该轮整轮保留 */
+  throughMessageId?: string;
+  /** run 级分叉点（前端轮次入口）：inclusive=true 带着该轮继续，false 回到该轮提问之前 */
+  throughRunId?: string;
+  /** 仅对 throughRunId 生效，缺省 true */
+  inclusive?: boolean;
+  /** 新会话标题；缺省服务端用「原标题 (分叉)」 */
+  title?: string;
+  callerKey: string;
+  routeValues?: string[];
+}
+
+/** session/fork 响应：新会话 ID、截断口径与复制规模（排障友好） */
+export interface SessionForkResp {
+  sessionId: string;
+  forkedFrom: string;
+  cutRunId: string;
+  inclusive: boolean;
+  runs: number;
+  messages: number;
+}
+
+/** session/rename 请求参数（仅标题元数据；不限制运行中的会话） */
+export interface SessionRenameParams {
+  sessionId: string;
+  title: string;
+  callerKey: string;
+  routeValues?: string[];
+}
+
+/** session/rename 响应：回显归一化后的标题（去空白 + rune 截断） */
+export interface SessionRenameResp {
+  renamed: boolean;
+  title: string;
+}
+
 /** queue/update 请求参数 */
 export interface QueueUpdateParams extends QueueListParams {
   id: number;

@@ -34,6 +34,22 @@ export type AgentUIEvent =
       sessionId: string;
     }
   | {
+      type: 'session_fork';
+      previousSessionId: string | null;
+      /** 分叉出的新会话 ID */
+      sessionId: string;
+      /** 源会话 ID */
+      fromSessionId: string;
+      /** 截断点所在源 run（run 级入口） */
+      cutRunId?: string;
+    }
+  | {
+      type: 'session_rename';
+      sessionId: string;
+      /** 服务端归一化后的新标题 */
+      title: string;
+    }
+  | {
       type: 'user_message_copy';
       sessionId: string | null;
       runId: string;

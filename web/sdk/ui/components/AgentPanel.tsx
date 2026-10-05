@@ -750,6 +750,41 @@ export function AgentPanel(props: AgentPanelProps) {
     refreshSessionStatuses();
   };
 
+  // 从指定轮次分叉出新会话（带着该轮及之前的历史）并切换过去；
+  // client.forkSession 内部会同步会话列表、切换视图并懒恢复新会话事件。
+  const handleForkSession = async (runId: string) => {
+    const fromSessionId = store.state.sessionId;
+    if (!fromSessionId) return;
+    try {
+      const newSessionId = await props.client.forkSession(fromSessionId, { throughRunId: runId, inclusive: true });
+      emitUIEvent({
+        type: 'session_fork',
+        previousSessionId: fromSessionId,
+        sessionId: newSessionId,
+        fromSessionId,
+        cutRunId: runId,
+      });
+      setShowSessionHistory(false);
+      showPanelMessage("已分叉出新会话，继续对话将写入新会话");
+    } catch (error) {
+      console.warn("[AgentUI] fork session failed:", error);
+      showPanelMessage(error instanceof Error ? error.message : "会话分叉失败");
+    }
+  };
+
+  // 重命名会话（仅标题元数据；运行中的会话也可改名）。成功后刷新列表标题。
+  const handleRenameSession = async (sessionId: string, title: string) => {
+    try {
+      await props.client.renameSession(sessionId, title);
+    } catch (error) {
+      console.warn("[AgentUI] rename session failed:", error);
+      showPanelMessage(error instanceof Error ? error.message : "会话重命名失败");
+      return;
+    }
+    emitUIEvent({ type: 'session_rename', sessionId, title });
+    await loadSessions();
+  };
+
   const handleToggleSessionHistory = () => {
     setShowAsyncTaskResults(false);
     setShowSessionHistory((visible) => !visible);
@@ -1023,6 +1058,7 @@ export function AgentPanel(props: AgentPanelProps) {
             onLoadPlanAttempt={(planExecutionId, stepAttemptId) => props.client.loadPlanStepEvents(planExecutionId, stepAttemptId)}
             feedbackByRunId={props.feedbackByRunId}
             onFeedback={props.onFeedback}
+            onFork={props.readOnly ? undefined : handleForkSession}
             onCodeCopy={(step, code) => emitUIEvent({
               type: 'code_copy',
               sessionId: store.state.sessionId,
@@ -1062,6 +1098,7 @@ export function AgentPanel(props: AgentPanelProps) {
                 onSelectSession={handleSelectSession}
                 onNewSession={handleNewSession}
                 onDeleteSession={handleDeleteSession}
+                onRenameSession={props.readOnly ? undefined : handleRenameSession}
               />
             </div>
           </div>

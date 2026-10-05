@@ -77,7 +77,8 @@
     }
   }
 
-  &:hover .agent-ui-session-delete-button {
+  &:hover .agent-ui-session-delete-button,
+  &:hover .agent-ui-session-rename-button {
     opacity: 1;
   }
 }
@@ -166,6 +167,106 @@
 
 .agent-ui-session-delete-confirm-no {
   color: $agent-ui-text-tertiary;
+
+  &:hover:not(:disabled) {
+    background: $agent-ui-bg-tertiary;
+    color: $agent-ui-text-primary;
+  }
+}
+
+// 重命名按钮：与删除按钮同规格，hover 走主色（元数据操作，无危险语义）
+.agent-ui-session-rename-button {
+  @include agent-ui-button-reset;
+  @include agent-ui-flex-center;
+  flex-shrink: 0;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  border-radius: $agent-ui-radius-sm;
+  color: $agent-ui-text-tertiary;
+  opacity: 0;
+  @include agent-ui-transition(opacity, background-color, color);
+
+  &:hover:not(:disabled) {
+    background: $agent-ui-primary-light;
+    color: $agent-ui-primary;
+  }
+
+  &:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+  }
+}
+
+// 行内重命名编辑态：输入框 + 确认/取消，替换整行主区域
+.agent-ui-session-rename-box {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: $agent-ui-spacing-xs;
+  padding: $agent-ui-spacing-lg;
+  border: 1px solid $agent-ui-primary-border;
+  border-radius: $agent-ui-radius-md;
+  background: $agent-ui-bg-primary;
+}
+
+.agent-ui-session-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid $agent-ui-primary-border-soft;
+  border-radius: $agent-ui-radius-sm;
+  background: $agent-ui-bg-tertiary;
+  color: $agent-ui-text-primary;
+  font-size: $agent-ui-font-size-sm;
+  line-height: 1.5;
+  outline: none;
+  @include agent-ui-transition(border-color);
+
+  &:focus {
+    border-color: $agent-ui-primary;
+  }
+
+  &:disabled {
+    opacity: .6;
+  }
+}
+
+.agent-ui-session-rename-confirm {
+  @include agent-ui-button-reset;
+  @include agent-ui-flex-center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: $agent-ui-radius-sm;
+  color: $agent-ui-primary;
+  @include agent-ui-transition(background-color);
+
+  &:disabled {
+    opacity: .4;
+    cursor: not-allowed;
+  }
+
+  &:hover:not(:disabled) {
+    background: $agent-ui-primary-light;
+  }
+}
+
+.agent-ui-session-rename-cancel {
+  @include agent-ui-button-reset;
+  @include agent-ui-flex-center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: $agent-ui-radius-sm;
+  color: $agent-ui-text-tertiary;
+  @include agent-ui-transition(background-color, color);
+
+  &:disabled {
+    opacity: .4;
+    cursor: not-allowed;
+  }
 
   &:hover:not(:disabled) {
     background: $agent-ui-bg-tertiary;

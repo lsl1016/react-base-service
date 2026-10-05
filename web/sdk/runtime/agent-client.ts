@@ -655,6 +655,59 @@ export class AgentClient {
     }
   }
 
+  /**
+   * 基于历史会话分叉出一个新会话，并把视图切换过去。
+   * run 级入口（前端消息天然携带 runId 而无 messageId）：
+   * inclusive=true（缺省）带着 throughRunId 这轮继续，false 回到这轮提问之前。
+   * 新会话由服务端分配 sessionId，直接走 switchSession 懒恢复（无需草稿转正）。
+   */
+  async forkSession(sessionId: string, options: {
+    throughRunId?: string;
+    throughMessageId?: string;
+    inclusive?: boolean;
+    title?: string;
+  } = {}): Promise<string> {
+    const resp = await this.sessionManager.forkSession({
+      sessionId,
+      throughRunId: options.throughRunId,
+      throughMessageId: options.throughMessageId,
+      inclusive: options.inclusive,
+      title: options.title,
+      callerKey: this.config.callerKey,
+      routeValues: this.config.routeValues,
+    });
+    // 同步服务端列表让新会话进入本地缓存，再切换视图并懒恢复历史事件
+    await this.syncSessions();
+    await this.switchSession(resp.sessionId);
+    return resp.sessionId;
+  }
+
+  /**
+   * 重命名会话（仅标题元数据，运行中的会话也可改名）。
+   * 成功后更新本地会话缓存的标题；返回服务端归一化后的标题。
+   */
+  async renameSession(sessionId: string, title: string): Promise<string> {
+    const resp = await this.sessionManager.renameSession({
+      sessionId,
+      title,
+      callerKey: this.config.callerKey,
+      routeValues: this.config.routeValues,
+    });
+    try {
+      // 带调用方归属写入本地缓存：会话已在列表缓存时仅合并标题，不在时也能出现在
+      // 调用方作用域的列表里（AgentPanel 侧随后还会整体 syncSessions 校正）
+      await this.ledger.upsertSession({
+        sessionId,
+        title: resp.title,
+        callerKey: this.config.callerKey,
+        routeValues: this.config.routeValues ?? [],
+      });
+    } catch (error) {
+      console.warn('[AgentClient] rename update ledger failed:', error);
+    }
+    return resp.title;
+  }
+
   /** 同步指定会话的历史事件到本地缓存：服务端结果直接覆盖本地 events[] */
   async syncSessionEvents(sessionId: string): Promise<HistoryEvent[]> {
     const runtime = this.runtimes.get(sessionId);

@@ -28,6 +28,10 @@ import type {
   SessionFeedbackResp,
   SessionDeleteParams,
   SessionDeleteResp,
+  SessionForkParams,
+  SessionForkResp,
+  SessionRenameParams,
+  SessionRenameResp,
   SessionListParams,
   SessionListResp,
 } from './types';
@@ -59,6 +63,16 @@ export class SessionManager {
   /** 删除一个会话（硬删级联；运行中的会话服务端拒绝）→ POST /session/delete */
   async deleteSession(params: SessionDeleteParams): Promise<SessionDeleteResp> {
     return this.post<SessionDeleteResp>('/session/delete', params);
+  }
+
+  /** 基于历史会话分叉出新会话（截断点前历史复制；运行中的会话服务端拒绝）→ POST /session/fork */
+  async forkSession(params: SessionForkParams): Promise<SessionForkResp> {
+    return this.post<SessionForkResp>('/session/fork', params);
+  }
+
+  /** 重命名会话（仅标题元数据；不限制运行中的会话）→ POST /session/rename */
+  async renameSession(params: SessionRenameParams): Promise<SessionRenameResp> {
+    return this.post<SessionRenameResp>('/session/rename', params);
   }
 
   /** 分页获取指定会话第三方已终态但本地尚未处理的异步任务。 */

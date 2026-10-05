@@ -103,6 +103,72 @@ describe('SessionManager', () => {
     });
   });
 
+  it('should forkSession with run-level cut point and pass through response', async () => {
+    const mockFetch = createMockFetch({
+      '/react/session/fork': {
+        errNo: 0,
+        errMsg: 'succ',
+        data: {
+          sessionId: 'session_new',
+          forkedFrom: 'session_src',
+          cutRunId: 'run_cut',
+          inclusive: true,
+          runs: 3,
+          messages: 8,
+        },
+      },
+    });
+    const manager = new SessionManager('/react', mockFetch as any);
+    const result = await manager.forkSession({
+      sessionId: 'session_src',
+      throughRunId: 'run_cut',
+      inclusive: true,
+      title: '分叉标题',
+      callerKey: 'test',
+      routeValues: ['r1'],
+    });
+
+    expect((mockFetch as any).mock.calls[0][0]).toBe('/react/session/fork');
+    expect(JSON.parse((mockFetch as any).mock.calls[0][1].body)).toEqual({
+      sessionId: 'session_src',
+      throughRunId: 'run_cut',
+      inclusive: true,
+      title: '分叉标题',
+      callerKey: 'test',
+      routeValues: ['r1'],
+    });
+    expect(result.sessionId).toBe('session_new');
+    expect(result.forkedFrom).toBe('session_src');
+    expect(result.messages).toBe(8);
+  });
+
+  it('should renameSession and echo normalized title', async () => {
+    const mockFetch = createMockFetch({
+      '/react/session/rename': {
+        errNo: 0,
+        errMsg: 'succ',
+        data: { renamed: true, title: '新标题' },
+      },
+    });
+    const manager = new SessionManager('/react', mockFetch as any);
+    const result = await manager.renameSession({
+      sessionId: 's1',
+      title: '  新标题  ',
+      callerKey: 'test',
+      routeValues: [],
+    });
+
+    expect((mockFetch as any).mock.calls[0][0]).toBe('/react/session/rename');
+    expect(JSON.parse((mockFetch as any).mock.calls[0][1].body)).toEqual({
+      sessionId: 's1',
+      title: '  新标题  ',
+      callerKey: 'test',
+      routeValues: [],
+    });
+    expect(result.renamed).toBe(true);
+    expect(result.title).toBe('新标题');
+  });
+
   it('should throw on HTTP error', async () => {
     const mockFetch = vi.fn(async () => ({
       ok: false,
