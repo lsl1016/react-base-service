@@ -155,6 +155,32 @@ llm:
       default_max_steps: 100 # agent 未配置 max_steps 时子 run 的步数上限（运行时设置面板上限 64，改更大值须经此文件）
       max_depth: 2           # 委派嵌套深度上限（子 Agent 再委派），防递归失控
 
+  # 定时触发工作流：按 cron 计划在服务端无人值守发起完整 ReAct run（见 docs/定时触发工作流实现方案.md）。
+  # enabled=false 时不启动调度器、不注册管理接口（需先执行 sql/init.sql 中两张 workflow 表建表）。
+  # 管理面板：/react-base-service/react/workflow/admin
+  workflow:
+    enabled: true
+    # caller 级并发闸门：该 caller 在途 run 数达上限时本次触发记 skipped
+    max_parallel_per_caller: 2
+    # workflow 未显式配置时的超时/步数兜底
+    default_timeout_sec: 1800
+    default_max_steps: 20
+    # completed 且无风险时是否免打扰（failed/timeout/high 风险恒通知）
+    notify_only_on_risk: true
+    # 回放页对外访问基址（通知拼接回放/报告链接用；空=通知只给 sessionId/artifactId）
+    # replay_base_url: 'https://your-host'
+    # 连环失败熔断：连续 N 次 failed/timeout 自动停用并通知；0=关闭
+    failure_breaker_threshold: 3
+    # 报告产物化：提示词要求把完整报告写成 markdown 并经 python_exec 落产物（通知带下载链接）
+    report:
+      prompt_enabled: true
+    # 裁判外环：run 结束后语义判定目标是否达成（service/judge 独立组件，当前只接 workflow runner）；
+    # 未达成自动追问续跑同一会话（上限 max_followup_rounds 轮）；判定故障自动降级为规则判级
+    judge:
+      enabled: true
+      max_followup_rounds: 1
+      transcript_chars: 24000
+
 # MCP 客户端：kind=repo 走 stdio 适配器白名单（可执行文件部署于 bin/，env 注入子进程）；
 # kind=http 走手写 Streamable HTTP；kind=http_sdk 走官方 MCP Go SDK（modelcontextprotocol/go-sdk）实现。
 # HTTP 两种均无鉴权；endpoint 仅允许公网 http/https（拒绝环回/私网/保留地址）；
@@ -192,20 +218,6 @@ mcp:
 async_task:
   # 异步任务状态同步框架总开关；无内置 Provider 时开启后也为空转
   enabled: false
-
-# 定时触发工作流：按 cron 计划在服务端无人值守发起完整 ReAct run（见 docs/定时触发工作流实现方案.md）。
-# enabled=false 时不启动调度器、不注册管理接口（需先执行 sql/init.sql 中两张 workflow 表建表）。
-workflow:
-  enabled: false
-  # caller 级并发闸门：该 caller 在途 run 数达上限时本次触发记 skipped
-  max_parallel_per_caller: 2
-  # workflow 未显式配置时的超时/步数兜底
-  default_timeout_sec: 1800
-  default_max_steps: 20
-  # completed 且无风险时是否免打扰（failed/timeout/high 风险恒通知）
-  notify_only_on_risk: true
-  # 回放页对外访问基址（通知拼接回放链接用；空=通知只给 sessionId）
-  # replay_base_url: 'https://your-host'
 
 # MCP 服务端网关：把 tblLlmTool 中启用的 http 工具按 caller 作用域对外暴露成 MCP 协议
 #（端点 /react-base-service/mcp，独立进程可 go run ./cmd/mcp-gateway）。

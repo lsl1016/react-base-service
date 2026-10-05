@@ -175,4 +175,11 @@ var (
 		Name: "react_workflow_running",
 		Help: "Current in-flight scheduled workflow runs.",
 	})
+
+	// WorkflowJudgeTotal 裁判外环判定计数（workflow × status：
+	// achieved=目标达成 / unachieved=未达成 / followup=自动追问 / error=判定降级）。
+	WorkflowJudgeTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "react_workflow_judge_total",
+		Help: "Total workflow judge reviews by workflow and verdict.",
+	}, []string{"workflow", "status"})
 )

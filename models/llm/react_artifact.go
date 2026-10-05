@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -50,4 +51,15 @@ func GetReactArtifactByArtifactID(ctx *gin.Context, artifactID string) (*ReactAr
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
 	return &artifact, nil
+}
+
+// ListReactArtifactsBySessionID 按会话返回产物元数据（id 升序；通知/报告链接用）。
+func ListReactArtifactsBySessionID(ctx context.Context, sessionID string) ([]ReactArtifact, error) {
+	var artifacts []ReactArtifact
+	err := helpers.MysqlClientLLM.Model(&ReactArtifact{}).WithContext(ctx).
+		Where("session_id = ?", sessionID).Order("id ASC").Find(&artifacts).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return artifacts, nil
 }

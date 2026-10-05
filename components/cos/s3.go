@@ -22,11 +22,13 @@ import (
 // 复用 cos.Config 的 SecretID/SecretKey 作为 AccessKey/SecretKey，Endpoint 指向 MinIO S3 API 地址。
 // bucket 在首次访问时自动创建（幂等），新部署的 MinIO 无需手工建桶。
 type minioStore struct {
-	client     *minio.Client
-	bucket     string
-	region     string
-	ensureOnce sync.Once
-	ensureErr  error
+	client *minio.Client
+	bucket string
+	region string
+	// ensureMu/ensured 保证 bucket 探测+建桶幂等且只成功执行一次；
+	// 失败不记忆——依赖未就绪属瞬时故障，下次上传重试（sync.Once 无法表达失败重试）。
+	ensureMu sync.Mutex
+	ensured  bool
 }
 
 const (
@@ -94,27 +96,31 @@ func parseS3Endpoint(endpoint string) (string, bool, error) {
 	return strings.Trim(ep, "/"), false, nil
 }
 
-// ensureBucket 首次访问时确保 bucket 存在；sync.Once 保证全进程只探测一次，
-// 失败不缓存以外的问题——建桶失败会在下一次进程生命周期重试。
+// ensureBucket 确保 bucket 存在（自动建桶，幂等）：成功后 ensured 置位不再重复探测；
+// 探测/建桶失败不置位，下次上传自然重试——避免 MinIO 未就绪的瞬时故障把进程内
+// 所有产物上传永久打挂（依赖恢复后服务应自愈）。
 func (m *minioStore) ensureBucket(ctx context.Context) error {
-	m.ensureOnce.Do(func() {
-		exists, err := m.client.BucketExists(ctx, m.bucket)
-		if err != nil {
-			m.ensureErr = fmt.Errorf("minio check bucket failed: %w", err)
-			return
-		}
-		if exists {
-			return
-		}
+	m.ensureMu.Lock()
+	defer m.ensureMu.Unlock()
+	if m.ensured {
+		return nil
+	}
+	exists, err := m.client.BucketExists(ctx, m.bucket)
+	if err != nil {
+		return fmt.Errorf("minio check bucket failed: %w", err)
+	}
+	if !exists {
 		if err := m.client.MakeBucket(ctx, m.bucket, minio.MakeBucketOptions{Region: m.region}); err != nil {
 			// 多实例并发建桶的兜底：他人刚建成功视为成功。
 			if exists, checkErr := m.client.BucketExists(ctx, m.bucket); checkErr == nil && exists {
-				return
+				m.ensured = true
+				return nil
 			}
-			m.ensureErr = fmt.Errorf("minio make bucket failed: %w", err)
+			return fmt.Errorf("minio make bucket failed: %w", err)
 		}
-	})
-	return m.ensureErr
+	}
+	m.ensured = true
+	return nil
 }
 
 func isS3NotFound(err error) bool {

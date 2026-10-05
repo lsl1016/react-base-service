@@ -42,6 +42,12 @@ func (m *cronManager) start() {
 	if m.c != nil {
 		return
 	}
+	// 单实例语义：清掉上次进程遗留的在途 run 行，防僵尸行永久占用并发闸门。
+	if expired, err := model.ExpireStaleWorkflowRuns(context.Background()); err != nil {
+		zlog.Errorf(nil, "[workflow.start] 清理遗留在途 run 失败: %v", err)
+	} else if expired > 0 {
+		zlog.Warnf(nil, "[workflow.start] 已将 %d 条上次进程遗留的在途 run 置为 failed", expired)
+	}
 	workflows, err := model.ListWorkflows(context.Background())
 	if err != nil {
 		zlog.Errorf(nil, "[workflow.start] 加载 workflow 定义失败，调度器未启动: %v", err)
@@ -172,8 +178,15 @@ func (m *cronManager) fire(wf *model.Workflow) {
 		return
 	}
 	now := time.Now()
-	if err := model.UpdateWorkflowByKey(ctx, wf.WorkflowKey, map[string]any{"last_fire_at": now}); err != nil {
-		zlog.Warnf(nil, "[workflow.fire] 回写 last_fire_at 失败: key=%s err=%v", wf.WorkflowKey, err)
+	// 展示缓存同步回写：last_fire_at=本次着火点，next_fire_at=下一次着火点（fire 后列表页才是新值）。
+	nextFire := now
+	m.mu.Lock()
+	if entry, ok := m.entries[wf.WorkflowKey]; ok {
+		nextFire = entry.schedule.Next(now)
+	}
+	m.mu.Unlock()
+	if err := model.UpdateWorkflowByKey(ctx, wf.WorkflowKey, map[string]any{"last_fire_at": now, "next_fire_at": nextFire}); err != nil {
+		zlog.Warnf(nil, "[workflow.fire] 回写着火点失败: key=%s err=%v", wf.WorkflowKey, err)
 	}
 
 	// 并发闸门：caller 在途 run 数达上限 → 记 skipped（不算失败，防告警误报），不执行。

@@ -698,12 +698,35 @@ type WorkflowConfig struct {
 	NotifyOnlyOnRisk bool `yaml:"notify_only_on_risk"`
 	// ReplayBaseURL 是回放页对外访问基址（通知拼接回放链接用；空=通知只给 sessionId）。
 	ReplayBaseURL string `yaml:"replay_base_url"`
+	// FailureBreakerThreshold 是连环失败熔断阈值：连续 N 次 failed/timeout 自动停用并通知；0=关闭。
+	FailureBreakerThreshold int `yaml:"failure_breaker_threshold"`
+	// Report 控制报告产物化（提示词要求产出 markdown 报告 → python_exec → COS artifact）。
+	Report WorkflowReportConfig `yaml:"report"`
+	// Judge 控制裁判外环（run 结束后语义判定目标达成；未达成自动追问，上限 N 轮）。
+	Judge WorkflowJudgeConfig `yaml:"judge"`
+}
+
+// WorkflowReportConfig 报告产物化配置。
+type WorkflowReportConfig struct {
+	// PromptEnabled 在无人值守提示词中要求模型把完整报告写成 markdown 并经 python_exec 落产物。
+	PromptEnabled bool `yaml:"prompt_enabled"`
+}
+
+// WorkflowJudgeConfig 裁判外环配置（判定器见 service/judge：通用输入输出，当前只接 workflow runner）。
+type WorkflowJudgeConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxFollowupRounds 是判定未达成时自动追问的轮数上限。
+	MaxFollowupRounds int `yaml:"max_followup_rounds"`
+	// TranscriptChars 是审阅转录的总字符预算（防超长会话吃爆判定调用）。
+	TranscriptChars int `yaml:"transcript_chars"`
 }
 
 const (
 	defaultWorkflowMaxParallelPerCaller = 2
 	defaultWorkflowTimeoutSec           = 1800
 	defaultWorkflowMaxSteps             = 20
+	defaultWorkflowMaxFollowupRounds    = 1
+	defaultWorkflowJudgeTranscriptChars = 24000
 )
 
 // GetWorkflowConfig 返回合并内置默认值后的 workflow 配置。
@@ -717,6 +740,12 @@ func GetWorkflowConfig() WorkflowConfig {
 	}
 	if cfg.DefaultMaxSteps <= 0 {
 		cfg.DefaultMaxSteps = defaultWorkflowMaxSteps
+	}
+	if cfg.Judge.MaxFollowupRounds <= 0 {
+		cfg.Judge.MaxFollowupRounds = defaultWorkflowMaxFollowupRounds
+	}
+	if cfg.Judge.TranscriptChars <= 0 {
+		cfg.Judge.TranscriptChars = defaultWorkflowJudgeTranscriptChars
 	}
 	return cfg
 }

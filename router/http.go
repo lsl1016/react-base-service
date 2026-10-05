@@ -48,6 +48,8 @@ func Http(engine *gin.Engine) {
 	{
 		reactPublicGroup.GET("/playground", serveReactEmbedPlayground)
 		reactPublicGroup.GET("/replay", serveReactEmbedReplay)
+		// 定时工作流管理面板（与 replay 同级的自包含静态页；数据经带登录态的管理接口拉取）
+		reactPublicGroup.GET("/workflow/admin", serveReactEmbedWorkflowAdmin)
 		reactPublicGroup.GET("/playground/auth", middleware.AnonymousAuth(), checkReactPlaygroundAccess)
 		reactPublicGroup.GET("/ips.js", serveReactAsset("react/ips.js", "application/javascript; charset=utf-8"))
 		reactPublicGroup.GET("/index.css", serveReactAsset("react/index.css", "text/css; charset=utf-8"))
@@ -268,6 +270,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 const (
 	reactIndexEmbedPath  = "react/index.html"
 	reactReplayEmbedPath = "react/replay.html"
+	// reactWorkflowAdminEmbedPath 是定时工作流管理面板（web/react/workflow-admin.html）。
+	reactWorkflowAdminEmbedPath = "react/workflow-admin.html"
 	reactSDKDistPath     = "sdk/dist/"
 )
 
@@ -353,6 +357,10 @@ func serveReactEmbedPlayground(ctx *gin.Context) {
 
 func serveReactEmbedReplay(ctx *gin.Context) {
 	serveReactEmbedHTML(ctx, reactReplayEmbedPath)
+}
+
+func serveReactEmbedWorkflowAdmin(ctx *gin.Context) {
+	serveReactEmbedHTML(ctx, reactWorkflowAdminEmbedPath)
 }
 
 func serveReactEmbedHTML(ctx *gin.Context, path string) {

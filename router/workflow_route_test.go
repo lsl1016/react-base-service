@@ -1,9 +1,13 @@
 package router
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"react-base-service/conf"
+	"react-base-service/web"
 
 	"github.com/gin-gonic/gin"
 )
@@ -37,5 +41,23 @@ func TestInitLLMRouterWorkflowEnabled(t *testing.T) {
 		if !paths[expect] {
 			t.Errorf("缺路由: %s", expect)
 		}
+	}
+}
+
+// TestWorkflowAdminPageEmbedded 验证管理面板页面已嵌入且路由可达。
+func TestWorkflowAdminPageEmbedded(t *testing.T) {
+	if _, err := web.FS.ReadFile("react/workflow-admin.html"); err != nil {
+		t.Fatalf("管理面板页面未嵌入 web.FS: %v", err)
+	}
+	engine := gin.New()
+	engine.GET("/react/workflow/admin", serveReactEmbedWorkflowAdmin)
+	req := httptest.NewRequest(http.MethodGet, "/react/workflow/admin", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("管理面板页面应 200，got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "定时工作流管理台") {
+		t.Fatal("管理面板页面内容缺失")
 	}
 }

@@ -37,7 +37,7 @@ cos:
   # provider: minio/s3=自部署 MinIO；local=本地目录（localDir）；留空=腾讯云 COS。
   # MinIO 模式下 secretID/secretKey 即 AccessKey/SecretKey（compose 默认 minioadmin/minioadmin），
   # endpoint 支持带 http(s):// 前缀，裸地址默认 HTTP；region 留空自动用 us-east-1。
-  provider: 'minio'
+  provider: 'local'
   endpoint: 'http://127.0.0.1:9000'
   secretID: 'minioadmin'
   secretKey: 'minioadmin'
@@ -47,4 +47,4 @@ cos:
   timeout: 30
   pathPrefix: 'react-base/llm'
   # 本地目录存储模式（无 MinIO 时的兜底，配置 localDir 即生效，优先级低于 provider）：
-  # localDir: './data/cos'
+  localDir: './data/cos'

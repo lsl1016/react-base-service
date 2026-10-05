@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>定时工作流管理台 · react-base-service</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --border: #e2e5ea; --text: #1f2329;
+    --muted: #7a8087; --primary: #2563eb; --primary-weak: #eef3ff;
+    --danger: #dc2626; --ok: #16a34a; --warn: #d97706; --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  /* hidden 属性兜底：类规则里的 display 会覆盖 UA 的 [hidden]{display:none} */
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { background: var(--card); border-bottom: 1px solid var(--border);
+    padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .spacer { flex: 1; }
+  main { max-width: 1180px; margin: 20px auto; padding: 0 24px; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; }
+  .toolbar .hint { color: var(--muted); font-size: 12px; }
+  button { border: 1px solid var(--border); background: var(--card); color: var(--text);
+    border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+  button:hover { border-color: var(--primary); color: var(--primary); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.primary:hover { opacity: .9; color: #fff; }
+  button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  button.mini { padding: 3px 10px; font-size: 12px; border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+    border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border);
+    vertical-align: top; font-size: 13px; }
+  th { background: #fafbfc; color: var(--muted); font-weight: 500; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td .ops { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+  .badge.on  { background: #e7f6ec; color: var(--ok); }
+  .badge.off { background: #f3f4f6; color: var(--muted); }
+  .badge.s-completed { background: #e7f6ec; color: var(--ok); }
+  .badge.s-failed, .badge.s-timeout { background: #fdeaea; color: var(--danger); }
+  .badge.s-running, .badge.s-pending { background: var(--primary-weak); color: var(--primary); }
+  .badge.s-cancelled, .badge.s-skipped { background: #f3f4f6; color: var(--muted); }
+  .badge.r-high { background: #fdeaea; color: var(--danger); }
+  .badge.r-low { background: #fef6e7; color: var(--warn); }
+  .badge.r-none { background: #f3f4f6; color: var(--muted); }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); }
+  .muted { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; margin-bottom: 14px; }
+  /* 弹层 */
+  .mask { position: fixed; inset: 0; background: rgba(15,18,25,.45); display: none;
+    align-items: flex-start; justify-content: center; padding: 40px 16px; overflow: auto; z-index: 10; }
+  .mask.show { display: flex; }
+  .dialog { background: var(--card); border-radius: 12px; width: 720px; max-width: 100%;
+    padding: 20px 24px; }
+  .dialog h2 { margin: 0 0 14px; font-size: 16px; }
+  .dialog .foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field.full { grid-column: 1 / -1; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field textarea, .field select { border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 10px; font-size: 13px; font-family: inherit; width: 100%; }
+  .field textarea { resize: vertical; min-height: 64px; }
+  .field .tip { font-size: 11px; color: var(--muted); }
+  /* cron 可视化构建器 */
+  .cron-mode-row { display: flex; gap: 4px; flex-wrap: wrap; }
+  .cron-mode { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+  .cron-mode:has(input:checked) { border-color: var(--primary); background: var(--primary-weak); color: var(--primary); }
+  .cron-mode input { margin: 0; accent-color: var(--primary); }
+  .cron-panel { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 6px; background: #fafbfc; }
+  .cron-panel-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+  .cron-panel-row select { border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 13px; background: var(--card); }
+  .cron-panel-row input { border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px; flex: 1; min-width: 200px; }
+  .cron-time-inline, .cron-panel-row[data-panel="monthly"] { color: var(--text); }
+  .weekday-picker { display: flex; gap: 4px; }
+  .weekday-picker button { width: 30px; height: 30px; padding: 0; border-radius: 50%; font-size: 12px; }
+  .weekday-picker button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .cron-preview { margin-top: 6px; font-size: 12px; color: var(--primary); }
+  .cron-preview.err { color: var(--danger); }
+  .cron-display-row { display: flex; gap: 8px; }
+  .cron-display-row input { flex: 1; background: #fafbfc; cursor: pointer; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chip { border: 1px solid var(--border); border-radius: 12px; padding: 2px 10px;
+    font-size: 12px; cursor: pointer; background: var(--card); }
+  .chip.active { background: var(--primary-weak); border-color: var(--primary); color: var(--primary); }
+  .toast { position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    background: #111827; color: #fff; padding: 8px 18px; border-radius: 8px;
+    font-size: 13px; display: none; z-index: 20; max-width: 80%; }
+  .toast.error { background: var(--danger); }
+  .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+  .summary-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+</style>
+</head>
+<body>
+<header>
+  <h1>定时工作流管理台</h1>
+  <span class="muted">cron 触发无人值守 ReAct run · 历史可回放</span>
+  <div class="spacer"></div>
+  <button onclick="loadList()">刷新</button>
+  <button class="primary" onclick="openEdit(null)">＋ 新建 workflow</button>
+</header>
+<main>
+  <div class="toolbar">
+    <span class="hint" id="listHint"></span>
+  </div>
+  <div id="listWrap"></div>
+</main>
+
+<!-- 编辑/新建弹层 -->
+<div class="mask" id="editMask">
+  <div class="dialog">
+    <h2 id="editTitle">新建 workflow</h2>
+    <div class="grid">
+      <div class="field"><label>workflowKey（唯一标识，创建后不可改）</label>
+        <input id="f_key" placeholder="daily-bd-cron-inspection"></div>
+      <div class="field"><label>名称（通知与会话标题展示）</label>
+        <input id="f_name" placeholder="每日 bd-cron 巡检"></div>
+      <div class="field full"><label>描述</label><input id="f_desc"></div>
+      <div class="field"><label>callerKey（触发的 run 用哪个 caller）</label><input id="f_caller"></div>
+      <div class="field"><label>userName（以谁的身份跑，可空）</label><input id="f_user"></div>
+      <div class="field full"><label>路由值 routeValues（逗号分隔，可空）</label><input id="f_routes" placeholder="route-a, route-b"></div>
+      <div class="field full"><label>任务提示词 prompt（支持 {{date}} {{datetime}} {{workflow}} 占位符）</label>
+        <textarea id="f_prompt" rows="5"></textarea></div>
+      <div class="field"><label>触发类型</label>
+        <select id="f_trigger"><option value="cron">cron</option><option value="manual">manual（仅手动）</option></select></div>
+      <div class="field full" id="cronField">
+        <label>cron 调度计划</label>
+        <div class="cron-display-row">
+          <input id="cron_display" class="mono" readonly placeholder="点击「选择」配置调度计划">
+          <button type="button" onclick="openCronPicker()">选择</button>
+        </div>
+        <div class="tip" id="cron_display_desc"></div>
+      </div>
+      <div class="field"><label>时区</label><input id="f_tz" value="Asia/Shanghai"></div>
+      <div class="field"><label>启用</label>
+        <select id="f_enabled"><option value="1">启用</option><option value="0">停用</option></select></div>
+      <div class="field"><label>modelKey（空 = 全局默认）</label><input id="f_model"></div>
+      <div class="field"><label>modelVersion（空 = 目录默认）</label><input id="f_modelVer"></div>
+      <div class="field"><label>maxSteps（0 = 配置默认）</label><input id="f_maxSteps" type="number" min="0"></div>
+      <div class="field"><label>timeoutSec（0 = 配置默认）</label><input id="f_timeout" type="number" min="0"></div>
+      <div class="field full"><label>通知 webhook（企业微信/飞书机器人地址，可空）</label><input id="f_webhook"></div>
+      <div class="field full"><label>判级正则 riskPatterns（每行一个，命中结论即 high，可空）</label>
+        <textarea id="f_risk" rows="3" placeholder="发现异常&#10;P0|P1"></textarea></div>
+    </div>
+    <div class="foot">
+      <button onclick="closeEdit()">取消</button>
+      <button class="primary" id="saveBtn" onclick="saveEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 运行历史弹层 -->
+<div class="mask" id="runsMask">
+  <div class="dialog" style="width: 960px;">
+    <h2 id="runsTitle">运行历史</h2>
+    <div class="chips" id="runsChips"></div>
+    <div id="runsWrap"></div>
+    <div class="foot"><button onclick="closeRuns()">关闭</button></div>
+  </div>
+</div>
+
+<!-- cron 调度计划选择弹窗（天/周/月/手写四选一，互斥） -->
+<div class="mask" id="cronMask">
+  <div class="dialog" style="width: 560px;">
+    <h2>配置调度计划</h2>
+    <div class="cron-mode-row">
+      <label class="cron-mode"><input type="radio" name="cronMode" value="daily" checked>天级</label>
+      <label class="cron-mode"><input type="radio" name="cronMode" value="weekly">周级</label>
+      <label class="cron-mode"><input type="radio" name="cronMode" value="monthly">月级</label>
+      <label class="cron-mode"><input type="radio" name="cronMode" value="hourly">小时级</label>
+      <label class="cron-mode"><input type="radio" name="cronMode" value="advanced">手写表达式</label>
+    </div>
+    <div class="cron-panel" id="cronPanel">
+      <div class="cron-panel-row" data-panel="daily">
+        每天在 <select id="c_daily_h"></select> 时 <select id="c_daily_m"></select> 分 执行
+      </div>
+      <div class="cron-panel-row" data-panel="weekly" hidden>
+        <div class="weekday-picker" id="weekdayPicker"></div>
+        <span class="cron-time-inline">在 <select id="c_weekly_h"></select> 时 <select id="c_weekly_m"></select> 分 执行</span>
+      </div>
+      <div class="cron-panel-row" data-panel="monthly" hidden>
+        每月 <select id="c_month_day"></select> 号
+        <span class="cron-time-inline">在 <select id="c_monthly_h"></select> 时 <select id="c_monthly_m"></select> 分 执行</span>
+      </div>
+      <div class="cron-panel-row" data-panel="hourly" hidden>
+        每 <select id="c_hourly_every"></select> 小时，
+        <span class="cron-time-inline">在第 <select id="c_hourly_m"></select> 分 执行</span>
+      </div>
+      <div class="cron-panel-row" data-panel="advanced" hidden>
+        <input id="f_cron" class="mono" placeholder="0 2 * * *（标准 5 段）">
+        <div class="tip">示例：0 2 * * *（每天 02:00）｜*/10 * * * *（每 10 分钟）｜0 9 * * 1-5（工作日 09:00）</div>
+      </div>
+    </div>
+    <div class="cron-preview mono" id="cronPreview"></div>
+    <div class="foot">
+      <button onclick="closeCronPicker()">取消</button>
+      <button class="primary" onclick="confirmCronPicker()">确定</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/react-base-service/react/workflow';
+let workflows = [];
+
+function toast(msg, isError) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'toast show' + (isError ? ' error' : '');
+  setTimeout(() => el.className = 'toast', 2600);
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtTime(s) { return s ? new Date(s).toLocaleString('zh-CN', {hour12: false}) : '—'; }
+
+async function api(path, options) {
+  const resp = await fetch(API + path, Object.assign({
+    headers: {'Content-Type': 'application/json'},
+    credentials: 'same-origin',
+  }, options || {}));
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok || body.errNo !== 0) {
+    const msg = body.errMsg || ('HTTP ' + resp.status);
+    if (resp.status === 401 || resp.status === 403) throw new Error(msg + '（请先登录基座后刷新本页）');
+    throw new Error(msg);
+  }
+  return body.data || {};
+}
+
+async function loadList() {
+  const wrap = document.getElementById('listWrap');
+  try {
+    const data = await api('/list');
+    workflows = (data.items || []).map(it => Object.assign({}, it.workflow, {recentStatus: it.recentRunStatus}));
+    document.getElementById('listHint').textContent = '共 ' + workflows.length + ' 个定义（调度器随 llm.workflow.enabled 启动）';
+    if (!workflows.length) { wrap.innerHTML = '<div class="card empty">暂无 workflow，点右上角「新建」创建第一个定时任务</div>'; return; }
+    wrap.innerHTML = '<table><thead><tr>' +
+      '<th>名称 / Key</th><th>触发</th><th>Caller / 身份</th><th>状态</th><th>下次 / 最近触发</th><th>最近运行</th><th>操作</th>' +
+      '</tr></thead><tbody>' + workflows.map(rowHtml).join('') + '</tbody></table>';
+  } catch (e) {
+    wrap.innerHTML = '<div class="card empty">' + esc(e.message) + '</div>';
+  }
+}
+
+function rowHtml(w) {
+  const enabled = w.enabled === 1;
+  const trigger = w.triggerType === 'cron'
+    ? esc(w.cronExpr) + ' <span class="mono">(' + esc(w.timezone) + ')</span>'
+    : 'manual';
+  return '<tr>' +
+    '<td><b>' + esc(w.name) + '</b><br><span class="mono">' + esc(w.workflowKey) + '</span></td>' +
+    '<td>' + trigger + '</td>' +
+    '<td>' + esc(w.callerKey) + (w.userName ? '<br><span class="mono">as ' + esc(w.userName) + '</span>' : '') + '</td>' +
+    '<td><span class="badge ' + (enabled ? 'on' : 'off') + '">' + (enabled ? '启用' : '停用') + '</span></td>' +
+    '<td><span class="mono">' + fmtTime(w.nextFireAt) + '</span><br><span class="mono">最近 ' + fmtTime(w.lastFireAt) + '</span></td>' +
+    '<td>' + (w.recentStatus ? '<span class="badge s-' + esc(w.recentStatus) + '">' + esc(w.recentStatus) + '</span>' : '<span class="muted">未运行</span>') + '</td>' +
+    '<td><div class="ops">' +
+      '<button class="mini primary" onclick="dispatch(\'' + esc(w.workflowKey) + '\')">触发</button>' +
+      '<button class="mini" onclick="openRuns(\'' + esc(w.workflowKey) + '\')">历史</button>' +
+      '<button class="mini" onclick="openEdit(\'' + esc(w.workflowKey) + '\')">编辑</button>' +
+      '<button class="mini" onclick="toggleEnabled(\'' + esc(w.workflowKey) + '\', ' + (enabled ? 0 : 1) + ')">' + (enabled ? '停用' : '启用') + '</button>' +
+      '<button class="mini danger" onclick="removeWorkflow(\'' + esc(w.workflowKey) + '\')">删除</button>' +
+    '</div></td></tr>';
+}
+
+async function toggleEnabled(key, enabled) {
+  try { await api('/' + encodeURIComponent(key), {method: 'PATCH', body: JSON.stringify({enabled: !!enabled})});
+    toast(enabled ? '已启用' : '已停用'); loadList();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function dispatch(key) {
+  if (!confirm('立即手动触发一次「' + key + '」？')) return;
+  try { await api('/' + encodeURIComponent(key) + '/dispatch', {method: 'POST', body: JSON.stringify({note: '管理台手动触发'})});
+    toast('已触发，可在「历史」中查看进度'); loadList();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function removeWorkflow(key) {
+  if (!confirm('删除「' + key + '」？定义将软删并停用调度（历史保留）。')) return;
+  try { await api('/' + encodeURIComponent(key), {method: 'DELETE'}); toast('已删除'); loadList(); }
+  catch (e) { toast(e.message, true); }
+}
+
+/* ---------- 编辑/新建 ---------- */
+let editingKey = null;
+function openEdit(key) {
+  editingKey = key;
+  const w = key ? workflows.find(x => x.workflowKey === key) : null;
+  document.getElementById('editTitle').textContent = w ? '编辑 workflow · ' + w.workflowKey : '新建 workflow';
+  document.getElementById('f_key').value = w ? w.workflowKey : '';
+  document.getElementById('f_key').disabled = !!w;
+  document.getElementById('f_name').value = w ? w.name : '';
+  document.getElementById('f_desc').value = w ? (w.description || '') : '';
+  document.getElementById('f_caller').value = w ? w.callerKey : '';
+  document.getElementById('f_user').value = w ? (w.userName || '') : '';
+  document.getElementById('f_routes').value = w ? joinRoutes(w.routeValues) : '';
+  document.getElementById('f_prompt').value = w ? w.prompt : '';
+  document.getElementById('f_trigger').value = w ? w.triggerType : 'cron';
+  cronExprValue = w ? (w.cronExpr || '') : '';
+  syncCronDisplay();
+  document.getElementById('cronField').disabled = (w ? w.triggerType : 'cron') !== 'cron';
+  document.getElementById('f_tz').value = w ? (w.timezone || 'Asia/Shanghai') : 'Asia/Shanghai';
+  document.getElementById('f_enabled').value = w ? String(w.enabled) : '1';
+  document.getElementById('f_model').value = w ? (w.modelKey || '') : '';
+  document.getElementById('f_modelVer').value = w ? (w.modelVersion || '') : '';
+  document.getElementById('f_maxSteps').value = w ? (w.maxSteps || 0) : 0;
+  document.getElementById('f_timeout').value = w ? (w.timeoutSec || 0) : 0;
+  document.getElementById('f_webhook').value = w ? (w.notifyWebhookUrl || '') : '';
+  document.getElementById('f_risk').value = w ? (w.riskPatterns || '') : '';
+  document.getElementById('editMask').classList.add('show');
+}
+function closeEdit() { document.getElementById('editMask').classList.remove('show'); }
+function joinRoutes(raw) {
+  try { const arr = JSON.parse(raw || '[]'); return Array.isArray(arr) ? arr.join(', ') : ''; }
+  catch (e) { return ''; }
+}
+function splitRoutes(text) {
+  const arr = text.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  return arr;
+}
+async function saveEdit() {
+  const body = {
+    name: val('f_name'), description: val('f_desc'), callerKey: val('f_caller'),
+    userName: val('f_user'), routeValues: splitRoutes(val('f_routes')),
+    prompt: val('f_prompt'), triggerType: val('f_trigger'), cronExpr: cronExprValue,
+    timezone: val('f_tz'), modelKey: val('f_model'), modelVersion: val('f_modelVer'),
+    maxSteps: Number(val('f_maxSteps') || 0), timeoutSec: Number(val('f_timeout') || 0),
+    notifyWebhookUrl: val('f_webhook'), riskPatterns: val('f_risk'),
+    enabled: val('f_enabled') === '1',
+  };
+  try {
+    if (editingKey) {
+      await api('/' + encodeURIComponent(editingKey), {method: 'PATCH', body: JSON.stringify(body)});
+    } else {
+      body.workflowKey = val('f_key');
+      await api('', {method: 'POST', body: JSON.stringify(body)});
+    }
+    toast('已保存'); closeEdit(); loadList();
+  } catch (e) { toast(e.message, true); }
+}
+function val(id) { return document.getElementById(id).value.trim(); }
+
+/* ---------- cron 调度计划选择弹窗 ---------- */
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+let cronSelectedDays = new Set([1]); // 周级模式默认周一
+let cronExprValue = '';              // 编辑弹层当前持有的表达式（弹窗确认后写回）
+
+function fillCronSelect(id, from, to, def) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = '';
+  for (let i = from; i <= to; i++) {
+    const opt = document.createElement('option');
+    opt.value = i; opt.textContent = String(i).padStart(2, '0');
+    sel.appendChild(opt);
+  }
+  sel.value = String(def);
+}
+function initCronPicker() {
+  fillCronSelect('c_daily_h', 0, 23, 2);   fillCronSelect('c_daily_m', 0, 59, 0);
+  fillCronSelect('c_weekly_h', 0, 23, 9);  fillCronSelect('c_weekly_m', 0, 59, 0);
+  fillCronSelect('c_monthly_h', 0, 23, 9); fillCronSelect('c_monthly_m', 0, 59, 0);
+  const daySel = document.getElementById('c_month_day');
+  daySel.innerHTML = '';
+  for (let i = 1; i <= 31; i++) {
+    const opt = document.createElement('option'); opt.value = i; opt.textContent = i; daySel.appendChild(opt);
+  }
+  daySel.value = '1';
+  // 小时级：每 N 小时（1=每小时）的第几分钟
+  const everySel = document.getElementById('c_hourly_every');
+  everySel.innerHTML = '';
+  [1,2,3,4,6,8,12].forEach(n => {
+    const opt = document.createElement('option'); opt.value = n;
+    opt.textContent = n === 1 ? '1（每小时）' : String(n); everySel.appendChild(opt);
+  });
+  everySel.value = '1';
+  fillCronSelect('c_hourly_m', 0, 59, 0);
+
+  const picker = document.getElementById('weekdayPicker');
+  picker.innerHTML = '';
+  WEEKDAYS.forEach((label, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.textContent = label; btn.dataset.day = idx;
+    btn.onclick = () => {
+      if (cronSelectedDays.has(idx)) {
+        if (cronSelectedDays.size > 1) cronSelectedDays.delete(idx); // 至少保留一天
+      } else cronSelectedDays.add(idx);
+      refreshCronPicker();
+    };
+    picker.appendChild(btn);
+  });
+
+  document.querySelectorAll('input[name="cronMode"]').forEach(radio => {
+    radio.addEventListener('change', refreshCronPicker);
+  });
+  ['c_daily_h','c_daily_m','c_weekly_h','c_weekly_m','c_month_day','c_monthly_h','c_monthly_m','c_hourly_every','c_hourly_m']
+    .forEach(id => document.getElementById(id).addEventListener('change', refreshCronPicker));
+  document.getElementById('f_cron').addEventListener('input', refreshCronPicker);
+  document.getElementById('f_trigger').addEventListener('change', () => {
+    document.getElementById('cronField').disabled = val('f_trigger') !== 'cron';
+  });
+}
+function pickerMode() {
+  const checked = document.querySelector('input[name="cronMode"]:checked');
+  return checked ? checked.value : 'daily';
+}
+function setCronMode(mode) {
+  const radio = document.querySelector(`input[name="cronMode"][value="${mode}"]`);
+  if (radio) radio.checked = true;
+}
+function buildCronExpr() {
+  switch (pickerMode()) {
+    case 'daily':
+      return `${+val('c_daily_m')} ${+val('c_daily_h')} * * *`;
+    case 'weekly': {
+      const days = [...cronSelectedDays].sort((a,b)=>a-b).join(',');
+      return `${+val('c_weekly_m')} ${+val('c_weekly_h')} * * ${days}`;
+    }
+    case 'monthly':
+      return `${+val('c_monthly_m')} ${+val('c_monthly_h')} ${+val('c_month_day')} * *`;
+    case 'hourly': {
+      const every = +val('c_hourly_every');
+      const minute = +val('c_hourly_m');
+      return every === 1 ? `${minute} * * * *` : `${minute} */${every} * * *`;
+    }
+    default:
+      return val('f_cron');
+  }
+}
+function describeCron(expr) {
+  const parts = (expr || '').trim().split(/\s+/);
+  if (parts.length !== 5) return '';
+  const [m, h, dom, , dow] = parts;
+  const time = (hh, mm) => `${pad2(hh)}:${pad2(mm)}`;
+  if (/^\*\/(\d+)$/.test(m) && h === '*') return `每 ${RegExp.$1} 分钟执行一次`;
+  if (/^\d+$/.test(m) && /^\*\/(\d+)$/.test(h) && dom === '*' && dow === '*') return `每 ${RegExp.$1} 小时在第 ${pad2(m)} 分执行`;
+  if (/^\d+$/.test(m) && h === '*' && dom === '*' && dow === '*') return `每小时的 ${pad2(m)} 分执行一次`;
+  if (/^\d+$/.test(m) && /^\d+$/.test(h)) {
+    const at = time(h, m);
+    if (dom === '*' && dow === '*') return `每天 ${at} 执行`;
+    if (dom === '*' && dow !== '*') {
+      const days = dow.split(',').map(d => {
+        if (/^\d+$/.test(d)) return '周' + WEEKDAYS[+d % 7];
+        if (/^(\d+)-(\d+)$/.test(d)) return `周${WEEKDAYS[+RegExp.$1 % 7]}至周${WEEKDAYS[+RegExp.$2 % 7]}`;
+        return d;
+      }).join('、');
+      return `${days} ${at} 执行`;
+    }
+    if (dom !== '*' && dow === '*') return `每月 ${dom} 号 ${at} 执行`;
+    return `${expr}（自定义）`;
+  }
+  return `${expr}（自定义）`;
+}
+function pad2(n) { return String(n).padStart(2, '0'); }
+function refreshCronPicker() {
+  const mode = pickerMode();
+  document.querySelectorAll('.cron-panel-row').forEach(row => {
+    row.hidden = row.dataset.panel !== mode;
+  });
+  document.querySelectorAll('#weekdayPicker button').forEach(btn => {
+    btn.classList.toggle('on', cronSelectedDays.has(+btn.dataset.day));
+  });
+  const expr = buildCronExpr();
+  const preview = document.getElementById('cronPreview');
+  const desc = describeCron(expr);
+  const valid = mode !== 'advanced' || /^(\S+\s+){4}\S+$/.test(expr);
+  preview.textContent = expr ? `表达式：${expr}${desc ? ' ｜ ' + desc : ''}` : '';
+  preview.classList.toggle('err', !valid);
+}
+// parseCronToPicker 把已有表达式尽量还原到弹窗（空表达式默认天级；识别不了的落到手写模式）。
+function parseCronToPicker(expr) {
+  const parts = (expr || '').trim().split(/\s+/);
+  cronSelectedDays = new Set([1]);
+  document.getElementById('f_cron').value = expr || '';
+  if (!parts || parts.length !== 5 || parts.join('') === '') {
+    setCronMode('daily');
+    refreshCronPicker();
+    return;
+  }
+  setCronMode('advanced');
+  const [m, h, dom, mon, dow] = parts;
+  const setSel = (id, v) => { document.getElementById(id).value = String(v); };
+  if (mon !== '*') { refreshCronPicker(); return; } // 月受限表达式走手写
+  if (/^\d+$/.test(m) && h === '*' && dom === '*' && dow === '*') {
+    setCronMode('hourly'); setSel('c_hourly_every', 1); setSel('c_hourly_m', m);
+  } else if (/^\d+$/.test(m) && /^\*\/(\d+)$/.test(h) && dom === '*' && dow === '*') {
+    // N 不在预设选项（1/2/3/4/6/8/12）时保留手写模式展示原表达式
+    if ([1,2,3,4,6,8,12].includes(+RegExp.$1)) {
+      setCronMode('hourly'); setSel('c_hourly_every', RegExp.$1); setSel('c_hourly_m', m);
+    }
+  } else if (/^\d+$/.test(m) && /^\d+$/.test(h) && dom === '*' && dow === '*') {
+    setCronMode('daily'); setSel('c_daily_h', h); setSel('c_daily_m', m);
+  } else if (/^\d+$/.test(m) && /^\d+$/.test(h) && dom === '*' && dow !== '*' && /^[\d,-]+$/.test(dow)) {
+    setCronMode('weekly'); setSel('c_weekly_h', h); setSel('c_weekly_m', m);
+    if (dow.includes('-')) { setCronMode('advanced'); } // 范围语义（如 1-5）构建器不覆盖，手写展示
+    else {
+      const days = new Set(dow.split(',').map(Number).filter(n => n >= 0 && n <= 7).map(n => n % 7));
+      if (days.size) cronSelectedDays = days;
+    }
+  } else if (/^\d+$/.test(m) && /^\d+$/.test(h) && /^\d+$/.test(dom) && dow === '*') {
+    setCronMode('monthly'); setSel('c_month_day', dom); setSel('c_monthly_h', h); setSel('c_monthly_m', m);
+  }
+  refreshCronPicker();
+}
+function openCronPicker() {
+  parseCronToPicker(cronExprValue);
+  document.getElementById('cronMask').classList.add('show');
+}
+function closeCronPicker() { document.getElementById('cronMask').classList.remove('show'); }
+function confirmCronPicker() {
+  const expr = buildCronExpr().trim();
+  if (!expr) { toast('请先配置调度计划', true); return; }
+  cronExprValue = expr;
+  syncCronDisplay();
+  closeCronPicker();
+}
+function syncCronDisplay() {
+  document.getElementById('cron_display').value = cronExprValue;
+  document.getElementById('cron_display_desc').textContent = cronExprValue ? (describeCron(cronExprValue) || '') : '';
+}
+initCronPicker();
+
+/* ---------- 运行历史 ---------- */
+let runsKey = null, runsStatus = '';
+function openRuns(key) {
+  runsKey = key; runsStatus = '';
+  document.getElementById('runsTitle').textContent = '运行历史 · ' + key;
+  document.getElementById('runsMask').classList.add('show');
+  loadRuns();
+}
+function closeRuns() { document.getElementById('runsMask').classList.remove('show'); }
+async function loadRuns(status) {
+  runsStatus = status || '';
+  const wrap = document.getElementById('runsWrap');
+  try {
+    const query = (runsStatus ? '?status=' + encodeURIComponent(runsStatus) : '');
+    const data = await api('/' + encodeURIComponent(runsKey) + '/runs' + query);
+    const counts = data.statusCounts || {};
+    const chips = [''].concat(Object.keys(counts).sort());
+    document.getElementById('runsChips').innerHTML = chips.map(s => {
+      const label = s ? s + ' (' + counts[s] + ')' : '全部';
+      const active = (s === runsStatus) ? ' active' : '';
+      return '<span class="chip' + active + '" onclick="loadRuns(\'' + s + '\')">' + esc(label) + '</span>';
+    }).join('');
+    const runs = data.runs || [];
+    wrap.innerHTML = runs.length ? '<table><thead><tr>' +
+      '<th>状态</th><th>风险</th><th>触发</th><th>开始 / 结束</th><th>结论 / 错误</th><th>回放</th>' +
+      '</tr></thead><tbody>' + runs.map(runHtml).join('') + '</tbody></table>'
+      : '<div class="empty">暂无运行记录</div>';
+  } catch (e) { wrap.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+function runHtml(r) {
+  const note = r.triggerNote ? ' <span class="mono">(' + esc(r.triggerNote) + ')</span>' : '';
+  const replay = r.sessionId
+    ? '<a target="_blank" href="/react-base-service/react/replay?sessionId=' + encodeURIComponent(r.sessionId) + '">回放</a>'
+    : '<span class="muted">—</span>';
+  const detail = (r.status === 'failed' || r.status === 'timeout' || r.status === 'skipped')
+    ? (r.errorMsg || '') : (r.summary || '');
+  return '<tr>' +
+    '<td><span class="badge s-' + esc(r.status) + '">' + esc(r.status) + '</span></td>' +
+    '<td><span class="badge r-' + esc(r.riskLevel || 'none') + '">' + esc(r.riskLevel || 'none') + '</span></td>' +
+    '<td>' + esc(r.triggerType) + note + '<br><span class="mono">计划 ' + fmtTime(r.plannedFireAt) + '</span></td>' +
+    '<td><span class="mono">' + fmtTime(r.startedAt) + '</span><br><span class="mono">' + fmtTime(r.finishedAt) + '</span></td>' +
+    '<td><div class="summary-cell">' + esc(detail) + '</div></td>' +
+    '<td>' + replay + '</td></tr>';
+}
+
+loadList();
+</script>
+</body>
+</html>

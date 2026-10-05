@@ -34,8 +34,10 @@ const (
 	WorkflowRunStatusTimeout   = "timeout"
 	WorkflowRunStatusSkipped   = "skipped"
 
-	// 风险级别（一期规则判级：summary 命中 risk_patterns 正则即 high）。
+	// 风险级别：一期规则判级（risk_patterns 正则命中即 high）；
+	// 二期裁判外环语义判级引入 low（提示级瑕疵）。
 	WorkflowRiskLevelNone = "none"
+	WorkflowRiskLevelLow  = "low"
 	WorkflowRiskLevelHigh = "high"
 )
 
@@ -265,4 +267,34 @@ func CountWorkflowRunsByStatus(ctx context.Context, workflowID uint64) (map[stri
 		counts[row.Status] = row.Count
 	}
 	return counts, nil
+}
+
+// ListRecentWorkflowRunStatuses 返回某 workflow 最近 limit 条 run 的状态（id 倒序；连环失败熔断用）。
+func ListRecentWorkflowRunStatuses(ctx context.Context, workflowID uint64, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	var statuses []string
+	if err := helpers.MysqlClientLLM.WithContext(ctx).Model(&WorkflowRun{}).
+		Where("workflow_id = ?", workflowID).
+		Order("id DESC").Limit(limit).Pluck("status", &statuses).Error; err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return statuses, nil
+}
+
+// ExpireStaleWorkflowRuns 把上次进程生命周期遗留的在途 run 置为 failed（单实例语义：
+// 本进程重启后它们不可能还在执行）；否则僵尸行会永久占用 caller 并发闸门（真机踩坑）。
+func ExpireStaleWorkflowRuns(ctx context.Context) (int64, error) {
+	result := helpers.MysqlClientLLM.WithContext(ctx).Model(&WorkflowRun{}).
+		Where("status IN ?", workflowRunningStatuses).
+		Updates(map[string]any{
+			"status":      WorkflowRunStatusFailed,
+			"error_msg":   "服务重启，运行中断",
+			"finished_at": time.Now(),
+		})
+	if result.Error != nil {
+		return 0, components.ErrorDbUpdate.Wrap(result.Error)
+	}
+	return result.RowsAffected, nil
 }
