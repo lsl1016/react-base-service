@@ -24,10 +24,10 @@ summary: 模型目录查询、连通性检测、白名单管控与用户自建�
 
 model 模块管理 ReAct Runtime 可用的模型凭证。模型分两类，同存一张 `tblLlmUserModel` 表：
 
-| 类型 | `is_platform_default` | `user_name` | 可见范围 | 积分概念 |
-|---|---|---|---|---|
-| 平台默认模型 | `1` | 空串 | 全部用户 | 有（见 credits 模块） |
-| 个人模型 | `0` | 创建者英文名 | 创建者本人 + 白名单用户 | 无 |
+| 类型 | `is_platform_default` | `user_name` | 可见范围 |
+|---|---|---|---|
+| 平台默认模型 | `1` | 空串 | 全部用户 |
+| 个人模型 | `0` | 创建者英文名 | 创建者本人 + 白名单用户 |
 
 `modelKey` 使用厂商新枚举（`OpenAI`/`DeepSeek`/`xAI`/`Moonshot`/`通义千问`/`智谱`/`火山方舟（字节）`/`Google`/`MiniMax`/`文心一言`/`Anthropic`/`自建网关`），由 `api/llm` 包的 `IsValidModelKey` 校验；`NormalizeModelKey` 将其归一到 `gpt`/`claude` 两类客户端，国内厂商 endpoint 加 `-cn` 后缀查找。
 
@@ -41,14 +41,14 @@ model 模块管理 ReAct Runtime 可用的模型凭证。模型分两类，同�
 | `/react-base-service/model/create` | POST | 创建模型 | `llmmodel.CreateUserModel` |
 | `/react-base-service/model/update` | POST | 编辑模型 | `llmmodel.UpdateUserModel` |
 | `/react-base-service/model/delete` | POST | 软删除模型 | `llmmodel.DeleteUserModel` |
-| `/react-base-service/model/list` | POST | 模型列表（含积分信息） | `llmmodel.ListUserModels` |
+| `/react-base-service/model/list` | POST | 模型列表 | `llmmodel.ListUserModels` |
 | `/react-base-service/model/detail` | POST | 模型详情（apiKey 不脱敏） | `llmmodel.GetUserModelDetail` |
 
 ## 3. 核心逻辑
 
 ### 3.1 白名单与模型目录
 
-白名单来自 `custom.yaml` 的 `llm.model_whitelist`，`service/llmmodel` 的 `IsWhitelisted` 逐项字符串比较；列表为空时任何用户都不具备平台级权限，不存在隐式放行。白名单能力：创建/编辑/删除平台默认模型、查看全量模型、查看任意模型详情、将模型在平台默认与个人之间切换、调整积分。
+白名单来自 `custom.yaml` 的 `llm.model_whitelist`，`service/llmmodel` 的 `IsWhitelisted` 逐项字符串比较；列表为空时任何用户都不具备平台级权限，不存在隐式放行。白名单能力：创建/编辑/删除平台默认模型、查看全量模型、查看任意模型详情、将模型在平台默认与个人之间切换。
 
 `GET /models` 与数据库无关，返回 `llm.GetSupportedModels()` 读取的 `custom.yaml` `llm.models` 目录（`key`/`versions`/`default_version`）；不返回用户自建模型。
 
@@ -78,7 +78,7 @@ model 模块管理 ReAct Runtime 可用的模型凭证。模型分两类，同�
 
 ### 3.4 列表与详情的可见性
 
-列表（`ListUserModels`）：白名单用户返回全量，普通用户返回 `is_platform_default = 1 OR user_name = 自己`；`bizScene` 过滤走 SQL `JSON_CONTAINS(biz_scenes, JSON_QUOTE(?))`，`modelName` 模糊搜索为内存中 `strings.Contains` 过滤；排序 `is_platform_default DESC, created_at DESC`。仅平台默认模型项附带 `baseCredits`（经 `creditsService.GetOrInit`，会触发基础积分惰性初始化）与 `bonusCredits`。apiKey 经 `maskApiKey` 脱敏：长度大于 8 时前 4 位 + `****` + 后 4 位，否则整体 `****`。
+列表（`ListUserModels`）：白名单用户返回全量，普通用户返回 `is_platform_default = 1 OR user_name = 自己`；`bizScene` 过滤走 SQL `JSON_CONTAINS(biz_scenes, JSON_QUOTE(?))`，`modelName` 模糊搜索为内存中 `strings.Contains` 过滤；排序 `is_platform_default DESC, created_at DESC`。apiKey 经 `maskApiKey` 脱敏：长度大于 8 时前 4 位 + `****` + 后 4 位，否则整体 `****`。
 
 详情（`GetUserModelDetail`）：白名单用户可查任意模型；普通用户仅可查平台默认模型或本人模型；`apiKey` 原样返回用于编辑回显。
 
@@ -110,7 +110,7 @@ model 模块管理 ReAct Runtime 可用的模型凭证。模型分两类，同�
 | `is_platform_default` | 1 平台默认 / 0 个人 |
 | `deleted_at` | 软删除标记 |
 
-DTO 定义在 `components/params/llmmodel.go`：请求侧 `ConnCheckReq`、`CreateUserModelReq`、`UpdateUserModelReq`、`DeleteUserModelReq`、`GetUserModelDetailReq`、`ListUserModelsReq`，响应侧 `UserModelItem`（`baseCredits`/`bonusCredits` 为可选指针字段）。
+DTO 定义在 `components/params/llmmodel.go`：请求侧 `ConnCheckReq`、`CreateUserModelReq`、`UpdateUserModelReq`、`DeleteUserModelReq`、`GetUserModelDetailReq`、`ListUserModelsReq`，响应侧 `UserModelItem`。
 
 ## 5. 配置项
 

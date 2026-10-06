@@ -166,7 +166,7 @@ e2e 验证（`REACT_DELEGATE_E2E=1`，真实 MySQL + glm-4.6 + mcp-server 网关
 **子代理预算（token 口径）**：`tblLlmAgent.max_tokens_per_run`（0=不限，frontmatter 同名支持）。
 口径 = 子 run 输入+输出+委派孙代理 delegated_*（递归）；engine 每轮模型调用后检查，
 仅在还有后续工具轮次时终止（已产出最终回答的轮次保留完成态，OH max_budget_per_run 同款语义），
-超限错误经委派既有软错误通道回填父循环。积分体系保持 user 级不接入引擎（口径决策）。
+超限错误经委派既有软错误通道回填父循环。
 
 **Agent Bundle 插件包**：布局 OH Claude Code 兼容（`.plugin/plugin.json` 或根 `manifest.json`，
 name 强校验 kebab-case）+ `agents/*.md` + `skills/<name>/SKILL.md` + `.mcp.json`（仅 url 形式）。

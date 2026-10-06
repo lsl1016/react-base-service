@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/HITL-人机协同-2DA44E" alt="HITL 轮次反馈·中途引导">
   <img src="https://img.shields.io/badge/会话-分叉%C2%B7回放-D29922" alt="会话分叉·历史回放">
   <img src="https://img.shields.io/badge/Python-隔离沙箱-CF222E" alt="Python 网络硬隔离沙箱">
-  <img src="https://img.shields.io/badge/MCP-客户端%C3%97网关-5E5CE6" alt="MCP 客户端×服务端网关">
+  <img src="https://img.shields.io/badge/MCP-客户端-5E5CE6" alt="MCP 客户端">
 </p>
 
 ---
@@ -36,7 +36,7 @@
   <img src="docs/images/architecture.png" alt="系统架构图" width="920">
 </p>
 
-五层结构：客户端（Web SDK 多会话 UI / playground · replay 宿主页 / 业务 Caller / MCP 应用消费方）→ router + 免鉴权中间件（信任 X-User-Name 头，缺省 anonymous；HTTP 管理面 + WebSocket 运行入口；MCP 网关自带 Bearer 凭证鉴权）→ 控制器 → service 层（ReAct / Plan 双运行时 + Steering 引导与排队 + 双层记忆 + cron 定时工作流 + 工具 / Agent / Skill / Bundle / Caller / 模型配置等注册类资源管理 + MCP 服务端网关）→ 基础设施（LLM 网关 / MySQL / Redis / 对象存储 MinIO · COS · 本地目录 / Python 沙箱 / SearXNG 检索 / Graphiti 时序图谱）。
+五层结构：客户端（Web SDK 多会话 UI / playground · replay 宿主页 / 业务 Caller）→ router + 免鉴权中间件（信任 X-User-Name 头，缺省 anonymous；HTTP 管理面 + WebSocket 运行入口）→ 控制器 → service 层（ReAct / Plan 双运行时 + Steering 引导与排队 + 双层记忆 + cron 定时工作流 + 工具 / Agent / Skill / Bundle / Caller / 模型配置等注册类资源管理）→ 基础设施（LLM 网关 / MySQL / Redis / 对象存储 MinIO · COS · 本地目录 / Python 沙箱 / SearXNG 检索 / Graphiti 时序图谱）。
 
 - 详细分层与设计约束见 [系统架构](docs/architecture.md)
 
@@ -86,7 +86,7 @@ go run main.go
 - **沙箱端口来自 dev 覆盖层**：`18190` 只在 `docker-compose.dev.yml` 生效；发布形态（`docker compose up -d --build`，不含覆盖层）沙箱不对外发布端口、且不可出网。**不要把覆盖层带到发布环境**
 - **本地服务端口 8180**（`conf/mount/config.yaml` 的 `server.address`），与容器版 service（:8080）可并行
 - **不要用 `docker compose up -d --build service` 验证代码改动**——那是发布形态；日常开发一律本地 `go run`
-- DB 注册的 MCP 连接（如 mcpgw 网关）本地与容器共用同一注册表，本地启动时自动拉起
+- DB 注册的 MCP 连接本地与容器共用同一注册表，本地启动时自动拉起
 
 **方式三：本机分步运行（不依赖容器）**
 
@@ -140,11 +140,11 @@ const ui = mountAgentUI(document.getElementById('agent-container'), agent, {
 | Web 框架 | Gin · 手写 WebSocket（RFC 6455 握手 / 帧编解码 / ping-pong 保活） |
 | 存储 | GORM + MySQL 8（sql/init.sql 全量建库）· redigo + Redis 7 |
 | LLM 接入 | claude / gpt 兼容 / minimax，流式输出 + 工具调用，模型互备 |
-| 工具协议 | MCP（modelcontextprotocol/go-sdk）客户端 + 服务端网关 |
+| 工具协议 | MCP（modelcontextprotocol/go-sdk）客户端 |
 | 校验 | jsonschema-go（工具输入 Schema 校验） |
 | 可观测 | Prometheus `/metrics` · 日志按大小轮转（lumberjack） |
 | 沙箱 | Python 3.11（python_exec：pandas / numpy / matplotlib） |
-| 前端 | embed 静态页面（playground / replay / mcp-admin）· TypeScript SDK（SolidJS UI） |
+| 前端 | embed 静态页面（playground / replay / workflow-admin）· TypeScript SDK（SolidJS UI） |
 | 部署 | Docker Compose（服务 + 依赖 + Prometheus / Loki / Grafana 监控全家桶） |
 
 ## 📁 目录结构
@@ -152,9 +152,9 @@ const ui = mountAgentUI(document.getElementById('agent-container'), agent, {
 ```
 ├── main.go                  # 入口：PreInit → InitResource → 路由 → 后台任务 → HTTP
 ├── router/                  # 路由注册（react / 注册类管理接口 / 静态资源）
-├── controllers/http/        # HTTP/WS 控制器（react、attachment、caller、agent、skill、tool、apikey、systemprompt、llmmodel、mcpadmin、setting、workflow、probe）
+├── controllers/http/        # HTTP/WS 控制器（react、attachment、caller、agent、skill、tool、apikey、systemprompt、llmmodel、setting、workflow、probe）
 ├── service/react/           # ReAct 运行时核心（引擎、运行时装配、Meta Tool、委派、记忆注入、会话历史、异步任务…）
-├── service/                 # 领域服务：tool / skill / agent / memory / graphmemory / workspace / mcpclient / bundle / asynctask / workflow / judge / plan / caller / apikey / systemprompt / llmmodel / credits / token / skillchatfile
+├── service/                 # 领域服务：tool / skill / agent / memory / graphmemory / workspace / mcpclient / bundle / asynctask / workflow / judge / plan / caller / apikey / systemprompt / llmmodel / token / skillchatfile
 ├── api/llm/                 # LLM 客户端（claude / gpt 兼容 / minimax，流式+工具调用）
 ├── api/pythonexec/          # python_exec 沙箱客户端
 ├── models/llm/              # GORM 模型（38 张表，表结构见 sql/init.sql）
@@ -204,7 +204,7 @@ CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）：push / PR 触发 
 | 定时触发工作流 | cron 无人值守调度 ReAct run（`llm.workflow.enabled` 总开关，`/react/workflow/*` 管理接口）：占位符渲染提示词 + headless 执行、裁判外环语义判级 + 未达成自动追问续跑、markdown 报告产物化（通知附下载链接）、连环失败熔断、webhook 通知（企业微信/飞书）、管理面板 `/react/workflow/admin`（详见 [定时触发工作流实现方案](docs/定时触发工作流实现方案.md)） |
 | 产物与附件 | python_exec 沙箱执行 + 对象存储产物下载（provider 可选 minio/cos/local）；csv/md/txt 附件上传与引用 |
 | 轮次反馈 | run 级点赞/点踩与问题反馈，会话维度回显 |
-| 模型管理 | 用户自定义模型（modelHash 直引）、模型白名单、积分 |
+| 模型管理 | 用户自定义模型（modelHash 直引）、模型白名单 |
 | 默认作用域 | 工具/系统提示词/skill 可挂在保留伪 caller `default` 下，全部 caller 的请求自动合并解析；管理面板三类资源支持 全部/默认/各 caller（按平台分组）筛选，新建跟随筛选落到目标作用域 |
 | 内置页面 | playground 联调页（`/react/playground`）、回放页（`/react/replay`）、工作流管理面板（`/react/workflow/admin`）、TypeScript SDK |
 

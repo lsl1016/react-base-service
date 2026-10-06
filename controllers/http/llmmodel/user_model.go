@@ -176,7 +176,7 @@ func GetUserModelDetail(ctx *gin.Context) {
 
 // ListUserModels 模型列表
 // @Summary      获取模型列表
-// @Description  白名单用户返回全量模型，普通用户仅返回平台默认模型+自己创建的模型；API Key 始终脱敏；支持按模型名称模糊搜索和业务场景过滤；平台默认模型返回基础积分和赠送积分信息
+// @Description  白名单用户返回全量模型，普通用户仅返回平台默认模型+自己创建的模型；API Key 始终脱敏；支持按模型名称模糊搜索和业务场景过滤
 // @Tags         llmmodel
 // @Accept       json
 // @Produce      json

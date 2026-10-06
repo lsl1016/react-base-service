@@ -24,7 +24,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 // workflowSystemUser 是 workflow 未配置 user_name 时无人值守 run 的兜底身份。
-// react 引擎要求 run 必须归属用户（审计/积分/工具白名单都按用户解析），不支持匿名 run；
+// react 引擎要求 run 必须归属用户（审计/工具白名单都按用户解析），不支持匿名 run；
 // 方案里"空则匿名"落地为固定系统账号。
 const workflowSystemUser = "workflow"
 

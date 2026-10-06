@@ -1,6 +1,6 @@
 # 系统架构
 
-> 本文描述 react-base-service 的整体架构与关键设计。ReAct 运行时细节另见 `service/react/doc.go` 包注释；MCP 能力边界见 `docs/mcp.md`、网关设计见 `docs/system/mcp-gateway.md`、记忆体系蓝本见 `docs/memory.md`、定时工作流设计蓝本见 `docs/定时触发工作流实现方案.md`。
+> 本文描述 react-base-service 的整体架构与关键设计。ReAct 运行时细节另见 `service/react/doc.go` 包注释；MCP 能力边界见 `docs/mcp.md`、记忆体系蓝本见 `docs/memory.md`、定时工作流设计蓝本见 `docs/定时触发工作流实现方案.md`。
 
 ## 1. 总体分层
 
@@ -8,20 +8,16 @@
                 ┌──────────────────────────────────────────────────────────────────┐
                 │                            接入层                                 │
                 │  Web 前端(SDK) · playground/回放页 · 服务间调用方 Caller            │
-                │  外部 MCP 客户端（Claude/Cursor 等，经 Bearer app_key:secret）      │
-                └───────────────┬──────────────────────────────┬───────────────────┘
-                                │ WebSocket / HTTP              │ MCP Streamable HTTP
-                ┌───────────────▼──────────────────────────────▼───────────────────┐
-                │        router + middleware（AnonymousAuth 免鉴权，X-User-Name；   │
-                │        MCP 网关 Bearer 鉴权；管理台静态令牌 X-Admin-Token）        │
+                └───────────────────────────┬──────────────────────────────────────┘
+                                            │ WebSocket / HTTP
+                ┌───────────────────────────▼──────────────────────────────────────┐
+                │        router + middleware（AnonymousAuth 免鉴权，X-User-Name）  │
                 └───────────────┬──────────────────────────────────────────────────┘
-        ┌───────────────────────┼───────────────────────────────────────┐
-        ▼                       ▼                                       ▼
 ┌───────────────────────────────────────────────────────────────────────────────┐
 │                                 controllers/http                              │
 │  react(WS+会话+队列+MCP+memory+bundle+plan_execution+usage+workflow) · agent ·  │
-│  tool · skill · systemprompt · caller · apikey · llmmodel(连接/模型/白名单/积分)│
-│  · setting(在线配置) · mcpadmin(网关管理台兼容层) · attachment(附件上传)         │
+│  tool · skill · systemprompt · caller · apikey · llmmodel(连接/模型/白名单)     │
+│  · setting(在线配置) · attachment(附件上传) · workflow(定时工作流管理)            │
 └───────────────────────────────────────┬───────────────────────────────────────┘
                                         ▼
 ┌───────────────────────────────────────────────────────────────────────────────┐
@@ -54,30 +50,28 @@
 │  service/graphmemory  Graphiti 图谱记忆瘦客户端（group_id 作用域映射）           │
 │  service/skill      技能 + bundled-skills 内置技能包（go:embed，幂等补种）      │
 │  service/mcpclient  MCP 客户端（连外部服务器，同步工具进注册表，三种传输）       │
-│  service/mcpgateway MCP 服务端网关（本服务 http 工具经 MCP 协议对外供给）        │
 │  service/bundle     Agent 插件包安装/卸载/回滚                                  │
 │  service/workspace  服务端代码工作区（mirror + worktree + 动态挂载 repo MCP）    │
 │  service/{tool,systemprompt,caller,apikey}  注册类资源管理                      │
-│  service/llmmodel + credits    连接与模型管理、用户积分                          │
+│  service/llmmodel            连接与模型管理                                    │
 │  service/setting    运行时在线配置（DB 覆盖 > yaml > 默认，TTL 刷新）            │
 │  service/asynctask  异步任务 Provider 状态同步框架                              │
 │  service/skillchatfile  附件存储（COS）与解码                                   │
 └──────────┬──────────────────┬──────────────────────┬───────────────────────────┘
            ▼                  ▼                      ▼
   ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────────────────┐
-  │ api/llm         │  │ MySQL（38 张表）  │  │ 外部依赖                        │
+  │ api/llm         │  │ MySQL（36 张表）  │  │ 外部依赖                        │
   │ claude / gpt /  │  │ Redis（附件元数据）│  │ api/pythonexec（Python 沙箱）   │
   │ minimax 流式 +  │  │ 对象存储（MinIO）  │  │ 外部 MCP 服务器 / SearXNG /    │
   │ 工具调用 + 能力 │  └──────────────────┘  │ Graphiti / 上游 http 工具 /     │
   │ 目录门禁        │                        │ 企业微信·飞书 webhook           │
   └─────────────────┘                        └────────────────────────────────┘
 
-  独立进程：cmd/mcp-gateway（网关独立部署，:8090，仅挂 /mcp）
-           cmd/repo-mcp（stdio 只读代码检索 MCP 服务器，被 mcpclient 拉起）
+  独立进程：cmd/repo-mcp（stdio 只读代码检索 MCP 服务器，被 mcpclient 拉起）
            cmd/livetest/*（7 个真实模型全链路实测客户端）
 ```
 
-进程形态：主服务 `:8180`（前缀 `/react-base-service`）承载全部业务；网关可随主服务内嵌（`/react-base-service/mcp`，`mcp_server.enabled` 控制）也可经 `cmd/mcp-gateway` 独立部署（共享同一 llm 库）；`repo-mcp` 由 mcpclient 作为子进程按需拉起，不独立部署。
+进程形态：主服务 `:8180`（前缀 `/react-base-service`）承载全部业务；`repo-mcp` 由 mcpclient 作为子进程按需拉起，不独立部署。
 
 ## 2. ReAct 运行时核心链路
 
@@ -298,12 +292,11 @@ conf 加载支持 `${VAR}` / `${VAR:-default}` 环境引用（仓库不落明文
 
 ## 8. MCP 子系统
 
-三个组件、两个方向：
+两个组件、一个方向：
 
 | 组件 | 方向 | 职责 |
 |---|---|---|
 | `service/mcpclient` | 出（消费） | 连外部 MCP 服务器，拉取工具同步进 tblLlmTool（tool_type=mcp），run 执行时分发调用 |
-| `service/mcpgateway` | 入（供给） | 本服务启用的 http 工具经 MCP Streamable HTTP 对外暴露给外部 MCP 客户端 |
 | `mcpserver` + `cmd/repo-mcp` | 自研 stdio 服务器 | 零依赖 JSON-RPC over stdin/stdout 框架 + 只读代码检索工具集，被 mcpclient 拉起 |
 
 ### 8.1 mcpclient
@@ -313,17 +306,7 @@ conf 加载支持 `${VAR}` / `${VAR:-default}` 环境引用（仓库不落明文
 - 工具同步：toolId `mcp_<server>_<tool>`（绑定 caller 副本加后缀），config 携带 inputSchema/outputSchema/mcpServer/mcpTool；**仅 kind=repo（ws_ 工具族）同步 `readOnly:true`**，其余语义未知保守不标。失联分级：连接失败 → 工具整体 status=0（恢复自动恢复）；服务器下架工具 → 停用名单外行；删除/停用/解绑 → 软删。启动时 `CleanupOrphanedRegistryTools` 兜底软删无来源服务器的孤儿工具（软删行占唯一键，同名重接自动复活）。
 - 来源二：DB 注册表（`/react/mcp/*` 管理端点：list/detail/create/update/delete/connect/refresh）+ yaml 静态声明（`mcp.servers`，只读展示）；支持粘贴标准 `mcpServers` JSON（仅 url 形式，command/args 拒绝）。运行中服务器工具变更不自动重同步，需手动刷新。
 
-### 8.2 mcpgateway
-
-- 端点 `/mcp`（独立进程）或 `/react-base-service/mcp`（内嵌），Streamable HTTP 且 `Stateless + JSONResponse`（每请求独立生命周期，天然支持多副本水平扩容）。
-- **鉴权**：`Bearer <app_key>:<app_secret>`（常量时间比较，查 tblLlmMcpApp）；失败返回 403 而非 401（避免客户端误走 OAuth 发现）；`X-MCP-User` 仅审计展示。
-- **注册与白名单**：工具基础集合（全部启用 http 工具，跨 caller 按名去重）∩ 应用绑定（tblLlmMcpAppTool）——绑定即权限；tools/call 阶段按名复核（防客户端缓存过期）。
-- **执行链**：JSON Schema 显式校验（缺必填字段附参数 description 追问）→ dispatch（GET/DELETE 转 query，其余 JSON body；可透传调用方 Cookie）→ 上游响应信封归一 → 审计。
-- **结构化输出**：成功同时返回文本与 StructuredContent；outputSchema 声明 `x-output-projection: true` 时按 schema 裁剪上游响应并把字段 description 渲染成说明文本；最终按 outputSchema 校验结果结构。
-- **审计**：`tools/call` 全量切面，异步批量落 tblLlmMcpCallLog（4096 队列满则丢弃告警、100 条/批、最长 1s flush；只插不改）。
-- 管理面：`/react/mcpapp/*`（应用凭证 CRUD/重置密钥/白名单/审计查询）+ `/api/manage/*` 兼容层（适配旧 Vue3 管理台，X-Admin-Token 静态令牌）。
-
-### 8.3 repo-mcp 与代码工作区
+### 8.2 repo-mcp 与代码工作区
 
 - `repotools/` 只读仓库访问：ast-grep 风格结构化搜索（pattern 元变量 `$NAME`/`$$$NAME`）、go/ast 声明感知检索、路径全部限制在 REPO_ROOT 内（含符号链接逃逸校验）。
 - `cmd/repo-mcp` 注册 9 个工具：list_repositories / list_files / read_file / search_code / search_pattern / find_symbol / get_file_symbols / find_references / get_repo_map。
@@ -422,7 +405,7 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 - 启动加载一次 + 每 10s TTL 刷新（拉平多实例漂移与人工改库；刷新失败保留旧快照防策略闪断）；面板写入后本进程立即生效。
 - 端点：`POST /setting/{subagent,context,memory}/get|update`；响应含 `effective`（与引擎消费同一实现）+ 逐字段 `sources`（override/yaml/default）+ `baseline`（清除覆盖后的回落值）；更新支持 `clearFields`。
 
-## 15. 数据模型（38 张表）
+## 15. 数据模型（36 张表）
 
 | 域 | 表 | 说明 |
 |---|---|---|
@@ -434,9 +417,8 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 | | tblLlmBundle / tblLlmBundleResource | 插件包安装记录 / 资源清单（快照回滚） |
 | | tblLlmMcpServer / tblLlmMcpServerCaller | MCP 连接注册表 / 连接-caller 绑定 |
 | | tblLlmApiKey | caller 级模型凭证（被 tblLlmConnection 升维替代中） |
-| 模型与积分（4） | tblLlmConnection | 模型连接（protocol+base_url+密文 key） |
+| 模型（2） | tblLlmConnection | 模型连接（protocol+base_url+密文 key） |
 | | tblLlmUserModel | 用户自定义模型（connection_id 或自包含） |
-| | tblLlmUserBaseCredits / tblLlmUserBonusCredits | 月度基础/赠送积分（**未接线**：仅列表展示与管理调整，run 链路无门禁/扣减） |
 | ReAct 核心（4） | tblLlmReactSession / tblLlmReactRun / tblLlmReactMessage | 会话 / 运行实例（状态机+token 统计+快照+parent_run_id）/ 上下文消息 |
 | | tblLlmReactPendingInput | 插话与通知账本（guide/queue/notification，claim-once） |
 | ReAct 周边（5） | tblLlmReactToolResult / tblLlmReactArtifact | 工具大结果 / Python 产物元数据 |
@@ -444,10 +426,9 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 | Plan Runtime（6） | tblLlmPlanExecution / Version / Step / StepAttempt / StepResult / Wait | 执行实例 / 计划版本 / 步骤 / 尝试 / 结果 / 等待请求 |
 | 长期记忆（2） | tblLlmMemoryItem / tblLlmMemoryRevision | 双层记忆条目（类型化）/ 不可变修订流水 |
 | 运行时设置（1） | tblLlmRuntimeSetting | 在线配置覆盖（subagent/context/memory 三键） |
-| MCP 网关（3） | tblLlmMcpApp / tblLlmMcpAppTool / tblLlmMcpCallLog | 应用凭证 / 工具白名单 / 调用审计 |
 | 定时工作流（2） | tblLlmWorkflow / tblLlmWorkflowRun | 工作流定义（cron/目标/判级正则/webhook）/ 执行历史（planned_fire_at 防重、终态、风险等级、结论快照） |
 
-完整 DDL 见 `sql/init.sql`（增量迁移：`mcp_gateway_v1.sql`、`plan_runtime_v1.sql`、`runtime_setting_v1.sql`、`memory_v2_upgrade.sql`、`model_config_v1.sql`、`caller_allow_plan_v1.sql`；workflow 两表随 init.sql 全量维护）。
+完整 DDL 见 `sql/init.sql`（增量迁移：`plan_runtime_v1.sql`、`runtime_setting_v1.sql`、`memory_v2_upgrade.sql`、`model_config_v1.sql`、`caller_allow_plan_v1.sql`；workflow 两表随 init.sql 全量维护）。
 
 ## 16. 关键设计约束
 
@@ -468,9 +449,8 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 2. `go skillService.SeedBundledSkillsForAllCallers()`：内置技能包幂等补种（异步）；
 3. `asynctask.Start`：异步任务状态同步框架（无 Provider 空转）；
 4. `mcpclient.Bootstrap`：拉起 yaml 静态 MCP 服务器 → 同步工具注册表 → 拉起 DB 登记连接 → 清理孤儿工具；
-5. `mcpgateway.StartAuditWriter`（`mcp_server.enabled` 时）：审计异步落库 worker 池；
-6. `setting.Bootstrap`：运行时设置覆盖快照加载 + TTL 周期刷新；
-7. `workflow.Start`（`llm.workflow.enabled` 时，`router/command.go`）：cron 调度器启动，加载 enabled 定义注册 entry。
+5. `setting.Bootstrap`：运行时设置覆盖快照加载 + TTL 周期刷新；
+6. `workflow.Start`（`llm.workflow.enabled` 时，`router/command.go`）：cron 调度器启动，加载 enabled 定义注册 entry。
 
 退出对称 Shutdown（`workflow.Stop` 先停 cron 着火、再有界等待在跑 run 收敛，超时由 react 停机 expire 兜底）。graphmemory 无启动钩子（瘦客户端按配置运行时实例化）。
 

@@ -35,7 +35,7 @@ summary: 定义项目系统文档、变更记录、索引和校验规则
 | 服务 | `service/<模块>/` |
 | 数据 | `models/llm/` |
 
-当前模块枚举：`docs`、`react_runtime`、`plan`、`tool`、`skill`、`memory`、`graph_memory`、`agent`、`workspace`、`async_task`、`mcp`、`bundle`、`caller`、`model`、`system_prompt`、`api_key`、`credits`、`attachment`、`setting`。
+当前模块枚举：`docs`、`react_runtime`、`plan`、`tool`、`skill`、`memory`、`graph_memory`、`agent`、`workspace`、`async_task`、`mcp`、`bundle`、`caller`、`model`、`system_prompt`、`api_key`、`attachment`、`setting`。
 
 ## 3. 元信息规范
 

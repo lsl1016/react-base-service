@@ -763,7 +763,7 @@ const resources = {
       rawConfig: JSON.stringify({
         mcpServers: {
           'mcp-server': {
-            url: 'http://127.0.0.1:18080/api/mcp',
+            url: 'https://mcp.example.com/mcp',
             headers: { Authorization: 'Bearer <token>' },
           },
         },
@@ -793,31 +793,6 @@ const resources = {
     fields: (mode) => (mode === 'create'
       ? [['rawConfig', '原始配置（mcpServers JSON）', 'codeTextarea']]
       : [['name', '名称', 'readonly'], ['kind', '传输', 'readonly'], ['boundCallersText', '绑定 caller（逗号分隔）'], ['endpoint', '端点 URL'], ['timeoutMs', '超时(ms)'], ['status', '状态', 'select'], ['description', '描述', 'textarea'], ['headersText', '请求头 JSON', 'codeTextarea']]),
-  },
-  // MCP 应用（服务端网关接入凭证）：卡片列表 + 创建/重置密钥（secret 一次性展示）+ 工具绑定 + 调用审计。
-  mcpapp: {
-    title: 'MCP 应用管理',
-    tabText: 'MCP 应用',
-    itemName: 'MCP 应用',
-    addText: '新增应用',
-    idKey: 'appId',
-    cardList: true,
-    cardKind: 'mcpapp',
-    listPath: '/react/mcpapp/list',
-    createPath: '/react/mcpapp/create',
-    updatePath: '/react/mcpapp/update',
-    deletePath: '/react/mcpapp/delete',
-    deleteBody: (item) => ({ appId: item.appId }),
-    toDraft: (item) => ({ ...item }),
-    empty: () => ({ appName: '', status: 1 }),
-    toPayload: (draft, config, mode) => (mode === 'create'
-      ? { appName: draft.appName, status: Number(draft.status) }
-      : { appId: draft.appId, appName: draft.appName, status: Number(draft.status) }),
-    modalNote: () => '应用凭证供外部 MCP 客户端接入服务端网关（Authorization: Bearer <app_key>:<app_secret>）。工具是全局基础集合，应用可见的工具 = 为其绑定的工具子集（新应用默认 0 个，创建后点「工具授权」勾选）。appSecret 仅创建/重置时完整展示一次，请妥善保存。',
-    fields: () => [
-      ['appName', '应用名称'],
-      ['status', '状态', 'select'],
-    ],
   },
   // P3 Agent Bundle 插件包：安装表单 + 已装卡片（来源白名单内 git URL 或本地路径）。
   bundle: {
@@ -943,7 +918,6 @@ const management = {
     });
     $('management-add').addEventListener('click', () => this.openCreate());
     $('management-import').addEventListener('click', () => this.openImport());
-    $('management-gwadmin').addEventListener('click', () => window.open('/react-base-service/react/mcp-admin', '_blank'));
     $('management-refresh').addEventListener('click', () => this.refresh());
     // 批量改状态：按钮 + 表头全选（委托到 thead，innerHTML 重渲染不影响）。
     $('management-batch-enable').addEventListener('click', () => this.batchSetStatus(1));
@@ -966,19 +940,6 @@ const management = {
         if (this.uploadingBundle) return;
         event.target.closest('.rp-source-path-row')?.querySelector('[data-bundle-dir]')?.click();
         return;
-      }
-      const logsAction = event.target.closest('[data-logs-action]')?.dataset.logsAction;
-      if (logsAction) {
-        if (logsAction === 'prev') this.logsState.page = Math.max(1, this.logsState.page - 1);
-        if (logsAction === 'next') this.logsState.page += 1;
-        this.loadMcpAppLogs();
-        return;
-      }
-      const grantsAction = event.target.closest('[data-grants-action]')?.dataset.grantsAction;
-      if (grantsAction) {
-        $('management-modal-body').querySelectorAll('[data-grant-tool]').forEach((box) => {
-          box.checked = grantsAction === 'all';
-        });
       }
     });
     $('management-modal-body').addEventListener('change', (event) => {
@@ -1081,9 +1042,6 @@ const management = {
         });
       }
     }
-    // MCP 相关页提供「网关管理台」入口（mcp-server 风格的独立管理页，
-    // 工具批量注册/编辑/上下线/应用授权都在管理台里做）。
-    $('management-gwadmin').hidden = !(this.type === 'mcp' || this.type === 'mcpapp');
   },
   // 拉取 caller 清单填充筛选下拉：固定「全部 / 默认」+ 扁平的 caller 列表（平台并入文案）。
   async loadCallerFilterOptions() {
@@ -1223,10 +1181,6 @@ const management = {
       this.renderWorkspaceCards();
       return;
     }
-    if (resource.cardKind === 'mcpapp') {
-      this.renderMcpAppCards();
-      return;
-    }
     if (resource.cardList) {
       this.renderMcpCards();
       return;
@@ -1362,153 +1316,6 @@ const management = {
       return;
     }
     this.renderTable();
-  },
-  // MCP 应用（网关接入凭证）卡片：名称/key/打码 secret/绑定工具数/接入端点/操作。
-  renderMcpAppCards() {
-    const rows = this.filteredItems();
-    const container = $('management-cards');
-    if (!rows.length) {
-      container.innerHTML = '<div class="rp-mcp-empty">暂无 MCP 应用。新增应用获得 appKey/appSecret 后，外部 MCP 客户端即可经 /mcp 端点接入（Bearer appKey:appSecret）</div>';
-      this.visibleItems = rows;
-      return;
-    }
-    container.innerHTML = rows.map((item, index) => `
-      <div class="rp-mcp-card${isEnabled(item) ? '' : ' rp-mcp-disabled'}" data-index="${index}">
-        <div class="rp-mcp-card-head">
-          <span class="rp-mcp-name">${escapeHtml(item.appName)}</span>
-          <span class="rp-mcp-kind">工具×${escapeHtml(String(item.grantedToolCount ?? 0))}</span>
-          <span class="rp-mcp-badge ${isEnabled(item) ? 'rp-mcp-badge-ok' : 'rp-mcp-badge-off'}">${isEnabled(item) ? '启用' : '停用'}</span>
-          <span class="rp-mcp-endpoint" title="外部 MCP 客户端接入端点">${escapeHtml(item.endpoint)}</span>
-          <div class="rp-row-actions rp-mcp-actions">
-            <button class="rp-button rp-link-btn" data-action="copy-key" type="button" title="复制 appKey">key:${escapeHtml(shortText(item.appKey, 14))}</button>
-            <button class="rp-button rp-link-btn" data-action="grants" type="button">工具授权</button>
-            <button class="rp-button rp-link-btn" data-action="reset-secret" type="button">重置密钥</button>
-            <button class="rp-button rp-link-btn" data-action="logs" type="button">调用记录</button>
-            <button class="rp-button rp-link-btn" data-action="edit" type="button">修改</button>
-            <button class="rp-button rp-link-btn rp-danger-link" data-action="delete" type="button">删除</button>
-            <button class="rp-button rp-switch ${isEnabled(item) ? 'rp-on' : ''}" data-action="toggle" type="button" title="${isEnabled(item) ? '停用' : '启用'}"></button>
-          </div>
-        </div>
-        <div class="rp-mcp-card-body">
-          <div class="rp-mcp-bound">appKey：<code>${escapeHtml(item.appKey)}</code> · secret：<code>${escapeHtml(item.maskedSecret)}</code> · 接入头：<code>Authorization: Bearer &lt;appKey&gt;:&lt;appSecret&gt;</code></div>
-          <div class="rp-mcp-bound">已绑定工具：<span class="rp-mcp-badge ${Number(item.grantedToolCount) > 0 ? 'rp-mcp-badge-ok' : 'rp-mcp-badge-bad'}">${item.grantedToolCount ?? 0} 个</span>${Number(item.grantedToolCount) > 0 ? '' : '（未绑定任何工具，该连接 tools/list 为空，点击「工具授权」勾选）'}</div>
-        </div>
-      </div>`).join('');
-    this.visibleItems = rows;
-  },
-  async resetMcpAppSecret(item) {
-    if (!confirm(`确认重置「${item.appName}」的密钥吗？旧凭证立即失效，持有它的客户端会失联。`)) return;
-    this.setState('正在重置密钥...');
-    try {
-      const data = await post('/react/mcpapp/reset_secret', { appId: item.appId });
-      await this.reload();
-      this.showSecretOnce(item, data?.appSecret ?? '');
-      this.setState('密钥已重置，请立即保存新的 appSecret（仅本次展示）');
-    } catch (error) {
-      this.setState(error.message || '重置失败', true);
-    }
-  },
-  // showSecretOnce 用管理弹窗一次性展示完整 secret（关闭后不可再查）。
-  showSecretOnce(app, secret) {
-    this.mode = 'secretOnce';
-    this.draft = { appName: app.appName ?? '', appKey: app.appKey ?? '', appSecret: secret };
-    this.renderModal();
-  },
-  async openMcpAppLogs(item) {
-    this.mode = 'mcpLogs';
-    this.draft = null;
-    this.logsState = { appKey: item.appKey, appName: item.appName, page: 1, pageSize: 10, data: null };
-    this.renderModal();
-    await this.loadMcpAppLogs();
-  },
-  async loadMcpAppLogs() {
-    const state = this.logsState;
-    if (!state) return;
-    try {
-      state.data = await post('/react/mcpapp/logs', { appKey: state.appKey, page: state.page, pageSize: state.pageSize });
-      if (this.mode === 'mcpLogs') this.renderModal();
-    } catch (error) {
-      this.setState(error.message || '加载调用记录失败', true);
-    }
-  },
-  renderMcpAppLogsBody() {
-    const state = this.logsState;
-    if (!state) return '';
-    const logs = Array.isArray(state.data?.logs) ? state.data.logs : [];
-    const total = Number(state.data?.total ?? 0);
-    const pages = Math.max(1, Math.ceil(total / state.pageSize));
-    if (!logs.length) {
-      return `<div class="rp-mcp-empty">该应用暂无调用记录（tools/call 审计异步落库，稍等 1 秒后刷新）</div>`;
-    }
-    const rowsHtml = logs.map((entry) => `
-      <tr class="rp-table-row">
-        <td class="rp-table-cell" title="${escapeHtml(entry.createdAt)}">${escapeHtml(String(entry.createdAt ?? '').slice(5))}</td>
-        <td class="rp-table-cell">${escapeHtml(entry.toolName)}${entry.userName ? `（${escapeHtml(entry.userName)}）` : ''}</td>
-        <td class="rp-table-cell">${entry.resultCode === 0 ? '<span class="rp-mcp-badge rp-mcp-badge-ok">成功</span>' : `<span class="rp-mcp-badge rp-mcp-badge-bad" title="${escapeHtml(entry.errorMsg)}">失败 ${entry.resultCode}</span>`}</td>
-        <td class="rp-table-cell">${entry.costMs}ms</td>
-        <td class="rp-table-cell" title="${escapeHtml(entry.arguments ?? '')}">${escapeHtml(shortText(entry.arguments, 26))}</td>
-        <td class="rp-table-cell" title="${escapeHtml(entry.responseText ?? '')}">${escapeHtml(shortText(entry.responseText, 26))}</td>
-      </tr>`).join('');
-    return `
-      <div class="rp-mcp-bound">应用「${escapeHtml(state.appName)}」调用审计（appKey: ${escapeHtml(state.appKey)}）</div>
-      <table class="rp-management-table"><thead class="rp-table-head"><tr class="rp-table-row">
-        <th class="rp-table-cell rp-table-header-cell">时间</th><th class="rp-table-cell rp-table-header-cell">工具</th>
-        <th class="rp-table-cell rp-table-header-cell">结果</th><th class="rp-table-cell rp-table-header-cell">耗时</th>
-        <th class="rp-table-cell rp-table-header-cell">入参</th><th class="rp-table-cell rp-table-header-cell">响应</th>
-      </tr></thead><tbody>${rowsHtml}</tbody></table>
-      <div class="rp-row-actions" style="margin-top:8px;justify-content:flex-end">
-        <button class="rp-button" data-logs-action="prev" type="button" ${state.page <= 1 ? 'disabled' : ''}>上一页</button>
-        <span class="rp-mcp-endpoint">第 ${state.page}/${pages} 页 · 共 ${total} 条</span>
-        <button class="rp-button" data-logs-action="next" type="button" ${state.page >= pages ? 'disabled' : ''}>下一页</button>
-      </div>`;
-  },
-  // 工具授权：勾选绑定工具基础集合中的 http 工具（显式白名单，空=该连接看不到任何工具）。
-  async openMcpAppGrants(item) {
-    this.mode = 'mcpGrants';
-    this.draft = null;
-    this.grantsState = { app: item, data: null };
-    this.renderModal();
-    try {
-      this.grantsState.data = await post('/react/mcpapp/list_tools', { appId: item.appId });
-      if (this.mode === 'mcpGrants') this.renderModal();
-    } catch (error) {
-      this.setState(error.message || '加载可绑定工具失败', true);
-    }
-  },
-  renderMcpAppGrantsBody() {
-    const state = this.grantsState;
-    if (!state) return '';
-    const tools = Array.isArray(state.data?.tools) ? state.data.tools : [];
-    if (!tools.length) {
-      return '<div class="rp-mcp-empty">工具基础集合中暂无 http 工具，先到「工具管理」或网关管理台注册。</div>';
-    }
-    const rowsHtml = tools.map((tool) => `
-      <label class="rp-field rp-span-all" style="flex-direction:row;align-items:center;gap:8px">
-        <input type="checkbox" data-grant-tool="${escapeHtml(tool.toolId)}" ${tool.granted ? 'checked' : ''} />
-        <span style="flex:1;min-width:0"><b>${escapeHtml(tool.name)}</b> <span class="rp-mcp-endpoint">${escapeHtml(tool.callerKey)}</span>${Number(tool.status) !== 1 ? ' <span class="rp-mcp-badge rp-mcp-badge-off">已下线</span>' : ''}${tool.description ? ` — ${escapeHtml(tool.description)}` : ''}</span>
-      </label>`).join('');
-    const grantedCount = tools.filter((tool) => tool.granted).length;
-    return `
-      <div class="rp-operation-note">显式白名单：只有勾选的工具会出现在该应用 MCP 连接的 tools/list 里（已下线工具须重新上线后才对外可见）。全不勾=清空绑定。</div>
-      <div class="rp-row-actions" style="margin-bottom:8px">
-        <button class="rp-button" data-grants-action="all" type="button">全选</button>
-        <button class="rp-button" data-grants-action="none" type="button">清空</button>
-        <span class="rp-mcp-endpoint">当前绑定 ${grantedCount}/${tools.length} 个</span>
-      </div>
-      <div class="rp-form-grid">${rowsHtml}</div>`;
-  },
-  async saveMcpAppGrants() {
-    const state = this.grantsState;
-    if (!state) return;
-    const toolIds = [...$('management-modal-body').querySelectorAll('[data-grant-tool]:checked')].map((box) => box.dataset.grantTool);
-    try {
-      await post('/react/mcpapp/grant_tools', { appId: state.app.appId, toolIds });
-      this.closeModal();
-      await this.reload();
-      this.setState(`已更新绑定：${toolIds.length} 个工具（${state.app.appName}）`);
-    } catch (error) {
-      this.setState(error.message || '保存绑定失败', true);
-    }
   },
   // P3 Bundle 已装卡片：名称/版本/来源与钉住的 commit/资源计数/卸载。
   renderBundleCards() {
@@ -1752,13 +1559,6 @@ const management = {
     if (action === 'expand') this.toggleMcpExpand(event);
     if (action === 'connect') this.connectMcp(item);
     if (action === 'uninstall') this.uninstallBundle(item);
-    if (action === 'reset-secret') this.resetMcpAppSecret(item);
-    if (action === 'logs') this.openMcpAppLogs(item);
-    if (action === 'grants') this.openMcpAppGrants(item);
-    if (action === 'copy-key') {
-      navigator.clipboard?.writeText(item.appKey ?? '');
-      this.setState(`appKey 已复制：${item.appKey}`);
-    }
   },
   openCreate() {
     // Bundle 的「新增」即安装表单。
@@ -1881,38 +1681,6 @@ const management = {
     const resource = this.resource();
     const saveButton = $('management-modal-save');
     const cancelButton = $('management-modal-cancel');
-    // 自定义模式：MCP 应用密钥一次性展示 / 调用审计分页 / 工具批量注册（多草稿）。
-    if (this.mode === 'secretOnce') {
-      $('management-modal-title').textContent = '应用密钥（仅本次展示）';
-      $('management-modal-body').innerHTML = `
-        <div class="rp-operation-note">请立即保存 appKey/appSecret（关闭后 secret 不可再查询，遗失只能重置）。外部 MCP 客户端接入：URL 填服务地址 <code>/react-base-service/mcp</code>，请求头 <code>Authorization: Bearer &lt;appKey&gt;:&lt;appSecret&gt;</code>。</div>
-        <div class="rp-form-grid">
-          <label class="rp-field"><span class="rp-field-label">应用名称</span><input class="rp-control rp-control-size-default" value="${escapeHtml(this.draft.appName)}" readonly disabled /></label>
-          <label class="rp-field"><span class="rp-field-label">appKey</span><input class="rp-control rp-control-size-default" value="${escapeHtml(this.draft.appKey)}" readonly disabled /></label>
-          <label class="rp-field rp-span-all"><span class="rp-field-label">appSecret</span><input class="rp-control rp-control-size-default" value="${escapeHtml(this.draft.appSecret)}" readonly /></label>
-        </div>`;
-      saveButton.hidden = true;
-      cancelButton.textContent = '关闭';
-      $('management-modal-mask').classList.add('rp-visible');
-      return;
-    }
-    if (this.mode === 'mcpLogs') {
-      $('management-modal-title').textContent = 'MCP 调用记录';
-      $('management-modal-body').innerHTML = this.renderMcpAppLogsBody();
-      saveButton.hidden = true;
-      cancelButton.textContent = '关闭';
-      $('management-modal-mask').classList.add('rp-visible');
-      return;
-    }
-    if (this.mode === 'mcpGrants') {
-      $('management-modal-title').textContent = `工具授权 — ${this.grantsState?.app?.appName ?? ''}`;
-      $('management-modal-body').innerHTML = this.renderMcpAppGrantsBody();
-      saveButton.hidden = false;
-      saveButton.textContent = '保存绑定';
-      cancelButton.textContent = '取消';
-      $('management-modal-mask').classList.add('rp-visible');
-      return;
-    }
     saveButton.hidden = false;
     saveButton.textContent = '保存';
     cancelButton.textContent = '取消';
@@ -1985,11 +1753,6 @@ const management = {
     const resource = this.resource();
     this.syncDraftFromModal();
     try {
-      // 工具授权弹窗的保存：全量替换应用绑定白名单。
-      if (this.mode === 'mcpGrants') {
-        await this.saveMcpAppGrants();
-        return;
-      }
       const config = this.config();
       if (this.mode === 'import') {
         if (!this.draft.markdown || !this.draft.markdown.trim()) throw new Error('请粘贴定义 Markdown');
@@ -2020,14 +1783,6 @@ const management = {
       const payload = resource.toPayload(this.draft, config, this.mode);
       const isEdit = this.mode === 'edit' && this.draft[resource.idKey];
       const data = await post(isEdit ? resource.updatePath : resource.createPath, payload);
-      // MCP 应用创建成功：完整 secret 仅本次响应返回，弹窗一次性展示。
-      if (!isEdit && this.type === 'mcpapp' && data?.appSecret) {
-        this.closeModal();
-        await this.reload();
-        this.showSecretOnce(data.app ?? {}, data.appSecret);
-        this.setState('应用已创建，请立即保存 appSecret（仅本次展示）');
-        return;
-      }
       this.closeModal();
       resource.afterSave?.();
       await this.reload();

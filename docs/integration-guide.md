@@ -143,7 +143,7 @@ ws.onmessage = (e) => {
 
 ### 注册类管理接口
 
-`/caller`（register/update/list/copy_config/batch_delete）、`/skill`（create/update/delete/list/detail）、`/tool`（register/update/delete/list/detail + `/tool/whitelist` CRUD）、`/apikey`（CRUD）、`/system-prompt`（CRUD）、`/model`（用户模型 CRUD、whitelist、check-connectivity、credits/adjust）、`/models`（模型目录）。
+`/caller`（register/update/list/copy_config/batch_delete）、`/skill`（create/update/delete/list/detail）、`/tool`（register/update/delete/list/detail + `/tool/whitelist` CRUD）、`/apikey`（CRUD）、`/system-prompt`（CRUD）、`/model`（用户模型 CRUD、whitelist、check-connectivity）、`/models`（模型目录）。
 
 ## 4. 工具接入
 

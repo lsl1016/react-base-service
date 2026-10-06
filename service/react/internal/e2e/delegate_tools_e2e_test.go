@@ -16,57 +16,17 @@ import (
 	"react-base-service/helpers"
 	model "react-base-service/models/llm"
 	agentService "react-base-service/service/agent"
-	"react-base-service/service/mcpclient"
 
 	"github.com/gin-gonic/gin"
 )
 
-// 复杂委派 e2e：接入真实 MCP 网关（mcp-server 容器）注册业务工具，验证
-// 子 Agent 白名单装配、子 run 内多步 MCP 工具链、并行委派、嵌套 HITL 冒泡、二级委派深度。
+// 复杂委派 e2e：验证子 run 的嵌套 HITL 冒泡与二级委派深度。
 //
 //	REACT_DELEGATE_E2E=1 go test ./service/react/internal/e2e/ -run TestDelegateComplex -v -timeout 900s
 //
-// 前置：react-base-mysql（3327）+ mcp-server 网关（18080，demo-app 凭证）+ 模型 API 可用。
+// 前置：react-base-mysql（3327）+ 模型 API 可用。
 
 const (
-	e2eMCPGatewayName = "mcpgw"
-	e2eMCPGatewayURL  = "http://127.0.0.1:18080/api/mcp"
-	e2eMCPGatewayAuth = "Bearer demo-app-key:demo-app-secret-please-rotate"
-)
-
-const (
-	e2eGeoAgentMD = `---
-agent_key: geo-agent
-name: 天气查询代理
-description: |
-  适用问题：查询某城市的当前天气（需要先地理编码拿经纬度再查天气）
-  不适用：汇率、假日等与天气无关的查询
-max_steps: 6
-tools:
-  - mcpgw_geocode_city
-  - mcpgw_weather_forecast
----
-你是天气查询代理。收到任务后按顺序执行：
-1. 用 get_tool 加载工具 mcpgw_geocode_city，再通过 execute_tool 执行它（城市名建议传英文，如 Shanghai）拿到经纬度；
-2. 用 get_tool 加载工具 mcpgw_weather_forecast，再通过 execute_tool 用上一步经纬度查询当前天气；
-3. 用一句中文汇报「<城市>当前气温 X°C（WMO 天气代码 Y）」。
-不要调用上述两个以外的工具，不要向用户提问。`
-
-	e2eFinanceAgentMD = `---
-agent_key: finance-agent
-name: 汇率查询代理
-description: |
-  适用问题：货币汇率查询与简单换算
-  不适用：天气、假日等与汇率无关的查询
-max_steps: 3
-tools:
-  - mcpgw_exchange_rate
----
-你是汇率查询代理。收到任务后：
-1. 用 get_tool 加载工具 mcpgw_exchange_rate，再通过 execute_tool 查询指定货币对的汇率；
-2. 用一句中文汇报「1 <基准货币> = <汇率> <目标货币>」。
-不要调用其它工具，不要向用户提问。`
-
 	e2eHitlAgentMD = `---
 agent_key: hitl-agent
 name: 交互确认代理
@@ -96,7 +56,7 @@ tools: []
 不要自己计算，不要调用 delegate_agent 与 ask_question 以外的工具。`
 )
 
-// setupComplexE2E 幂等初始化配置/MySQL，并把 mcp-server 网关注册进基座工具注册表。
+// setupComplexE2E 幂等初始化配置/MySQL。
 func setupComplexE2E(t *testing.T) {
 	t.Helper()
 	if helpers.MysqlClientLLM == nil {
@@ -108,28 +68,6 @@ func setupComplexE2E(t *testing.T) {
 	}
 	if !conf.CustomConf.LLM.React.SubAgent.SubAgentEnabled() {
 		t.Fatal("llm.react.subagent.enabled 必须为 true（conf/mount/custom.yaml）")
-	}
-	if mcpclient.GetServer(e2eMCPGatewayName) == nil {
-		_, err := mcpclient.EnsureServer(mcpclient.ServerConfig{
-			Name:      e2eMCPGatewayName,
-			Kind:      "http",
-			Endpoint:  e2eMCPGatewayURL,
-			TimeoutMs: 30000,
-			Headers:   map[string]string{"Authorization": e2eMCPGatewayAuth},
-			// mcp-server 部署在本机容器（环回地址），依赖 allow_private_endpoint 放行。
-			AllowPrivate: true,
-		})
-		if err != nil {
-			t.Fatalf("拉起 MCP 网关客户端失败: %v", err)
-		}
-		t.Cleanup(mcpclient.Shutdown)
-	}
-	synced, err := mcpclient.SyncServerRegistry("demo-app", e2eMCPGatewayName)
-	if err != nil {
-		t.Fatalf("同步 MCP 工具注册表失败: %v", err)
-	}
-	if synced == 0 {
-		t.Fatal("MCP 网关未同步到任何工具")
 	}
 }
 
@@ -215,118 +153,6 @@ func runFinalContent(t *testing.T, ctx *gin.Context, runID string) string {
 		t.Fatalf("提取 run %s 最终回复失败: %v", runID, err)
 	}
 	return content
-}
-
-// TestDelegateComplexMCPToolChain 验证：子 Agent 按白名单装配工具索引，并在隔离子 run 内
-// 完成「地理编码 → 天气查询」两步真实 MCP 工具链（get_tool → execute_tool 全流程）。
-func TestDelegateComplexMCPToolChain(t *testing.T) {
-	if os.Getenv("REACT_DELEGATE_E2E") == "" {
-		t.Skip("set REACT_DELEGATE_E2E=1 to run e2e")
-	}
-	setupComplexE2E(t)
-	ctx := newHeadlessGinContext("e2e-complex")
-	importE2EAgent(t, ctx, e2eGeoAgentMD)
-
-	result, _ := runE2EConversation(t, ctx,
-		"请调用 delegate_agent 把任务「查询上海（Shanghai）的当前天气」委派给子代理 geo-agent（agent_key: geo-agent），拿到结论后向用户转述气温。若子代理执行失败，直接汇报失败原因，不要重复委派。",
-		6, nil, nil)
-
-	subRuns := findSubRuns(t, ctx, result.SessionID, result.RunID)
-	if len(subRuns) != 1 {
-		t.Fatalf("应有且仅有 1 个子 run: %d", len(subRuns))
-	}
-	subRun := subRuns[0]
-	if subRun.AgentPath != "main/geo-agent" || subRun.State != model.ReactRunStateFinished {
-		t.Fatalf("子 run 状态异常: agentPath=%s state=%s", subRun.AgentPath, subRun.State)
-	}
-
-	// 白名单端到端：子 run 工具索引快照只含两个白名单工具，不含网关其它工具。
-	var snapshot []react.ReactToolIndexItem
-	if err := json.Unmarshal([]byte(subRun.ToolIndexSnapshotJSON), &snapshot); err != nil {
-		t.Fatalf("子 run 工具索引快照解析失败: %v", err)
-	}
-	names := make(map[string]bool, len(snapshot))
-	for _, item := range snapshot {
-		names[item.Name] = true
-	}
-	if !names["mcpgw_geocode_city"] || !names["mcpgw_weather_forecast"] {
-		t.Fatalf("白名单工具缺失: %v", names)
-	}
-	if names["mcpgw_exchange_rate"] || len(snapshot) != 2 {
-		t.Fatalf("白名单外工具泄漏进子 run 索引: %v", names)
-	}
-
-	// 子 run 内真实工具链：至少两轮工具结果（geocode + weather），最终回复含气温。
-	messages, err := model.GetReactMessagesByRunID(ctx, subRun.RunID)
-	if err != nil {
-		t.Fatalf("查询子 run 消息失败: %v", err)
-	}
-	toolResultCount := 0
-	for _, message := range messages {
-		if message.MessageType == model.ReactMessageTypeToolResult {
-			toolResultCount++
-		}
-	}
-	if toolResultCount < 2 {
-		t.Fatalf("子 run 应有至少 2 轮工具结果（地理编码+天气），实际 %d", toolResultCount)
-	}
-	subFinal := runFinalContent(t, ctx, subRun.RunID)
-	if !strings.Contains(subFinal, "°") && !strings.Contains(subFinal, "气温") && !strings.Contains(subFinal, "温度") {
-		t.Fatalf("子 run 最终回复应包含气温: %s", subFinal)
-	}
-	t.Logf("geo-agent 回复: %s", subFinal)
-}
-
-// TestDelegateComplexParallel 验证：同轮多个 delegate_agent 调用（max_parallel>1）分别派给
-// 不同子 Agent，各自完成真实 MCP 工具查询并回填。
-func TestDelegateComplexParallel(t *testing.T) {
-	if os.Getenv("REACT_DELEGATE_E2E") == "" {
-		t.Skip("set REACT_DELEGATE_E2E=1 to run e2e")
-	}
-	setupComplexE2E(t)
-
-	originalSubAgent := conf.CustomConf.LLM.React.SubAgent
-	conf.CustomConf.LLM.React.SubAgent.MaxParallel = 3
-	t.Cleanup(func() { conf.CustomConf.LLM.React.SubAgent = originalSubAgent })
-
-	ctx := newHeadlessGinContext("e2e-parallel")
-	importE2EAgent(t, ctx, e2eFinanceAgentMD)
-	importE2EAgent(t, ctx, e2eGeoAgentMD)
-
-	result, _ := runE2EConversation(t, ctx,
-		"请把两个子任务分别委派：①调用 delegate_agent 委派给 finance-agent（agent_key: finance-agent）查询 1 USD 兑换 CNY 的最新汇率；②调用 delegate_agent 委派给 geo-agent（agent_key: geo-agent）查询上海（Shanghai）的当前天气。两件事互不依赖，请在同一次回复中同时发起两次委派，全部完成后分别转述两个结论。若某个子代理失败，直接汇报其失败原因，不要重复委派。",
-		8, nil, nil)
-
-	subRuns := findSubRuns(t, ctx, result.SessionID, result.RunID)
-	if len(subRuns) != 2 {
-		t.Fatalf("应有 2 个子 run（finance/geo），实际 %d: %v", len(subRuns), subRunPaths(subRuns))
-	}
-	subByPath := make(map[string]*model.ReactRun, 2)
-	for i := range subRuns {
-		subByPath[subRuns[i].AgentPath] = &subRuns[i]
-	}
-	financeRun, hasFinance := subByPath["main/finance-agent"]
-	geoRun, hasGeo := subByPath["main/geo-agent"]
-	if !hasFinance || !hasGeo {
-		t.Fatalf("子 run agentPath 不符: %v", subRunPaths(subRuns))
-	}
-	for name, run := range map[string]*model.ReactRun{"finance": financeRun, "geo": geoRun} {
-		if run.State != model.ReactRunStateFinished {
-			t.Fatalf("%s 子 run 应为 finished: %s", name, run.State)
-		}
-	}
-	financeFinal := runFinalContent(t, ctx, financeRun.RunID)
-	if !strings.Contains(financeFinal, "CNY") && !strings.Contains(financeFinal, "汇率") {
-		t.Fatalf("finance-agent 回复应包含汇率结论: %s", financeFinal)
-	}
-	geoFinal := runFinalContent(t, ctx, geoRun.RunID)
-	if !strings.Contains(geoFinal, "°") && !strings.Contains(geoFinal, "气温") && !strings.Contains(geoFinal, "温度") {
-		t.Fatalf("geo-agent 回复应包含气温: %s", geoFinal)
-	}
-	// 时间区间重叠即视为发生过并行（秒级精度，弱断言：仅记录）。
-	t.Logf("并行委派完成: finance[%s ~ %s] 回复=%s; geo[%s ~ %s] 回复=%s",
-		financeRun.CreatedAt.Format("15:04:05"), financeRun.UpdatedAt.Format("15:04:05"), financeFinal,
-		geoRun.CreatedAt.Format("15:04:05"), geoRun.UpdatedAt.Format("15:04:05"), geoFinal)
 }
 
 func subRunPaths(runs []model.ReactRun) []string {

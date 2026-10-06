@@ -99,8 +99,6 @@ type UserModelItem struct {
 	IsPlatformDefault int      `json:"isPlatformDefault"`
 	CreatedAt         string   `json:"createdAt"`
 	UpdatedAt         string   `json:"updatedAt"`
-	BaseCredits       *int     `json:"baseCredits,omitempty"`
-	BonusCredits      *int     `json:"bonusCredits,omitempty"`
 	// Disabled 表示当前不可选用：引用的连接已被停用或不存在（自包含模型恒为可用）。
 	// 配置面板仍展示全量条目，输入框模型下拉据此过滤。
 	Disabled bool `json:"disabled,omitempty"`
@@ -177,15 +175,6 @@ type ConnectionModelItem struct {
 	// ContextTokens/MaxOutputTokens 目录声明的容量；0=未知（回退模型目录/默认）。
 	ContextTokens   int `json:"contextTokens,omitempty"`
 	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
-}
-
-// ========== 积分管理接口 DTO ==========
-
-// AdjustCreditsReq 积分调整请求
-type AdjustCreditsReq struct {
-	UserName  string `json:"userName" binding:"required"`
-	ModelHash string `json:"modelHash" binding:"required"`
-	Delta     int    `json:"delta" binding:"required"`
 }
 
 // ModelsResp 可用模型列表响应

@@ -5,7 +5,6 @@
  * - SessionList: 会话历史浮层
  * - MessageList: 消息列表
  * - InputArea: 输入区域
- * - UsageStats: Token 统计
  */
 
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
@@ -1000,7 +999,6 @@ export function AgentPanel(props: AgentPanelProps) {
               </span>
             </div>
           </Show>
-          {/* <UsageStats usage={store.state.usage} /> */}
           <Show when={props.onClose}>
             <button class="agent-ui-header-btn" onClick={() => props.onClose?.()}>
               <IconMdiClose width="18" height="18" />

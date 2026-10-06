@@ -18,4 +18,3 @@
 | [Model](model.md) | `model` | v1.0 | 2026-09-19 | 模型目录、连通性检测、白名单管控、用户自建模型与凭证解析 |
 | [System Prompt](system_prompt.md) | `system_prompt` | v1.0 | 2026-09-19 | 路由作用域系统提示词 CRUD、default 合并与 Run 启动一次性解析 |
 | [API Key](api_key.md) | `api_key` | v1.0 | 2026-09-19 | Caller 路由级 API Key 管理、Run 侧最长前缀解析 |
-| [Credits](credits.md) | `credits` | v1.0 | 2026-09-19 | 两层积分模型（基础 + 赠送）、白名单手动调整与按 token 用量扣减核算 |

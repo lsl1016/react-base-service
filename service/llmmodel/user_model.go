@@ -11,7 +11,6 @@ import (
 	"react-base-service/components"
 	"react-base-service/components/params"
 	model "react-base-service/models/llm"
-	creditsService "react-base-service/service/credits"
 
 	"react-base-service/golib/zlog"
 	"github.com/gin-gonic/gin"
@@ -484,27 +483,6 @@ func ListUserModels(ctx *gin.Context, userName string, req params.ListUserModels
 		}
 		if m.ConnectionID > 0 && connStatus[m.ConnectionID] != 1 {
 			item.Disabled = true
-		}
-
-		// 平台默认模型返回积分信息
-		if m.IsPlatformDefault == 1 {
-			baseCredits, initErr := creditsService.GetOrInit(ctx, userName, m.ModelHash)
-			if initErr != nil {
-				zlog.Errorf(ctx, "[user_model.List] 获取基础积分失败: modelHash=%s, err=%v", m.ModelHash, initErr)
-			} else {
-				item.BaseCredits = &baseCredits
-			}
-
-			bonusRecord, bonusErr := model.GetBonusCredits(ctx, userName, m.ModelHash)
-			if bonusErr != nil {
-				zlog.Errorf(ctx, "[user_model.List] 获取赠送积分失败: modelHash=%s, err=%v", m.ModelHash, bonusErr)
-			} else {
-				bonusCredits := 0
-				if bonusRecord != nil {
-					bonusCredits = bonusRecord.Credits
-				}
-				item.BonusCredits = &bonusCredits
-			}
 		}
 
 		items = append(items, item)

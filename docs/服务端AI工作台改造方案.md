@@ -286,7 +286,7 @@ workspace service
 
 1. **Agent Bundle（插件包）**：manifest.json（name/version/entry）+ `agents/` + `skills/` + `mcp.json` 三类资源打包；`POST /react/bundle/install` 展开写入各注册表（OH plugin loader 的"安装即注入多类资源"语义，同名覆盖策略：bundle > 已有，可回滚）；来源限内部 git（不做公网 marketplace）。
 2. **编排容器**：sequential/parallel 作为一种特殊 agent 资源（steps 引用其他 agent_key），parallel 用"泳道事件 + 按时间戳合并"（eino laneEvents）或串行近似——仅当并行委派（P1 尾）不够用时启动。
-3. **子代理预算**：agent 级积分/token 上限（复用积分体系），超限终止子 run 并回填原因。
+3. **子代理预算**：agent 级 token 上限，超限终止子 run 并回填原因。
 4. **管理面板**：agent 列表/编辑/导入、bundle 安装、workspace 运行视图（活跃 worktree 清单）。
 
 ---
@@ -335,7 +335,7 @@ workspace service
 | 委派描述不清导致主 LLM 滥用/误派 | description 约定"适用/不适用"两段；max_depth 限制；观测指标（委派命中率）进 /metrics |
 | worktree 磁盘膨胀 | run 结束即 release + 定时 prune；mirror 单副本共享对象库 |
 | 事件协议加字段破坏旧前端 | agentPath 缺省 "main"，信封向后兼容；SDK minor 版本同步 |
-| 多子 Agent 并行时积分/token 计量口径 | 子 run 独立计量 + 父汇总 delegated 口径，报表先行约定 |
+| 多子 Agent 并行时 token 计量口径 | 子 run 独立计量 + 父汇总 delegated 口径，报表先行约定 |
 
 ## 8. 与既有调研的关系
 

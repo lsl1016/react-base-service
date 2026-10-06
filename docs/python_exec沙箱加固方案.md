@@ -126,7 +126,7 @@ N2 修复方式:`run_isolated` 拆为薄壳(负责 `mkdtemp` + `finally: rmtree`
 
 ### R7【P2,沙箱外但更紧急】免鉴权与凭证问题
 
-与本主题相关但属服务边界:`middleware/auth.go` 信任 `X-User-Name` 头可伪造;`conf/mount/custom.yaml` 提交了真实 mcpgw 凭证;mcpadmin 空配置时 fail-open。这些不属于沙箱,但决定了"谁能触发沙箱",在此一并登记。
+与本主题相关但属服务边界:`middleware/auth.go` 信任 `X-User-Name` 头可伪造。这些不属于沙箱,但决定了"谁能触发沙箱",在此一并登记。（原登记中的 mcpgw 凭证与 mcpadmin fail-open 已随 MCP 网关功能移除而下线。）
 
 ## 三、优化方案
 

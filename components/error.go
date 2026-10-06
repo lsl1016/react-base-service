@@ -281,10 +281,6 @@ var ErrorUserModelInvalidBizScenes = base.Error{
 	ErrNo:  6080007,
 	ErrMsg: "应用场景不能为空",
 }
-var ErrorCreditsInsufficient = base.Error{
-	ErrNo:  6080008,
-	ErrMsg: "积分不足，模型当前不可用",
-}
 var ErrorModelNotPlatformDefault = base.Error{
 	ErrNo:  6080009,
 	ErrMsg: "仅支持平台默认模型",

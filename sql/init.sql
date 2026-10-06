@@ -77,7 +77,6 @@ CREATE TABLE IF NOT EXISTS `tblLlmTool` (
 -- （mcp_ws_<service>_<commit8>_<tool>__<callerKey>，最长约 86 字符），tool_id 列 64 → 128：
 -- ALTER TABLE `tblLlmTool`    MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL COMMENT '工具唯一标识(UUID/MCP工具mcp_<server>_<tool>__<caller>)';
 -- ALTER TABLE `tblLlmToolUserPolicy` MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'tblLlmTool.tool_id';
--- ALTER TABLE `tblLlmMcpAppTool`  MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL COMMENT 'tblLlmTool.tool_id';
 
 -- 工具用户访问策略表（白名单）
 CREATE TABLE IF NOT EXISTS `tblLlmToolUserPolicy` (
@@ -249,7 +248,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmApiKey` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM API Key表';
 
 -- ---------------------------------------------------------------------------
--- 二、模型与积分（用户自定义模型 / 月度积分）
+-- 二、模型（用户自定义模型 / 连接）
 -- ---------------------------------------------------------------------------
 
 -- 用户自定义模型表（playground 配置的个人模型，modelHash 供 run 直接引用）
@@ -296,29 +295,6 @@ CREATE TABLE IF NOT EXISTS `tblLlmConnection` (
 
 -- 存量库升级：用户模型表补连接引用列（8.x ALTER 不支持 IF NOT EXISTS，由部署脚本幂等处理）
 -- ALTER TABLE `tblLlmUserModel` ADD COLUMN `connection_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '引用的LLM连接id(0=自包含模式)' AFTER `api_url`;
-
--- 月度基础积分表（粒度：user_name × model_hash）
-CREATE TABLE IF NOT EXISTS `tblLlmUserBaseCredits` (
-    `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `user_name`   VARCHAR(64)  NOT NULL COMMENT '用户名',
-    `model_hash`  VARCHAR(128) NOT NULL COMMENT '模型hash',
-    `credits`     INT          NOT NULL DEFAULT 1000 COMMENT '剩余积分',
-    `reset_month` VARCHAR(16)  NOT NULL DEFAULT '' COMMENT '积分重置月份(YYYY-MM)',
-    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_user_model` (`user_name`, `model_hash`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM用户月度基础积分表';
-
--- 管理员赠送积分表（粒度：user_name × model_hash）
-CREATE TABLE IF NOT EXISTS `tblLlmUserBonusCredits` (
-    `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `user_name`  VARCHAR(64)  NOT NULL COMMENT '用户名',
-    `model_hash` VARCHAR(128) NOT NULL COMMENT '模型hash',
-    `credits`    INT          NOT NULL DEFAULT 0 COMMENT '剩余赠送积分',
-    `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_user_model` (`user_name`, `model_hash`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM用户赠送积分表';
 
 -- ---------------------------------------------------------------------------
 -- 三、ReAct 会话 / 运行 / 消息（核心三表）
@@ -750,63 +726,6 @@ CREATE TABLE IF NOT EXISTS `tblLlmRuntimeSetting` (
     UNIQUE KEY `uk_setting_key` (`setting_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM运行时设置表(管理面板在线覆盖yaml策略)';
 
--- ---------------------------------------------------------------------------
--- MCP 服务端网关（工具暴露走既有 tblLlmTool 的 http 工具行；工具是全局基础集合，
--- 不按 caller 划分。此处为凭证、应用工具绑定白名单与审计）
--- ---------------------------------------------------------------------------
-
--- MCP 网关应用凭证表（应用不再绑定 caller；可见工具=tblLlmMcpAppTool 白名单子集）
-CREATE TABLE IF NOT EXISTS `tblLlmMcpApp` (
-    `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `app_id`     VARCHAR(64)  NOT NULL COMMENT '应用唯一标识(mcpapp_前缀)',
-    `app_name`   VARCHAR(128) NOT NULL COMMENT '应用名称(展示用,唯一)',
-    `app_key`    VARCHAR(64)  NOT NULL COMMENT '接入凭证key(Bearer用户名,全局唯一)',
-    `app_secret` VARCHAR(128) NOT NULL COMMENT '接入凭证secret(仅创建/重置时完整展示)',
-    `status`     TINYINT      NOT NULL DEFAULT 1 COMMENT '状态: 0=停用 1=启用',
-    `created_by` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
-    `updated_by` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '更新人',
-    `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    `deleted_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
-    UNIQUE KEY `uk_app_id` (`app_id`),
-    UNIQUE KEY `uk_app_name` (`app_name`),
-    UNIQUE KEY `uk_app_key` (`app_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP网关应用凭证表';
-
--- MCP 网关应用工具绑定表（显式白名单：应用未绑定任何工具时 tools/list 为空）
-CREATE TABLE IF NOT EXISTS `tblLlmMcpAppTool` (
-    `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `app_id`     VARCHAR(64) NOT NULL COMMENT 'tblLlmMcpApp.app_id',
-    `tool_id`    VARCHAR(128) NOT NULL COMMENT 'tblLlmTool.tool_id',
-    `status`     TINYINT     NOT NULL DEFAULT 1 COMMENT '状态: 0=停用 1=绑定生效',
-    `created_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '操作人',
-    `created_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    `deleted_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
-    UNIQUE KEY `uk_app_tool` (`app_id`, `tool_id`),
-    INDEX `idx_tool` (`tool_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP网关应用工具绑定表';
-
--- MCP 网关调用审计表（异步批量写入；response_text/arguments 有截断上限）
-CREATE TABLE IF NOT EXISTS `tblLlmMcpCallLog` (
-    `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `request_id`   VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '请求链路ID',
-    `app_key`      VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '调用方应用key',
-    `user_name`    VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '调用方用户标识(X-MCP-User,仅审计)',
-    `mcp_method`   VARCHAR(32)  NOT NULL DEFAULT '' COMMENT 'MCP方法名(如tools/call)',
-    `tool_name`    VARCHAR(128) NOT NULL DEFAULT '' COMMENT '工具名',
-    `arguments`    TEXT         NULL COMMENT '入参快照(服务端补全后,≤4096字节)',
-    `response_text` TEXT        NULL COMMENT '响应摘要(≤32KB)',
-    `result_code`  INT          NOT NULL DEFAULT 0 COMMENT '结果码(0=成功,上游错误码或-1)',
-    `error_msg`    VARCHAR(255) NOT NULL DEFAULT '' COMMENT '失败摘要',
-    `cost_ms`      INT          NOT NULL DEFAULT 0 COMMENT '耗时毫秒',
-    `client_ip`    VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '调用方IP',
-    `client_info`  VARCHAR(255) NOT NULL DEFAULT '' COMMENT '客户端信息',
-    `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    INDEX `idx_app_created` (`app_key`, `created_at`),
-    INDEX `idx_tool_created` (`tool_name`, `created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP网关调用审计表';
-
 
 -- 定时触发工作流定义表（跑什么/何时跑/怎么通知；见 docs/定时触发工作流实现方案.md）
 CREATE TABLE IF NOT EXISTS `tblLlmWorkflow` (
@@ -816,7 +735,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmWorkflow` (
     `description`        TEXT         NULL COMMENT '描述',
     `caller_key`         VARCHAR(64)  NOT NULL COMMENT '触发的 run 用的 caller(解析提示词/工具/Skill/ApiKey)',
     `route_values`       VARCHAR(256) NOT NULL DEFAULT '[]' COMMENT '路由值 JSON 数组',
-    `user_name`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '以谁的身份跑(工具白名单/积分归属/审计)；空则匿名',
+    `user_name`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '以谁的身份跑(工具白名单/审计归属)；空则匿名',
     `prompt`             MEDIUMTEXT   NOT NULL COMMENT '任务提示词，支持 {{date}}/{{datetime}}/{{workflow}} 占位符',
     `trigger_type`       VARCHAR(16)  NOT NULL DEFAULT 'cron' COMMENT '触发类型: cron | manual(webhook/event 三期预留)',
     `cron_expr`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '标准 5 段 cron 表达式',

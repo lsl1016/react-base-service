@@ -308,8 +308,6 @@ export interface UserModelItem {
   isPlatformDefault: number;
   createdAt: string;
   updatedAt: string;
-  baseCredits?: number;
-  bonusCredits?: number;
   /** 引用的连接已停用或不存在（自包含模型恒为 false）；输入框模型下拉据此过滤 */
   disabled?: boolean;
 }

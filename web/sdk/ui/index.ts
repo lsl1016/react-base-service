@@ -46,7 +46,6 @@ export { ToolCallCard } from './components/ToolCallCard';
 export { ToolCallView } from './components/ToolCallView';
 export { ToolExplore } from './components/ToolExplore';
 export { UsageRing } from './components/UsageRing';
-export { UsageStats } from './components/UsageStats';
 export { InputPartsView } from './editor/InputPartsView';
 
 // 类型
@@ -77,7 +76,6 @@ export type { ToolCallCardProps } from './components/ToolCallCard';
 export type { ToolCallViewProps } from './components/ToolCallView';
 export type { UsageRingProps } from './components/UsageRing';
 export type { ToolExploreProps } from './components/ToolExplore';
-export type { UsageStatsProps } from './components/UsageStats';
 export type { InputPartsViewProps } from './editor/InputPartsView';
 export { parseAgentInputText, serializeAgentInputParts } from './editor/types';
 export type {

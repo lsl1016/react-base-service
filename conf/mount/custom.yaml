@@ -195,19 +195,6 @@ mcp:
         # 代码检索镜像目录：要检索的外部项目 clone 到 data/repo-mirrors/（普通工作副本，
         # 非 bare mirror），检索工具只扫这里，不扫服务自身代码
         REPO_ROOT: '/Users/admin/Desktop/xm/react-base-service/data/repo-mirrors'
-    # mcp-server 网关（本地进程经 127.0.0.1 直连；容器版在 deploy/compose/conf/mount 配
-    # host.docker.internal——两份 yaml 各写各的 endpoint，工具同步进同一注册表，执行时
-    # 各进程用自己的客户端。不用 DB 注册表是为了避开 host.docker.internal 在宿主机
-    # hosts 漂移导致的不可达）
-    - name: mcpgw
-      kind: http
-      # 独立网关进程（cmd/mcp-gateway）挂载在 /mcp，见 mcpgateway.Bootstrap(engine, "/mcp")
-      endpoint: 'http://127.0.0.1:18080/mcp'
-      headers:
-        # 本地开发凭证（playground「MCP 应用」页创建，绑定 mcpgw_demo_weather 等 5 个工具）；
-        # 占位符 demo-app-key 无效，mcpgw 客户端连接需真实 app_key:app_secret
-        Authorization: 'Bearer mcp_71d4fd2bc3e6cc760ad8:751169239e2c13b5214f636ca2d9babc0dfed03a5b6976b6'
-      timeout_ms: 30000
   # 本机开发环境放行环回/私网 MCP 端点（如 127.0.0.1 演示 MCP 服务）；生产环境必须删除此开关
   allow_private_endpoint: true
     # - name: remote
@@ -218,19 +205,4 @@ mcp:
 async_task:
   # 异步任务状态同步框架总开关；无内置 Provider 时开启后也为空转
   enabled: false
-
-# MCP 服务端网关：把 tblLlmTool 中启用的 http 工具按 caller 作用域对外暴露成 MCP 协议
-#（端点 /react-base-service/mcp，独立进程可 go run ./cmd/mcp-gateway）。
-# 应用凭证在 playground「MCP 应用」页创建（Bearer <app_key>:<app_secret>）；
-# outputSchema 加 "x-output-projection": true 可启用服务端投影裁剪+字段说明渲染。
-mcp_server:
-  enabled: true
-  # name: react-base-service      # initialize 返回的 server 标识（默认 react-base-service）
-  # version: 1.0.0
-  # instructions: |               # 覆盖随 initialize 下发的模型使用规范（默认用内置文案）
-  #   自定义使用规范...
-  # forward_cookies:              # 透传调用方 Cookie 给工具上游（上游依赖登录态时）
-  #   - SESSION
-  audit:
-    worker_num: 10                # 审计异步落库并发（队列 4096，写满丢弃不阻塞业务）
 
