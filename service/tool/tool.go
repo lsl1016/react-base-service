@@ -41,8 +41,6 @@ var reservedToolNames = map[string]struct{}{
 	"get_async_task":        {},
 	"read_attachment":       {},
 	"inspect_attachment":    {},
-	"web_fetch":             {},
-	"web_search":            {},
 	"delegate_agent":        {},
 	"send_message":          {},
 	"wait_agent":            {},

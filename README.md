@@ -36,7 +36,7 @@
   <img src="docs/images/architecture.png" alt="系统架构图" width="920">
 </p>
 
-五层结构：客户端（Web SDK 多会话 UI / playground · replay 宿主页 / 业务 Caller）→ router + 免鉴权中间件（信任 X-User-Name 头，缺省 anonymous；HTTP 管理面 + WebSocket 运行入口）→ 控制器 → service 层（ReAct / Plan 双运行时 + Steering 引导与排队 + 双层记忆 + cron 定时工作流 + 工具 / Agent / Skill / Bundle / Caller / 模型配置等注册类资源管理）→ 基础设施（LLM 网关 / MySQL / Redis / 对象存储 MinIO · COS · 本地目录 / Python 沙箱 / SearXNG 检索 / Graphiti 时序图谱）。
+五层结构：客户端（Web SDK 多会话 UI / playground · replay 宿主页 / 业务 Caller）→ router + 免鉴权中间件（信任 X-User-Name 头，缺省 anonymous；HTTP 管理面 + WebSocket 运行入口）→ 控制器 → service 层（ReAct / Plan 双运行时 + Steering 引导与排队 + 双层记忆 + cron 定时工作流 + 工具 / Agent / Skill / Bundle / Caller / 模型配置等注册类资源管理）→ 基础设施（LLM 网关 / MySQL / Redis / 对象存储 MinIO · COS · 本地目录 / Python 沙箱 / Graphiti 时序图谱）。
 
 - 详细分层与设计约束见 [系统架构](docs/architecture.md)
 

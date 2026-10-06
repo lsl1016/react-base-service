@@ -859,20 +859,6 @@ const settingCards = {
       { field: 'allowUserScope', label: '用户维度隔离', hint: '开启=caller+user 双维度隔离；关闭=收敛到 caller 维度共享', type: 'switch' },
     ],
   },
-  web: {
-    title: '网页检索',
-    kind: 'web_fetch + web_search',
-    saveHint: '保存后新 run 即生效',
-    rows: [
-      { field: 'enabled', label: '联网检索总开关', hint: '一枚开关同时启停两个工具：web_search（关键词搜索，返回标题/链接/摘要清单）与 web_fetch（抓取 URL 正文全文）', type: 'switch' },
-    ],
-    // 卡片头徽标自定义：半配置状态（yaml 缺 kind/base_url）开关开了 web_search 也不会注册，给警示徽标。
-    badge: (data) => {
-      if (!data.effective.enabled) return '<span class="rp-mcp-badge rp-mcp-badge-off">已关闭</span>';
-      if (!data.effective.configured) return '<span class="rp-mcp-badge rp-mcp-badge-bad" title="custom.yaml 未配置 web_search 连接参数（kind=searxng + base_url）：开关已开但 web_search 工具不会注册（web_fetch 不受影响）">已开启·检索配置不完整</span>';
-      return '<span class="rp-mcp-badge rp-mcp-badge-ok">已开启</span>';
-    },
-  },
 };
 
 const management = {
@@ -1401,7 +1387,7 @@ const management = {
       const audit = data.updatedBy
         ? `<span class="rp-mcp-endpoint">最近更新：${escapeHtml(data.updatedBy)} · ${escapeHtml(data.updatedAt || '-')}</span>`
         : '<span class="rp-mcp-endpoint">尚未通过面板设置过（当前全部回落 yaml/默认值）</span>';
-      // 卡片头状态徽标：默认按 effective.enabled，卡片可经 badge(data) 自定义（如 web_search 半配置警示）。
+      // 卡片头状态徽标：默认按 effective.enabled。
       const badge = card.badge
         ? card.badge(data)
         : (data.effective.enabled ? '<span class="rp-mcp-badge rp-mcp-badge-ok">已开启</span>' : '<span class="rp-mcp-badge rp-mcp-badge-off">已关闭</span>');

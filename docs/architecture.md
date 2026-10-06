@@ -38,7 +38,6 @@
 │  ├─ reasoning.go     思考程度三态（off/auto/custom）                            │
 │  ├─ memory*.go / graph_memory.go      长期记忆工具与注入                        │
 │  ├─ plan.go / external_runtime.go     计划确认卡片 + Plan Runtime 窄接口        │
-│  ├─ web_fetch.go / web_search.go      网页抓取 / SearXNG 检索                   │
 │  ├─ tool_confirm.go / todo / ask_question / client_tool / python_exec / ...    │
 │  └─ ws.go / client_hub.go / history.go   手写 WS + 上行消息分发 + 历史回放      │
 │                                                                               │
@@ -62,7 +61,7 @@
   ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────────────────┐
   │ api/llm         │  │ MySQL（36 张表）  │  │ 外部依赖                        │
   │ claude / gpt /  │  │ Redis（附件元数据）│  │ api/pythonexec（Python 沙箱）   │
-  │ minimax 流式 +  │  │ 对象存储（MinIO）  │  │ 外部 MCP 服务器 / SearXNG /    │
+  │ minimax 流式 +  │  │ 对象存储（MinIO）  │  │ 外部 MCP 服务器 /              │
   │ 工具调用 + 能力 │  └──────────────────┘  │ Graphiti / 上游 http 工具 /     │
   │ 目录门禁        │                        │ 企业微信·飞书 webhook           │
   └─────────────────┘                        └────────────────────────────────┘
@@ -193,8 +192,6 @@ type ToolMeta struct {
 | read_attachment / inspect_attachment | 附件读取 / csv 表结构探查 | 总是 |
 | create_plan | 计划确认卡片（ReAct 内的轻量计划确认，§10） | `allow_plan`（caller 级三态，§10） |
 | load_runtime_code | 加载服务线上代码到 (service, commit) 共享只读工作区并挂检索工具 | `workspace.enabled` |
-| web_fetch | 抓取公开网页正文，按预算截断 + resultRef 续读 | `web_fetch.enabled` |
-| web_search | SearXNG 网页检索（标题/链接/摘要清单） | `web_search` 启用且已配置 |
 | memory_list / memory_read / memory_write | 长期记忆列表/读取/写入 | `memory.enabled` |
 | graph_memory_search / graph_memory_write | 图谱记忆检索/写入 | `graph_memory.enabled` |
 | delegate_agent | 把子任务委派给子 Agent（隔离子 run，§4） | 子代理启用 |
@@ -391,8 +388,6 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 - **异步任务**：`config.async=true` 工具执行成功后落 tblLlmReactAsyncTask（pending，TTL 7 天，全量快照）→ 后续 run 启动注入 `<async_tasks>` 提醒 → 模型确认结果后 `resolve_async_task` 唯一清除；`service/asynctask` Provider 框架可让第三方调度系统状态自动回写（含租约对账），未注册时纯模型提醒模式。
 - **工具大结果与产物**：超过 inline_limit_bytes（或工具级 maxOutputBytes）只回填预览，全文落 tblLlmReactToolResult（resultRef），`read_tool_result` 分片续读；python_exec 产物上传 COS 落 tblLlmReactArtifact，前端经 `GET /react/artifact/:id`（IPS 鉴权）下载。
 - **附件**：`POST /api/chat/files/upload`（csv/md/txt ≤50MB，UTF-8/UTF-16 BOM/GB18030）；run payload `attachments` 引用 fileId。
-- **web_fetch**：仅公网 http/https；环回/私网/链路本地字面量拒绝 + 重定向逐跳复查（DNS rebinding 留待 egress 代理）；响应 2MB 上限、仅文本类 Content-Type；正文提取（去脚本样式标签 + 实体解码）按预算截断、完整正文走 resultRef；进程内缓存 15 分钟。
-- **web_search**：SearXNG JSON API（自建实例免密钥）；结果只含标题/链接/摘要；结构化结果经 meta 旁路给前端（可点击），不进模型上下文。
 - **上下文容量看板**：`POST /react/usage/context` 聚合会话最近 run 的容量占用、缓存命中率、六类 token 构成（context_breakdown 数据源）。
 - **工具确认门**：`tblLlmTool.permission_mode` 三档——auto / confirm（每次人工确认）/ confirm_risky（入参命中风险正则才确认）；确认流复用 ask_question 等待通道（`tool_confirm_request` 事件 + WS `tool_confirm_answer` 回填）；agent 级 permission_mode 是子 run 内全部工具的下限。
 - **内置技能包**：5 条 SKILL.md 经 go:embed 打进二进制（委派任务写作 / 大数据结果处理 / 业务工具两段式调用 / Python 数据分析 / 代码工作区调查）；caller 创建时 + 启动时为全部 caller（含 default）幂等补种，同名行跳过不覆盖用户改动；生效路径与自建技能一致（摘要索引 + get_skill 按需加载 + triggers 关键词触发）。

@@ -11,7 +11,7 @@
 #   - 不要用本覆盖层形态对外提供服务或多租户试用。
 #
 # 用法：
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql redis sandbox searxng
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql redis sandbox
 #   （./dev.sh 已默认带上本覆盖层）
 services:
   sandbox:

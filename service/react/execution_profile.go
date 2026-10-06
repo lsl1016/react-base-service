@@ -1,12 +1,9 @@
 package react
 
-import (
-	"react-base-service/conf"
-	netcap "react-base-service/service/react/internal/netcap"
-)
+import "react-base-service/conf"
 
 // ExecutionProfile 类型与 AllowsInternalTool 已下沉 internal/core（execution_profile.go）；
-// 本文件保留按运行场景选择档案的工厂函数——它们依赖 conf 开关与 netcap 门控，
+// 本文件保留按运行场景选择档案的工厂函数——它们依赖 conf 开关，
 // 属于引擎门面的装配逻辑，不下沉。
 //
 // 外层默认档案见 outerExecutionProfile；delegate 子 run 见 subAgentExecutionProfile；
@@ -30,9 +27,6 @@ func outerExecutionProfile(req *runtimeRequest) ExecutionProfile {
 		// 经 GetReactRuntimeConfig 取值以合并管理面板「运行时配置」的 DB 覆盖（与 delegate/装配同口径）。
 		AllowSubagent:  conf.GetReactRuntimeConfig().SubAgent.SubAgentEnabled(),
 		AllowWorkspace: conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled(),
-		// 经 GetReactRuntimeConfig 取值以合并管理面板「运行时配置」的 DB 覆盖（与工具注册门控同口径）。
-		AllowWebFetch:           conf.GetReactRuntimeConfig().WebFetch.WebFetchEnabled(),
-		AllowWebSearch:          netcap.WebSearchProfileEnabled(),
 		AllowAnalysisTools:      true,
 		InjectAsyncTaskReminder: true,
 		RestoreOuterHistory:     true,

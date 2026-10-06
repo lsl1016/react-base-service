@@ -180,35 +180,6 @@
   border: 1px dashed var(--agent-ui-border-color, rgba(127, 127, 127, 0.35));
 }
 
-// web_search 结构化结果清单（tool_use_end meta 旁路）
-.agent-ui-tool-websearch-list {
-  margin: 4px 0;
-  padding: 0 0 0 4px;
-  list-style: none;
-}
-
-.agent-ui-tool-websearch-item {
-  margin: 6px 0;
-  overflow-wrap: anywhere;
-
-  a {
-    color: var(--agent-ui-link-color, #1a73e8);
-    text-decoration: none;
-    font-weight: 500;
-
-    &:hover {
-      text-decoration: underline;
-    }
-  }
-}
-
-.agent-ui-tool-websearch-snippet {
-  margin-top: 2px;
-  color: $agent-ui-message-meta;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 // 子 Agent 消息块分隔行（步骤顶部归属标注）与缩进
 .agent-ui-subagent-divider {
   display: flex;

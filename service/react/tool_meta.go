@@ -61,8 +61,6 @@ var metaToolRegistry = map[string]ToolMeta{
 	metaToolGraphMemorySearch: {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelLow},
 	metaToolListTools:         {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
 	metaToolListSkills:        {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
-	metaToolWebFetch:          {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelMedium, TimeoutMs: 60000, MaxOutputBytes: 20 * 1024},
-	metaToolWebSearch:         {ReadOnly: true, ConcurrentSafe: true, SideEffect: toolSideEffectNetwork, RiskLevel: toolRiskLevelLow, TimeoutMs: 30000, MaxOutputBytes: 8 * 1024},
 	// 会话状态类：只影响本 run 状态，不改外部世界。
 	metaToolTodoWrite:        {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},
 	metaToolDisplayFiles:     {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSession, RiskLevel: toolRiskLevelLow},

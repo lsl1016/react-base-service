@@ -26,21 +26,21 @@ compose=(docker compose -f docker-compose.yml -f docker-compose.dev.yml)
 cmd="${1:-up}"
 case "$cmd" in
   up)
-    "${compose[@]}" up -d mysql redis sandbox searxng
+    "${compose[@]}" up -d mysql redis sandbox
     echo "依赖容器已就绪。本地服务启动：http://127.0.0.1:8180/react-base-service/react/playground"
     echo "（Ctrl+C 退出服务；依赖容器保持运行）"
     exec go run main.go
     ;;
   deps)
-    "${compose[@]}" up -d mysql redis sandbox searxng
-    "${compose[@]}" ps mysql redis sandbox searxng
+    "${compose[@]}" up -d mysql redis sandbox
+    "${compose[@]}" ps mysql redis sandbox
     ;;
   stop)
-    "${compose[@]}" stop mysql redis sandbox searxng
+    "${compose[@]}" stop mysql redis sandbox
     ;;
   status)
-    "${compose[@]}" ps mysql redis sandbox searxng
-    echo "本机应监听: MySQL=3317 Redis=16379 Sandbox=18190 SearXNG=8888（由 .env 固化）"
+    "${compose[@]}" ps mysql redis sandbox
+    echo "本机应监听: MySQL=3317 Redis=16379 Sandbox=18190（由 .env 固化）"
     ;;
   *)
     echo "usage: ./dev.sh [up|deps|stop|status]" >&2

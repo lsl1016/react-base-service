@@ -41,8 +41,6 @@ const (
 	metaToolMemoryWrite       = core.MetaToolMemoryWrite
 	metaToolGraphMemorySearch = core.MetaToolGraphMemorySearch
 	metaToolGraphMemoryWrite  = core.MetaToolGraphMemoryWrite
-	metaToolWebFetch          = core.MetaToolWebFetch
-	metaToolWebSearch         = core.MetaToolWebSearch
 )
 
 func isInternalMetaTool(name string) bool { return core.IsInternalMetaTool(name) }

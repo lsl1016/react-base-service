@@ -1,7 +1,6 @@
 package react
 
 import (
-	netcap "react-base-service/service/react/internal/netcap"
 	pyexec "react-base-service/service/react/internal/pyexec"
 
 	"encoding/json"
@@ -44,14 +43,6 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 	// workspace.enabled=true 时注册 load_runtime_code（P2-1 代码工作区入口）。
 	if conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled() {
 		definitions = append(definitions, loadRuntimeCodeDefinition())
-	}
-	// web_fetch.enabled=true 时注册网页抓取工具（WP4，URL→正文提取→按预算回填）。
-	if conf.GetReactRuntimeConfig().WebFetch.WebFetchEnabled() {
-		definitions = append(definitions, netcap.WebFetchToolDefinition())
-	}
-	// web_search.enabled 且服务配置完整时注册网页检索工具（WP4，SearXNG 适配器）。
-	if searchCfg := conf.GetReactRuntimeConfig().WebSearch; searchCfg.WebSearchEnabled() && searchCfg.WebSearchConfigured() {
-		definitions = append(definitions, netcap.WebSearchToolDefinition())
 	}
 	// memory.enabled=true 时注册长期记忆三工具（list/read/write），关闭时模型不可见。
 	if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
@@ -323,10 +314,6 @@ func (s *reactEngineState) executeInternalToolContent(call llm.ToolCall, step in
 		return noToolMeta(s.executeGraphMemorySearch(call.Input))
 	case metaToolGraphMemoryWrite:
 		return noToolMeta(s.executeGraphMemoryWrite(call.Input))
-	case metaToolWebFetch:
-		return noToolMeta(netcap.ExecuteWebFetch(s.ctx, s.runID, call.Input))
-	case metaToolWebSearch:
-		return netcap.ExecuteWebSearch(s.ctx, s.runID, call.Input)
 	case metaToolWaitAgent:
 		return noToolMeta(s.executeWaitAgent(call, step))
 	default:

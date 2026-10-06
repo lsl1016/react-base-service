@@ -334,7 +334,7 @@ describe('EventReducer', () => {
         executedBy: 'server',
         status: 'success',
         durationMs: 500,
-        meta: { webSearchResults: [{ title: '结果', url: 'https://example.com' }] },
+        meta: { note: 'meta-passthrough' },
         riskLevel: 'medium',
         readOnly: true,
       },
@@ -349,7 +349,7 @@ describe('EventReducer', () => {
     // ToolMeta 徽标与 UI 旁路字段（主 run 路径与 plan 路径同口径）
     expect(tc.riskLevel).toBe('medium');
     expect(tc.readOnly).toBe(true);
-    expect(tc.meta?.webSearchResults).toHaveLength(1);
+    expect(tc.meta?.note).toBe('meta-passthrough');
   });
 
   it('should handle client_tool_use_start event', () => {

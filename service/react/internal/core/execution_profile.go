@@ -23,12 +23,6 @@ type ExecutionProfile struct {
 	// AllowWorkspace 控制 load_runtime_code（P2-1 代码工作区入口）；外层/子 run 跟随
 	// workspace.enabled 配置，reflection 等受限执行域恒关闭。
 	AllowWorkspace bool
-	// AllowWebFetch 控制 web_fetch（WP4 网页抓取）；外层/子 run 跟随 web_fetch.enabled 配置，
-	// reflection 等受限执行域恒关闭。
-	AllowWebFetch bool
-	// AllowWebSearch 控制 web_search（WP4 网页检索）；外层/子 run 跟随 web_search 配置，
-	// reflection 等受限执行域恒关闭。
-	AllowWebSearch bool
 	// AllowAnalysisTools 控制 read_tool_result/inspect_data/python_exec 等分析类内置工具；
 	// 主对话默认开启，reflection 等受限执行域关闭。
 	AllowAnalysisTools      bool
@@ -61,10 +55,6 @@ func (p ExecutionProfile) AllowsInternalTool(name string) bool {
 		return p.AllowMemory
 	case MetaToolGraphMemorySearch, MetaToolGraphMemoryWrite:
 		return p.AllowGraphMemory
-	case MetaToolWebFetch:
-		return p.AllowWebFetch
-	case MetaToolWebSearch:
-		return p.AllowWebSearch
 	default:
 		return false
 	}

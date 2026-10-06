@@ -22,7 +22,6 @@
 //
 //	internal/core      ：事件/工具名常量、ExecutionProfile、JSON Schema 校验、token 估算、
 //	                     skill 触发、错误哨兵、模型重试分类、reasoning 解析、大结果读取原语
-//	internal/netcap    ：web_fetch / web_search 网络能力
 //	internal/pyexec    ：python_exec 沙箱执行 / inspect_data / 产物管理
 //	internal/mem       ：记忆 adapter 纯函数（作用域/渲染/工具声明）
 //	internal/asynctask ：异步任务会话级查询 API

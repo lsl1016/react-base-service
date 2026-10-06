@@ -446,7 +446,7 @@ RUN go build -o /usr/local/bin/repo-mcp ./cmd/repo-mcp
 ### 9.5 网络拓扑说明
 
 - `qqbot` 只加入 `backend` 网（可出公网、可达 service/napcat），**不加入 `sandbox-net`**，不发布宿主机端口——QQ 链路整体不扩大基座攻击面；
-- NapCat 与 QQ 服务器的连接走公网，属预期；NapCat 无需访问 mysql/redis（backend 网内可见性同 searxng，可接受）。
+- NapCat 与 QQ 服务器的连接走公网，属预期；NapCat 无需访问 mysql/redis（backend 网内可见性同其它内网组件，可接受）。
 
 ---
 

@@ -11,12 +11,11 @@ import "sync/atomic"
 // 覆盖粒度是「字段级」：指针为 nil = 该字段未覆盖，回落 custom.yaml（未配置再回落内置默认）；
 // 非 nil = 以 DB 值为准。写侧（service/setting）已做范围校验，此处不做重复校验。
 
-// RuntimeSettingOverride 是全部运行时设置的覆盖快照（subagent / context / memory / web 四组）。
+// RuntimeSettingOverride 是全部运行时设置的覆盖快照（subagent / context / memory 三组）。
 type RuntimeSettingOverride struct {
 	SubAgent       *SubAgentSettingOverride       `json:"subagent,omitempty"`
 	ContextCompact *ContextCompactSettingOverride `json:"context,omitempty"`
 	Memory         *MemorySettingOverride         `json:"memory,omitempty"`
-	Web            *WebAccessSettingOverride      `json:"web,omitempty"`
 }
 
 // SubAgentSettingOverride 是 subagent 委派策略的 DB 覆盖字段（与 ReactSubAgentConfig 一一对应）。
@@ -49,14 +48,6 @@ type MemorySettingOverride struct {
 	IndexMaxItems        *int  `json:"indexMaxItems,omitempty"`
 	DetachedMaxItems     *int  `json:"detachedMaxItems,omitempty"`
 	AllowUserScope       *bool `json:"allowUserScope,omitempty"`
-}
-
-// WebAccessSettingOverride 是联网能力（web_fetch / web_search）的 DB 覆盖字段：
-// 两个工具共用一枚总开关（面板一个开关同时启停两个工具，状态天然同步）。
-// web_fetch 的抓取预算/超时、web_search 的搜索服务连接参数（kind/base_url/api_key）
-// 仍归 yaml 管，不在面板暴露。
-type WebAccessSettingOverride struct {
-	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // runtimeSettingOverrideHolder 存 RuntimeSettingOverride 值；零值快照（nil 各字段）= 无覆盖。
@@ -218,40 +209,4 @@ func applyMemoryOverride(base ReactMemoryConfig, override *MemorySettingOverride
 // 归一化复用 GetReactRuntimeConfig 同一实现（normalizeReactMemoryConfig），面板与引擎口径恒一致。
 func EffectiveMemoryConfig(override *MemorySettingOverride) ReactMemoryConfig {
 	return normalizeReactMemoryConfig(applyMemoryOverride(CustomConf.LLM.React.Memory, override))
-}
-
-// applyWebFetchOverride 把联网总开关覆盖合并进 web_fetch 的 yaml 基线（仅 Enabled 字段）。
-// web_fetch 的数字参数经 Effective* 方法按需兜底默认值，无需在合并处归一化。
-func applyWebFetchOverride(base ReactWebFetchConfig, override *WebAccessSettingOverride) ReactWebFetchConfig {
-	if override == nil {
-		return base
-	}
-	if override.Enabled != nil {
-		base.Enabled = override.Enabled
-	}
-	return base
-}
-
-// applyWebSearchOverride 把联网总开关覆盖合并进 web_search 的 yaml 基线（仅 Enabled 字段）。
-// kind/base_url 等连接参数不可经面板覆盖，半配置状态的判定仍由 WebSearchConfigured 承担。
-func applyWebSearchOverride(base ReactWebSearchConfig, override *WebAccessSettingOverride) ReactWebSearchConfig {
-	if override == nil {
-		return base
-	}
-	if override.Enabled != nil {
-		base.Enabled = override.Enabled
-	}
-	return base
-}
-
-// EffectiveWebFetchConfig 返回 web_fetch 工具的最终生效值（DB 覆盖 > custom.yaml > 内置默认）。
-// GetReactRuntimeConfig 的引擎消费口径与此函数完全一致；管理面板响应用它渲染。
-func EffectiveWebFetchConfig(override *WebAccessSettingOverride) ReactWebFetchConfig {
-	return applyWebFetchOverride(CustomConf.LLM.React.WebFetch, override)
-}
-
-// EffectiveWebSearchConfig 返回 web_search 工具的最终生效值（DB 覆盖 > custom.yaml > 内置默认）。
-// GetReactRuntimeConfig 的引擎消费口径与此函数完全一致；管理面板响应用它渲染。
-func EffectiveWebSearchConfig(override *WebAccessSettingOverride) ReactWebSearchConfig {
-	return applyWebSearchOverride(CustomConf.LLM.React.WebSearch, override)
 }

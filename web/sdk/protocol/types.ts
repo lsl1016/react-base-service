@@ -813,7 +813,7 @@ export interface ToolUseEndPayload {
   status: string;
   /** 执行耗时（毫秒） */
   durationMs: number;
-  /** 工具产物 UI 旁路（python_exec 产物 / web_search 结果清单等），不进模型上下文 */
+  /** 工具产物 UI 旁路（python_exec 产物等），不进模型上下文 */
   meta?: Record<string, unknown>;
   /** 工具风险等级徽标（与 start 事件同口径，回放场景 end 事件独立展示） */
   riskLevel?: string;

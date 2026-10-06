@@ -117,10 +117,6 @@ type ReactRuntimeConfig struct {
 	// Steering 控制 Steering（运行中引导/排队）能力；未配置时默认关闭，
 	// 运行中新用户消息保持历史"硬拒绝"行为（Session与Steering机制借鉴方案 S1/S2）。
 	Steering ReactSteeringConfig `yaml:"steering"`
-	// WebFetch 控制内置 web_fetch 工具（URL 抓取→正文提取→按预算回填）；未配置时默认关闭。
-	WebFetch ReactWebFetchConfig `yaml:"web_fetch"`
-	// WebSearch 控制内置 web_search 工具（外部搜索服务适配器，当前支持 searxng）；未配置时默认关闭。
-	WebSearch ReactWebSearchConfig `yaml:"web_search"`
 }
 
 // ReactSteeringConfig Steering 配置：guide 引导注入与 queue 排队（S2）分开关。
@@ -252,110 +248,6 @@ func (c ReactWorkspaceConfig) WorkspaceEnabled() bool {
 	}
 	return false
 }
-
-// ReactWebFetchConfig 内置 web_fetch 工具配置（参考 ZCode WebFetch：URL→正文提取→按预算回填）。
-type ReactWebFetchConfig struct {
-	// Enabled 控制总开关；未配置默认 false（不注册 web_fetch，行为与历史一致）。
-	Enabled *bool `yaml:"enabled"`
-	// TimeoutSec 是单次抓取的超时秒数；0 = 默认 60s。
-	TimeoutSec int `yaml:"timeout_sec"`
-	// MaxContentRunes 是提取正文回填给模型的字符上限（超出部分经 resultRef 分页读取）；0 = 默认 20000。
-	MaxContentRunes int `yaml:"max_content_runes"`
-	// CacheTTLSec 是同 URL 抓取结果的内存缓存秒数；0 = 默认 900s（15 分钟），负数禁用缓存。
-	CacheTTLSec int `yaml:"cache_ttl_sec"`
-}
-
-// ReactWebSearchConfig 内置 web_search 工具配置（WP4）：
-// 经外部搜索服务（SearXNG JSON API，自建可免密钥）检索网页，返回标题/链接/摘要清单，
-// 全文内容用 web_fetch 抓取。不内置任何爬虫；provider 原生搜索（如 claude 服务端 web_search
-// 工具）作为后续演进方向，届时按模型能力位接入。
-type ReactWebSearchConfig struct {
-	// Enabled 控制总开关；未配置默认 false（不注册 web_search）。
-	Enabled *bool `yaml:"enabled"`
-	// Kind 是搜索服务适配器类型；当前仅支持 searxng。
-	Kind string `yaml:"kind"`
-	// BaseURL 是 SearXNG 实例地址（如 http://searxng:8080，需开启 json format）。
-	BaseURL string `yaml:"base_url"`
-	// APIKey 是可选的请求凭证（随 header 透传，部分托管实例需要）。
-	APIKey string `yaml:"api_key"`
-	// TimeoutSec 是单次检索超时秒数；0 = 默认 20s。
-	TimeoutSec int `yaml:"timeout_sec"`
-	// MaxResults 是返回条数上限；0 = 默认 8。
-	MaxResults int `yaml:"max_results"`
-}
-
-const (
-	defaultWebSearchTimeoutSec = 20
-	defaultWebSearchMaxResults = 8
-)
-
-// WebSearchEnabled 解析 web_search.enabled：未配置默认 false。
-func (c ReactWebSearchConfig) WebSearchEnabled() bool {
-	if c.Enabled != nil {
-		return *c.Enabled
-	}
-	return false
-}
-
-// WebSearchConfigured 校验 kind 与 base_url：enabled 但配置不完整时工具同样不注册（记日志）。
-func (c ReactWebSearchConfig) WebSearchConfigured() bool {
-	return strings.EqualFold(strings.TrimSpace(c.Kind), "searxng") && strings.TrimSpace(c.BaseURL) != ""
-}
-
-// EffectiveTimeoutSec 返回检索超时秒数（带默认值兜底）。
-func (c ReactWebSearchConfig) EffectiveTimeoutSec() int {
-	if c.TimeoutSec > 0 {
-		return c.TimeoutSec
-	}
-	return defaultWebSearchTimeoutSec
-}
-
-// EffectiveMaxResults 返回结果条数上限（带默认值兜底）。
-func (c ReactWebSearchConfig) EffectiveMaxResults() int {
-	if c.MaxResults > 0 {
-		return c.MaxResults
-	}
-	return defaultWebSearchMaxResults
-}
-
-const (
-	defaultWebFetchTimeoutSec     = 60
-	defaultWebFetchMaxContentRunes = 20000
-	defaultWebFetchCacheTTLSec     = 900
-)
-
-// WebFetchEnabled 解析 web_fetch.enabled：未配置默认 false。
-func (c ReactWebFetchConfig) WebFetchEnabled() bool {
-	if c.Enabled != nil {
-		return *c.Enabled
-	}
-	return false
-}
-
-// EffectiveTimeoutSec 返回抓取超时秒数（带默认值兜底）。
-func (c ReactWebFetchConfig) EffectiveTimeoutSec() int {
-	if c.TimeoutSec > 0 {
-		return c.TimeoutSec
-	}
-	return defaultWebFetchTimeoutSec
-}
-
-// EffectiveMaxContentRunes 返回正文字符上限（带默认值兜底）。
-func (c ReactWebFetchConfig) EffectiveMaxContentRunes() int {
-	if c.MaxContentRunes > 0 {
-		return c.MaxContentRunes
-	}
-	return defaultWebFetchMaxContentRunes
-}
-
-// EffectiveCacheTTLSec 返回缓存 TTL 秒数；负数表示禁用缓存。
-func (c ReactWebFetchConfig) EffectiveCacheTTLSec() int {
-	if c.CacheTTLSec != 0 {
-		return c.CacheTTLSec
-	}
-	return defaultWebFetchCacheTTLSec
-}
-
 
 // ReactSubAgentConfig 子 Agent 委派配置：主 Agent 经 delegate_agent 把子任务派给
 // 注册表中的专家子 Agent，引擎按 agent 定义装配隔离子 run 执行。
@@ -968,12 +860,6 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 	// subagent 策略统一经 EffectiveSubAgentConfig 合并管理面板「运行时配置」的 DB 覆盖
 	//（覆盖 > yaml > 内置默认），与 /setting/subagent 面板响应口径一致。
 	cfg.SubAgent = EffectiveSubAgentConfig(GetRuntimeSettingOverride().SubAgent)
-
-	// 联网能力总开关（web_fetch / web_search 共用一枚开关）经 apply*Override 合并管理面板
-	//「运行时配置」的 DB 覆盖（覆盖 > yaml > 内置默认），与 /setting/web 面板响应口径一致；
-	// 数字参数默认值由 Effective* 方法按需兜底，此处无需归一化。
-	cfg.WebFetch = applyWebFetchOverride(cfg.WebFetch, GetRuntimeSettingOverride().Web)
-	cfg.WebSearch = applyWebSearchOverride(cfg.WebSearch, GetRuntimeSettingOverride().Web)
 
 	workspace := cfg.Workspace
 	if strings.TrimSpace(workspace.RootDir) == "" {

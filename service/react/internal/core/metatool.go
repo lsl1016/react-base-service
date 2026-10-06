@@ -41,16 +41,12 @@ const (
 	// 时序事实图谱记忆工具：graph_memory.enabled 开启时注册（见 graph_memory.go）。
 	MetaToolGraphMemorySearch = "graph_memory_search"
 	MetaToolGraphMemoryWrite  = "graph_memory_write"
-	// MetaToolWebFetch 抓取网页正文（WP4 网络能力）。
-	MetaToolWebFetch = "web_fetch"
-	// MetaToolWebSearch 联网检索（WP4 网络能力，SearXNG）。
-	MetaToolWebSearch = "web_search"
 )
 
 // IsInternalMetaTool 判断工具名是否属于 Runtime 内置 Meta Tool，内置工具不走外部工具注册表。
 func IsInternalMetaTool(name string) bool {
 	switch name {
-	case MetaToolListTools, MetaToolGetTool, MetaToolExecuteTool, MetaToolListSkills, MetaToolGetSkill, MetaToolReadToolResult, MetaToolInspectData, MetaToolPythonExec, MetaToolTodoWrite, MetaToolAskQuestion, MetaToolDisplayFiles, MetaToolResolveAsyncTask, MetaToolGetAsyncTask, MetaToolReadAttachment, MetaToolInspectAttachment, MetaToolCreatePlan, MetaToolDelegateAgent, MetaToolSendMessage, MetaToolLoadRuntimeCode, MetaToolMemoryList, MetaToolMemoryRead, MetaToolMemoryWrite, MetaToolGraphMemorySearch, MetaToolGraphMemoryWrite, MetaToolWebFetch, MetaToolWaitAgent, MetaToolWebSearch:
+	case MetaToolListTools, MetaToolGetTool, MetaToolExecuteTool, MetaToolListSkills, MetaToolGetSkill, MetaToolReadToolResult, MetaToolInspectData, MetaToolPythonExec, MetaToolTodoWrite, MetaToolAskQuestion, MetaToolDisplayFiles, MetaToolResolveAsyncTask, MetaToolGetAsyncTask, MetaToolReadAttachment, MetaToolInspectAttachment, MetaToolCreatePlan, MetaToolDelegateAgent, MetaToolSendMessage, MetaToolLoadRuntimeCode, MetaToolMemoryList, MetaToolMemoryRead, MetaToolMemoryWrite, MetaToolGraphMemorySearch, MetaToolGraphMemoryWrite, MetaToolWaitAgent:
 		return true
 	default:
 		return false

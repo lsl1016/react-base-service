@@ -115,12 +115,6 @@ export function ToolCallCard(props: ToolCallCardProps) {
     </Show>
   );
 
-  // web_search 的结构化结果清单（tool_use_end meta 旁路下发），渲染为可点击链接。
-  const webSearchResults = (): Array<{ title: string; url: string; snippet?: string }> => {
-    const results = props.toolCall.meta?.webSearchResults;
-    return Array.isArray(results) ? (results as Array<{ title: string; url: string; snippet?: string }>) : [];
-  };
-
   return (
     <div class="agent-ui-tool-card" data-tool-use-id={props.toolCall.toolUseId}>
       <div
@@ -175,21 +169,6 @@ export function ToolCallCard(props: ToolCallCardProps) {
 
       <Show when={expanded()}>
         <div class="agent-ui-tool-details">
-          <Show when={webSearchResults().length > 0}>
-            <div class="agent-ui-tool-section">
-              <div class="agent-ui-tool-section-title">检索结果</div>
-              <ul class="agent-ui-tool-websearch-list">
-                {webSearchResults().map((item) => (
-                  <li class="agent-ui-tool-websearch-item">
-                    <a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                    <Show when={item.snippet}>
-                      <div class="agent-ui-tool-websearch-snippet">{item.snippet}</div>
-                    </Show>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </Show>
           <Show when={Object.keys(props.toolCall.input || {}).length > 0}>
             <div class="agent-ui-tool-section">
               <pre class="agent-ui-tool-json">

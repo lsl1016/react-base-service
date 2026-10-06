@@ -162,7 +162,7 @@ services:
 
 **落地记录(2026-10-03)**:
 
-- `docker-compose.yml` 新增两张网:`backend`(常规,可出网)与 `sandbox-net`(`internal: true`);`sandbox` 只挂 `sandbox-net` 且删除 `ports` 映射;`service` 双网桥接;mysql/redis/minio/searxng 与监控组件全部 `backend`(故沙箱不可达它们);
+- `docker-compose.yml` 新增两张网:`backend`(常规,可出网)与 `sandbox-net`(`internal: true`);`sandbox` 只挂 `sandbox-net` 且删除 `ports` 映射;`service` 双网桥接;mysql/redis/minio 与监控组件全部 `backend`(故沙箱不可达它们);
 - 本机开发直连改走覆盖层 `docker-compose.dev.yml`(把 sandbox 接回 `backend` 并发布 18190),`dev.sh` 默认叠加。**发布形态(不含覆盖层)保持隔离**,`deploy.yml` 的 `docker compose up -d --build` 无需改动;
 - 验证手段落地为可执行探针 `sandbox/tests/network_isolation_probe.py`(非一次性 PoC):先用 R1 绕过通过静态扫描(**断言 1**,确保测的是硬边界而非软防线),再断言公网 1.1.1.1:443 与内网 mysql:3306 / redis:6379 均不可达(**断言 2**;按异常类型区分——`ConnectionRefused` 也算"可达",避免把"端口没开"误判成"隔离生效")。运行:`docker compose exec -T sandbox python - < sandbox/tests/network_isolation_probe.py`;
 - **双向实测**:隔离形态 → 三项全部 BLOCKED、退出码 0;对照组(叠加 dev 覆盖层) → 三项全部 OK-CONNECTED、退出码 1,证明探针有判别力、不是橡皮图章。同时确认 service 侧主路径未被破坏(`sandbox:8190/health` 在 `sandbox-net` 内正常应答;仅 `backend` 网内解析不到 sandbox)。
