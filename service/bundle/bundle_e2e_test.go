@@ -47,7 +47,7 @@ func TestBundleInstallUninstallE2E(t *testing.T) {
 
 	// 预置一个会被 bundle 覆盖的同名 skill（验证快照恢复）。
 	preexisting := "e2e-bundle覆盖探针技能"
-	if existing, err := model.FindActiveSkillByCallerAndName(ctx, "demo-app", preexisting); err != nil {
+	if existing, err := model.FindActiveSkillByAppAndName(ctx, "demo-app", preexisting); err != nil {
 		t.Fatalf("预置查询失败: %v", err)
 	} else if existing != nil {
 		_ = model.SoftDeleteSkillBySkillID(ctx, existing.SkillID)
@@ -72,7 +72,7 @@ func TestBundleInstallUninstallE2E(t *testing.T) {
 	}
 	writeE2EFile(".plugin/plugin.json", `{"name":"e2e-probe-bundle","version":"0.1.0","description":"e2e 探针包"}`)
 	writeE2EFile("agents/e2e-probe-agent.md",
-		"---\nagent_key: e2e-bundle-probe-agent\ncaller_key: demo-app\ndescription: e2e 探针子代理\nmax_tokens_per_run: 5000\n---\n你是 e2e 探针子代理。")
+		"---\nagent_key: e2e-bundle-probe-agent\napp_key: demo-app\ndescription: e2e 探针子代理\nmax_tokens_per_run: 5000\n---\n你是 e2e 探针子代理。")
 	writeE2EFile("skills/cover/SKILL.md",
 		"---\nname: "+preexisting+"\ntriggers: [e2e探针词]\n---\n覆盖后的新正文。")
 	writeE2EFile("skills/fresh/SKILL.md",
@@ -92,7 +92,7 @@ func TestBundleInstallUninstallE2E(t *testing.T) {
 	}
 
 	// 断言 1：agent 落库且带预算字段。
-	agentRow, err := model.GetAgentByCallerAndAgentKey(ctx, "demo-app", "e2e-bundle-probe-agent")
+	agentRow, err := model.GetAgentByAppAndAgentKey(ctx, "demo-app", "e2e-bundle-probe-agent")
 	if err != nil || agentRow == nil {
 		t.Fatalf("bundle agent 未落库: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestBundleInstallUninstallE2E(t *testing.T) {
 	}
 
 	// 断言 2：覆盖的 skill 内容被更新，资源清单记录覆盖前快照。
-	covered, err := model.FindActiveSkillByCallerAndName(ctx, "demo-app", preexisting)
+	covered, err := model.FindActiveSkillByAppAndName(ctx, "demo-app", preexisting)
 	if err != nil || covered == nil {
 		t.Fatalf("覆盖 skill 查询失败: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestBundleInstallUninstallE2E(t *testing.T) {
 		t.Fatalf("卸载失败: %v", err)
 	}
 
-	if agentRow2, err := model.GetAgentByCallerAndAgentKey(ctx, "demo-app", "e2e-bundle-probe-agent"); err != nil {
+	if agentRow2, err := model.GetAgentByAppAndAgentKey(ctx, "demo-app", "e2e-bundle-probe-agent"); err != nil {
 		t.Fatalf("回滚查询 agent 失败: %v", err)
 	} else if agentRow2 != nil {
 		t.Fatal("新建 agent 卸载后应软删（不可见）")
@@ -162,7 +162,7 @@ func TestBundleInstallUninstallE2E(t *testing.T) {
 
 // installForE2E 用测试白名单临时替换配置后走真实 Install（含配置开关检查）。
 // GetReactRuntimeConfig 每次从 CustomConf 拷贝，因此替换全局配置源即可生效。
-func installForE2E(ctx *gin.Context, root, callerKey string, routeValues []string) (*params.BundleListItemResp, error) {
+func installForE2E(ctx *gin.Context, root, appKey string, routeValues []string) (*params.BundleListItemResp, error) {
 	original := conf.CustomConf.LLM.React.Bundle
 	enabled := true
 	conf.CustomConf.LLM.React.Bundle = conf.ReactBundleConfig{
@@ -175,7 +175,7 @@ func installForE2E(ctx *gin.Context, root, callerKey string, routeValues []strin
 
 	installed, err := Install(ctx, &params.BundleInstallReq{
 		Source:      root,
-		CallerKey:   callerKey,
+		AppKey:   appKey,
 		RouteValues: routeValues,
 	}, "e2e-bundle")
 	if err != nil {
@@ -200,7 +200,7 @@ func skillCreateForE2E(ctx *gin.Context, name, description string) (*model.Skill
 		SkillID:     "skill_e2ebundlecover0001",
 		Name:        name,
 		Description: description,
-		CallerKey:   "demo-app",
+		AppKey:   "demo-app",
 		RouteValues: "[]",
 		Status:      status,
 		CreatedBy:   "e2e-bundle",

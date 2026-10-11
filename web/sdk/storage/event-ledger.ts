@@ -14,7 +14,7 @@ export type CachedReactEvent = HistoryEvent;
 /** 会话元数据（存储在 sessions 表，对齐服务端 ReactSessionItem，并补充本地统计） */
 export interface SessionMeta {
   sessionId: string;
-  callerKey: string;
+  appKey: string;
   routeValues: string[];
   type: string;
   title: string;
@@ -64,7 +64,7 @@ function normalizeSessionMeta(
   const now = nowString();
   return {
     sessionId: meta.sessionId,
-    callerKey: meta.callerKey ?? existing?.callerKey ?? '',
+    appKey: meta.appKey ?? existing?.appKey ?? '',
     routeValues: meta.routeValues ?? existing?.routeValues ?? [],
     type: meta.type ?? existing?.type ?? 'chat',
     title: meta.title ?? existing?.title ?? '',
@@ -81,7 +81,7 @@ function normalizeSessionMeta(
 function sessionItemToMeta(item: SessionItem): SessionMeta {
   return normalizeSessionMeta({
     sessionId: item.sessionId,
-    callerKey: item.callerKey,
+    appKey: item.appKey,
     routeValues: item.routeValues ?? [],
     type: item.type,
     title: item.title,
@@ -310,15 +310,15 @@ export class EventLedger {
     });
   }
 
-  /** 获取指定 callerKey 下最近的会话 */
-  async getLatestSession(callerKey: string, routeValues?: string[]): Promise<SessionMeta | null> {
-    const sessions = await this.listSessions(callerKey, routeValues);
+  /** 获取指定 appKey 下最近的会话 */
+  async getLatestSession(appKey: string, routeValues?: string[]): Promise<SessionMeta | null> {
+    const sessions = await this.listSessions(appKey, routeValues);
     return sessions[0] ?? null;
   }
 
-  /** 获取指定 callerKey 下的所有会话，按 updatedAt 倒序 */
+  /** 获取指定 appKey 下的所有会话，按 updatedAt 倒序 */
   async listSessions(
-    callerKey: string,
+    appKey: string,
     routeValues?: string[],
     filters?: Pick<SessionListParams, 'type' | 'keyword'>,
   ): Promise<SessionMeta[]> {
@@ -332,7 +332,7 @@ export class EventLedger {
         const all = (request.result || []) as SessionMeta[];
         const keyword = filters?.keyword?.trim();
         const matched = all.filter((session) => {
-          if (session.callerKey !== callerKey) return false;
+          if (session.appKey !== appKey) return false;
           if (routeValues && routeValues.length > 0 && !sameRouteValues(session.routeValues, routeValues)) {
             return false;
           }
@@ -361,9 +361,9 @@ export class EventLedger {
     });
   }
 
-  /** 清除指定 callerKey 和 routeValues 作用域下的全部本地会话 */
-  async clearSessions(callerKey: string, routeValues?: string[]): Promise<void> {
-    const sessions = await this.listSessions(callerKey, routeValues);
+  /** 清除指定 appKey 和 routeValues 作用域下的全部本地会话 */
+  async clearSessions(appKey: string, routeValues?: string[]): Promise<void> {
+    const sessions = await this.listSessions(appKey, routeValues);
     await Promise.all(sessions.map((session) => this.clearSession(session.sessionId)));
   }
 

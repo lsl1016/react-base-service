@@ -31,12 +31,32 @@ type webAccessOverrideJSON struct {
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
+// mergeWebAccessOverrideJSON 把两层联网覆盖合并（top 覆盖 base 非 nil 字段）。
+func mergeWebAccessOverrideJSON(base, top *webAccessOverrideJSON) *webAccessOverrideJSON {
+	merged := &webAccessOverrideJSON{}
+	if base != nil {
+		*merged = *base
+	}
+	if top != nil && top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	return merged
+}
+
 // GetWebSetting 返回联网能力的生效视图：effective（合并 yaml/默认值后的引擎实际消费口径，
 // 两工具共用同一开关值）+ 逐字段 source + DB 覆盖原文。
-func GetWebSetting(ctx *gin.Context) (*params.WebSettingResp, error) {
-	override, updatedBy, updatedAt, err := loadWebAccessOverride(ctx)
+func GetWebSetting(ctx *gin.Context, appKey string) (*params.WebSettingResp, error) {
+	override, updatedBy, updatedAt, err := loadWebAccessOverride(ctx, appKey)
 	if err != nil {
 		return nil, err
+	}
+	// app 维度读取视图：在全局覆盖基线上叠加 app 行（app > 全局 > yaml），与引擎生效口径一致。
+	if strings.TrimSpace(appKey) != "" {
+		globalOverride, _, _, err := loadWebAccessOverride(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		override = mergeWebAccessOverrideJSON(globalOverride, override)
 	}
 	return buildWebSettingResp(override, updatedBy, updatedAt), nil
 }
@@ -44,11 +64,11 @@ func GetWebSetting(ctx *gin.Context) (*params.WebSettingResp, error) {
 // UpdateWebSetting 更新联网总开关（同时作用于 web_fetch 与 web_search）：校验 → 合并现状
 // → 整行写回 → 立即刷新覆盖快照（本进程下一个 run 即生效）。clearFields 用于把开关清回
 // yaml/默认值（两工具一并回落各自的 yaml 开关）。
-func UpdateWebSetting(ctx *gin.Context, req *params.UpdateWebSettingReq, userName string) (*params.WebSettingResp, error) {
+func UpdateWebSetting(ctx *gin.Context, appKey string, req *params.UpdateWebSettingReq, userName string) (*params.WebSettingResp, error) {
 	if err := validateWebAccessUpdate(req.ClearFields); err != nil {
 		return nil, err
 	}
-	current, _, _, err := loadWebAccessOverride(ctx)
+	current, _, _, err := loadWebAccessOverride(ctx, appKey)
 	if err != nil {
 		return nil, err
 	}
@@ -60,6 +80,7 @@ func UpdateWebSetting(ctx *gin.Context, req *params.UpdateWebSettingReq, userNam
 	}
 	if err := model.UpsertRuntimeSetting(ctx, &model.RuntimeSetting{
 		SettingKey: SettingKeyWeb,
+		AppKey:     strings.TrimSpace(appKey),
 		ValueJSON:  string(valueJSON),
 		UpdatedBy:  userName,
 	}); err != nil {
@@ -76,8 +97,8 @@ func UpdateWebSetting(ctx *gin.Context, req *params.UpdateWebSettingReq, userNam
 }
 
 // loadWebAccessOverride 读 DB 覆盖原文；行缺失/JSON 解析失败按「无覆盖」处理并告警。
-func loadWebAccessOverride(ctx *gin.Context) (override *webAccessOverrideJSON, updatedBy, updatedAt string, err error) {
-	row, err := model.GetRuntimeSettingByKey(ctx, SettingKeyWeb)
+func loadWebAccessOverride(ctx *gin.Context, appKey string) (override *webAccessOverrideJSON, updatedBy, updatedAt string, err error) {
+	row, err := model.GetRuntimeSettingByKeyAndApp(ctx, SettingKeyWeb, strings.TrimSpace(appKey))
 	if err != nil {
 		return nil, "", "", err
 	}

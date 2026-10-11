@@ -203,7 +203,7 @@
   display: none;
 }
 
-.rp-caller-actions-row {
+.rp-app-actions-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -214,20 +214,20 @@
   background: rgba(248, 250, 252, 0.88);
 }
 
-.rp-caller-actions-row > div:first-child {
+.rp-app-actions-row > div:first-child {
   min-width: 0;
 }
 
-.rp-caller-actions {
+.rp-app-actions {
   flex: 0 0 auto;
   flex-wrap: nowrap;
 }
 
-.rp-caller-actions .rp-button {
+.rp-app-actions .rp-button {
   white-space: nowrap;
 }
 
-.rp-caller-actions-description {
+.rp-app-actions-description {
   margin-top: 4px;
   color: var(--muted);
   font-size: 12px;

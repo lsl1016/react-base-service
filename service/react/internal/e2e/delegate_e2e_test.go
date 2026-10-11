@@ -30,7 +30,7 @@ tools: []
 ---
 你是回声计算代理。收到任务后不要调用任何工具、不要提问，直接给出计算结果，并用固定句式回复：「这是子代理 echo-agent 的结论：<答案>」。`
 
-// e2eModelKey e2e 运行使用的模型种类：run 侧 API key 按 caller 解析（tblLlmApiKey），
+// e2eModelKey e2e 运行使用的模型种类：run 侧 API key 按 app 解析（tblLlmApiKey），
 // 与模型种类解耦，因此默认 claude 在只有 deepseek key 的环境会 401。
 // 可用 REACT_E2E_MODEL_KEY 覆盖（如 deepseek），须与 demo-app 注册 key 的平台匹配。
 func e2eModelKey() string {
@@ -45,7 +45,7 @@ func e2eModelKey() string {
 //	REACT_DELEGATE_E2E=1 go test ./service/react/internal/e2e/ -run TestDelegateAgentE2E -v -timeout 300s
 //
 // 前置：react-base-mysql 容器（3327）已建 tblLlmAgent 并对 tblLlmReactRun 加列；
-// caller=demo-app 与其 apikey 已注册；custom.yaml subagent.enabled=true。
+// app=demo-app 与其 apikey 已注册；custom.yaml subagent.enabled=true。
 // 模型种类默认 claude（须与 demo-app 注册 key 的平台匹配），可用 REACT_E2E_MODEL_KEY 覆盖。
 // 验证点：委派执行、子 run 落库（parent_run_id/agent_path/模型继承）、事件 agentPath 冒泡、
 // 父子终态顺序、历史隔离（外层历史排除子消息）、回放接口还原嵌套事件。
@@ -79,7 +79,7 @@ func TestDelegateAgentE2E(t *testing.T) {
 	}
 
 	payload := params.ReactRunPayload{
-		CallerKey:   "demo-app",
+		AppKey:   "demo-app",
 		RouteValues: []string{},
 		Type:        model.ReactSessionTypeChat,
 		UserPrompt:  "请立即调用 delegate_agent 工具，把任务「计算 17*23 的值」委派给子代理 echo-agent（agent_key: echo-agent），拿到结论后向用户转述子代理的回复。不要自己计算。",
@@ -215,7 +215,7 @@ func TestDelegateAgentE2E(t *testing.T) {
 // importEchoAgent 导入（或重置）e2e 用子 Agent 定义：model_key 留空 = 继承父 run 模型。
 func importEchoAgent(t *testing.T, ctx *gin.Context) {
 	t.Helper()
-	if existing, err := model.GetAgentByCallerAndAgentKey(ctx, "demo-app", "echo-agent"); err != nil {
+	if existing, err := model.GetAgentByAppAndAgentKey(ctx, "demo-app", "echo-agent"); err != nil {
 		t.Fatalf("查询已有 agent 失败: %v", err)
 	} else if existing != nil {
 		if _, err := agentService.DeleteAgent(ctx, existing.AgentID); err != nil {
@@ -224,7 +224,7 @@ func importEchoAgent(t *testing.T, ctx *gin.Context) {
 	}
 	enabled := 1
 	agent, err := agentService.ImportFromMarkdown(ctx, &params.ImportAgentReq{
-		CallerKey:   "demo-app",
+		AppKey:   "demo-app",
 		RouteValues: []string{},
 		Status:      &enabled,
 		Markdown:    e2eAgentMarkdown,

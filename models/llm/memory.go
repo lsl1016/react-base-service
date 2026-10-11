@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	// MemoryOwnerTypeCaller 记忆归属为 caller 维度：该调用方全部会话可见。
-	MemoryOwnerTypeCaller = "caller"
-	// MemoryOwnerTypeCallerUser 记忆归属为 caller+user 维度：仅该调用方下该用户的会话可见。
-	MemoryOwnerTypeCallerUser = "caller_user"
+	// MemoryOwnerTypeApp 记忆归属为 app 维度：该调用方全部会话可见。
+	MemoryOwnerTypeApp = "app"
+	// MemoryOwnerTypeAppUser 记忆归属为 app+user 维度：仅该调用方下该用户的会话可见。
+	MemoryOwnerTypeAppUser = "app_user"
 
 	// MemoryLayerResident 常驻层：随 system 前缀全文注入。
 	MemoryLayerResident = "resident"
@@ -95,14 +95,14 @@ type MemoryOwner struct {
 	OwnerKey  string
 }
 
-// BuildCallerMemoryOwner 构造 caller 维度记忆归属。
-func BuildCallerMemoryOwner(callerKey string) MemoryOwner {
-	return MemoryOwner{OwnerType: MemoryOwnerTypeCaller, OwnerKey: callerKey}
+// BuildAppMemoryOwner 构造 app 维度记忆归属。
+func BuildAppMemoryOwner(appKey string) MemoryOwner {
+	return MemoryOwner{OwnerType: MemoryOwnerTypeApp, OwnerKey: appKey}
 }
 
-// BuildCallerUserMemoryOwner 构造 caller+user 维度记忆归属。
-func BuildCallerUserMemoryOwner(callerKey, userName string) MemoryOwner {
-	return MemoryOwner{OwnerType: MemoryOwnerTypeCallerUser, OwnerKey: callerKey + "|" + userName}
+// BuildAppUserMemoryOwner 构造 app+user 维度记忆归属。
+func BuildAppUserMemoryOwner(appKey, userName string) MemoryOwner {
+	return MemoryOwner{OwnerType: MemoryOwnerTypeAppUser, OwnerKey: appKey + "|" + userName}
 }
 
 // MemoryItem 长期记忆条目：一条原子事实，逻辑唯一键 (owner_type, owner_key, item_key)。

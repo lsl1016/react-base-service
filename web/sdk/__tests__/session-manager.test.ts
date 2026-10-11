@@ -28,7 +28,7 @@ describe('SessionManager', () => {
         errMsg: 'succ',
         data: {
           sessions: [
-            { sessionId: 's1', callerKey: 'test', type: 'chat', title: 'Session 1', state: 'active', createdAt: '', updatedAt: '' },
+            { sessionId: 's1', appKey: 'test', type: 'chat', title: 'Session 1', state: 'active', createdAt: '', updatedAt: '' },
           ],
           total: 1,
           page: 1,
@@ -39,7 +39,7 @@ describe('SessionManager', () => {
 
     const manager = new SessionManager('/react', mockFetch as any);
     const result = await manager.listSessions({
-      callerKey: 'test',
+      appKey: 'test',
       routeValues: ['route_1'],
       type: 'chat',
       keyword: 'Session',
@@ -49,7 +49,7 @@ describe('SessionManager', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse((mockFetch as any).mock.calls[0][1].body)).toEqual({
-      callerKey: 'test',
+      appKey: 'test',
       routeValues: ['route_1'],
       type: 'chat',
       keyword: 'Session',
@@ -124,7 +124,7 @@ describe('SessionManager', () => {
       throughRunId: 'run_cut',
       inclusive: true,
       title: '分叉标题',
-      callerKey: 'test',
+      appKey: 'test',
       routeValues: ['r1'],
     });
 
@@ -134,7 +134,7 @@ describe('SessionManager', () => {
       throughRunId: 'run_cut',
       inclusive: true,
       title: '分叉标题',
-      callerKey: 'test',
+      appKey: 'test',
       routeValues: ['r1'],
     });
     expect(result.sessionId).toBe('session_new');
@@ -154,7 +154,7 @@ describe('SessionManager', () => {
     const result = await manager.renameSession({
       sessionId: 's1',
       title: '  新标题  ',
-      callerKey: 'test',
+      appKey: 'test',
       routeValues: [],
     });
 
@@ -162,7 +162,7 @@ describe('SessionManager', () => {
     expect(JSON.parse((mockFetch as any).mock.calls[0][1].body)).toEqual({
       sessionId: 's1',
       title: '  新标题  ',
-      callerKey: 'test',
+      appKey: 'test',
       routeValues: [],
     });
     expect(result.renamed).toBe(true);
@@ -179,21 +179,21 @@ describe('SessionManager', () => {
 
     const manager = new SessionManager('/react', mockFetch as any);
 
-    await expect(manager.listSessions({ callerKey: 'test' })).rejects.toThrow('HTTP 500');
+    await expect(manager.listSessions({ appKey: 'test' })).rejects.toThrow('HTTP 500');
   });
 
   it('should throw on API error', async () => {
     const mockFetch = createMockFetch({
       '/react/session/list': {
         errNo: 1001,
-        errMsg: 'Invalid callerKey',
+        errMsg: 'Invalid appKey',
         data: null,
       },
     });
 
     const manager = new SessionManager('/react', mockFetch as any);
 
-    await expect(manager.listSessions({ callerKey: 'bad' })).rejects.toThrow('API Error [1001]');
+    await expect(manager.listSessions({ appKey: 'bad' })).rejects.toThrow('API Error [1001]');
   });
 
   it('should strip trailing slash from baseUrl', async () => {
@@ -206,7 +206,7 @@ describe('SessionManager', () => {
     });
 
     const manager = new SessionManager('/react/', mockFetch as any);
-    await manager.listSessions({ callerKey: 'test' });
+    await manager.listSessions({ appKey: 'test' });
 
     const calledUrl = (mockFetch as any).mock.calls[0][0];
     expect(calledUrl).toBe('/react/session/list');
@@ -231,7 +231,7 @@ describe('SessionManager', () => {
     vi.stubGlobal('fetch', nativeLikeFetch);
 
     const manager = new SessionManager('/react');
-    await manager.listSessions({ callerKey: 'test' });
+    await manager.listSessions({ appKey: 'test' });
 
     expect(nativeLikeFetch).toHaveBeenCalledTimes(1);
   });

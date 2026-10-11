@@ -4,7 +4,7 @@
 
 > 最近更新：2026-10-05（对照 readOnly 同步 / 工作区共享化 / 孤儿工具兜底清理 / repotools 符号与结构化检索等实现校准）
 
-> 项目同时是 MCP **服务端**（对外网关）：`tblLlmTool` 的 http 工具按 caller 作用域经 `/react-base-service/mcp` 暴露，含 Bearer 应用凭证鉴权、输出投影+字段描述渲染与调用审计——详见 `docs/system/mcp-gateway.md`。
+> 项目同时是 MCP **服务端**（对外网关）：`tblLlmTool` 的 http 工具按 app 作用域经 `/react-base-service/mcp` 暴露，含 Bearer 应用凭证鉴权、输出投影+字段描述渲染与调用审计——详见 `docs/system/mcp-gateway.md`。
 
 ## 1. MCP 客户端实现边界
 
@@ -43,7 +43,7 @@
 服务启动 → 拉起子进程 + initialize → tools/list
         → upsert tblLlmTool（toolId=mcp_<server>_<tool>，toolType=mcp，
           config={mcpServer,mcpTool,inputSchema[,outputSchema][,readOnly]}，
-          挂 caller_key，route_values="[]"）
+          挂 app_key，route_values="[]"）
 模型侧 → 工具索引摘要（system 前缀）→ get_tool 加载参数 → execute_tool
         → 路由到 tools/call → 文本内容回填（大结果自动走 resultRef 分片）
 ```
@@ -52,7 +52,7 @@
 
 - **同步时机有三种**：启动时一次性、手动触发（「MCP 连接」面板**刷新**（`/mcp/refresh`，逐连接重连并同步）、单连接「测试连接」（`/mcp/connect`）或重启服务）、以及**工作区挂载时**（`ws_` 服务器每次 `Load` 都重新同步，见 §3）；
 - 每次同步把 `tools/list` 的最新结果落库：更新工具描述与入参/出参 schema（`outputSchema` 仅在服务器声明时写入 config），服务器端已下架的工具标记停用（`status=0`，不软删，重新出现后下次同步自动恢复）；
-- **连接检测失败即整体下线**：刷新/测试连接/启动装配任一环节失败，该服务器全部 caller 的注册工具标记停用（`status=0`，不软删），不再进入会话工具索引；恢复连接后重新检测即自动恢复；
+- **连接检测失败即整体下线**：刷新/测试连接/启动装配任一环节失败，该服务器全部 app 的注册工具标记停用（`status=0`，不软删），不再进入会话工具索引；恢复连接后重新检测即自动恢复；
 - **连接停用/删除则软删**其全部注册工具；软删行在同名服务器重新接入（重新启用/同名重建）时自动复活（唯一键约束下的恢复式写入）；
 - **启动兜底清理孤儿**（`CleanupOrphanedRegistryTools`，Bootstrap 末尾执行一次）：工具的 `config.mcpServer` 既不在 yaml 静态声明、也没有启用中的 `tblLlmMcpServer` 记录 → 软删。覆盖 yaml 移除服务器、清理失败的残留，以及服务异常退出遗留的 `ws_` 工具副本（`ws_` 无 DB 行，run 已终态后必成孤儿）；
 - **readOnly 标记**：`kind=repo` 的服务器（静态与 `ws_` 动态）同步注册表时自动在工具 config 写 `readOnly:true`（自研只读检索适配器，无外部副作用）；http/http_sdk 工具语义未知，保守不标。消费侧三层：readOnly 工具视为 ConcurrentSafe（同轮并发）+ 无副作用低风险；只读执行域内非 readOnly 工具直接拒绝；`@readonly` 子代理白名单 token 依赖此标记硬执行；
@@ -63,7 +63,7 @@
 
 ```yaml
 mcp:
-  caller_key: demo-app        # 工具挂载的调用方；留空或不配 mcp 段 = 不启用
+  app_key: demo-app        # 工具挂载的调用方；留空或不配 mcp 段 = 不启用
   allow_private_endpoint: false  # SSRF 放行开关；仅本机开发/演示可开
   servers:
     - name: repo              # 字母/数字/_/-，≤32 字符，用于工具名前缀
@@ -116,12 +116,12 @@ mcp:
 
 静态 yaml 声明之外，代码仓库还可以**按 run 动态挂载**：模型（主 Agent 或 code-agent 子代理）调用内置 meta tool `load_runtime_code`，由 workspace 模块完成「远程仓库 → 本地 worktree → 临时 repo MCP 服务器」的全链路。详见 `docs/system/workspace.md`，此处列 MCP 侧边界：
 
-- **生命周期是引用计数管理的临时实例，无 DB 行**：Load 时经静态白名单（`llm.react.workspace.resolvers`，service+env → repo_url+ref）解析 → bare mirror `git clone --mirror`/`fetch --prune` → `rev-parse` 定位 commit（40 位哈希校验）→ `git worktree add --detach` → 拉起 repo-mcp 子进程；run 到达终态统一 `ReleaseRun`，caller 计数归零清工具副本，总归零才移除子进程与 worktree；进程重启时首帧全清孤儿目录；
-- **(service, commit) 粒度全局共享**：同名同 commit 的 worktree 与子进程全局仅一份，多 run/多 caller 复用同一实例，各自持有带 `__<callerKey>` 后缀的工具副本；热路径零 git 操作、零 MCP 拉起；
+- **生命周期是引用计数管理的临时实例，无 DB 行**：Load 时经静态白名单（`llm.react.workspace.resolvers`，service+env → repo_url+ref）解析 → bare mirror `git clone --mirror`/`fetch --prune` → `rev-parse` 定位 commit（40 位哈希校验）→ `git worktree add --detach` → 拉起 repo-mcp 子进程；run 到达终态统一 `ReleaseRun`，app 计数归零清工具副本，总归零才移除子进程与 worktree；进程重启时首帧全清孤儿目录；
+- **(service, commit) 粒度全局共享**：同名同 commit 的 worktree 与子进程全局仅一份，多 run/多 app 复用同一实例，各自持有带 `__<appKey>` 后缀的工具副本；热路径零 git 操作、零 MCP 拉起；
 - **命名**：`ws_<service>_<commit[:8]>`（受 32 字符 server 名上限约束，service 名须 ≤20 字符）；名字带 commit 天然唯一，避开同名替换语义，多 run 并发加载互不顶替；
 - **同步**：每次挂载执行 `SyncServerRegistryScoped`（primary=false），工具写 `tblLlmTool` 但不写 `tblLlmMcpServer`——因此不出现在「MCP 连接」面板；kind 判定不查库，走客户端可选接口断言 `Client.Kind()`；readOnly 标记靠每次挂载重新同步刷新存量行 config；同步失败仅告警不阻断；
 - **git 安全面**：service/env 字符白名单 `^[a-zA-Z0-9_-]+$`、ref 白名单 `^[a-zA-Z0-9._/\-]+$`、git 子命令白名单（clone/fetch/worktree/rev-parse）、可执行文件为编译期常量不经 shell、单命令超时 kill；
-- **管理视图**：`POST /react-base-service/react/workspace/active` 按实例聚合返回 service/commit/路径/工具数/caller 与 run 计数。
+- **管理视图**：`POST /react-base-service/react/workspace/active` 按实例聚合返回 service/commit/路径/工具数/app 与 run 计数。
 
 ## 4. 已评估、未实现的扩展路径
 
@@ -141,22 +141,22 @@ HTTP MCP 连接的来源有三：`custom.yaml` 静态声明、管理接口动态
 
 | 接口 | 说明 |
 |---|---|
-| `POST /react-base-service/react/mcp/list` | 列出 caller 下的连接（含来源 yaml/db、运行状态、最近检测结果、工具数） |
+| `POST /react-base-service/react/mcp/list` | 列出 app 下的连接（含来源 yaml/db、运行状态、最近检测结果、工具数） |
 | `POST /react-base-service/react/mcp/detail` | 单个连接详情 + 已同步进注册表的工具清单 |
-| `POST /react-base-service/react/mcp/create` | 新增：`rawConfig` 粘贴标准 mcpServers JSON（`{url, headers}`，外层 `servers` key 亦可，可一次多条）或结构化字段（`name/kind/endpoint/headers/timeoutMs/boundCallers/description/status`）；**结构化形态仅支持 `kind: http` 与 `kind: repo`**，`http_sdk` 只能经 yaml 声明 |
-| `POST /react-base-service/react/mcp/update` | 更新端点（仅 `kind: http` 可改）/请求头/超时/描述/绑定 caller/启停；更新后自动重连重同步，停用会下线其全部注册工具 |
+| `POST /react-base-service/react/mcp/create` | 新增：`rawConfig` 粘贴标准 mcpServers JSON（`{url, headers}`，外层 `servers` key 亦可，可一次多条）或结构化字段（`name/kind/endpoint/headers/timeoutMs/boundApps/description/status`）；**结构化形态仅支持 `kind: http` 与 `kind: repo`**，`http_sdk` 只能经 yaml 声明 |
+| `POST /react-base-service/react/mcp/update` | 更新端点（仅 `kind: http` 可改）/请求头/超时/描述/绑定 app/启停；更新后自动重连重同步，停用会下线其全部注册工具 |
 | `POST /react-base-service/react/mcp/delete` | 删除连接并清理其注册工具 |
 | `POST /react-base-service/react/mcp/connect` | 连接测试：拉起客户端 + tools/list + 写回检测结果；失败时该连接全部注册工具下线 |
-| `POST /react-base-service/react/mcp/refresh` | 批量刷新：对 caller 下全部启用连接（含 yaml 静态声明）逐台重连重同步，工具描述/入参出参 schema/上下线状态落库，返回逐台结果摘要（source/activeToolCount/skipped；停用连接跳过） |
+| `POST /react-base-service/react/mcp/refresh` | 批量刷新：对 app 下全部启用连接（含 yaml 静态声明）逐台重连重同步，工具描述/入参出参 schema/上下线状态落库，返回逐台结果摘要（source/activeToolCount/skipped；停用连接跳过） |
 
 行为与边界：
 
-- 工具同步：连接成功后 `tools/list` 结果 upsert 进 `tblLlmTool`（`tool_type=mcp`，toolId=`mcp_<server>_<tool>`，绑定 caller 副本追加 `__<callerKey>` 后缀），ReAct 运行时经既有 get_tool/execute_tool 两段式加载使用，引擎无感知；
+- 工具同步：连接成功后 `tools/list` 结果 upsert 进 `tblLlmTool`（`tool_type=mcp`，toolId=`mcp_<server>_<tool>`，绑定 app 副本追加 `__<appKey>` 后缀），ReAct 运行时经既有 get_tool/execute_tool 两段式加载使用，引擎无感知；
 - **刷新语义**（「MCP 连接」面板刷新按钮 → `/mcp/refresh`）：逐台重连并把工具的描述、入参/出参 schema 与上下线状态写回 `tblLlmTool`——连接正常的恢复/更新工具行；失联的整台下线（`status=0`）；服务器端已下架的单独下线。会话工具索引只取 `status=1`，因此失联服务器的工具不会再被加载；
 - 请求头：`headers`（如 `Authorization: Bearer ...`）附加到每个 HTTP 请求，但不允许覆盖协议自身管理的头（Host/Content-Type/Content-Length/Accept/Mcp-Session-Id）；上限 4KB；**仅 `kind: http` 生效**；
 - 超时：结构化配置归一化为默认 30000ms、上限 300000ms；
 - SSRF：HTTP 端点仍走 `validateEndpoint` 校验（拒绝环回/私网/保留地址）；本机开发/演示环境可用 `mcp.allow_private_endpoint: true` 显式放行（生产必须保持关闭）；
 - command/args 形式（npx/uvx）明确拒绝：stdio 仅开放代码内适配器白名单（`kind=repo`）；
-- **caller 绑定**：`boundCallers` 把连接绑到属主之外的多个 caller，工具同步到每个绑定 caller 名下（toolId 追加 `__<callerKey>` 后缀避开全局唯一键，工具名不变）；解绑立即清理该 caller 的工具副本；caller 删除时级联清理绑定行；详情/列表返回 `boundCallers`（属主在首位）；
-- 服务重启时按表内启用记录自动重连并同步（`mcpclient.Bootstrap` 内 `bootstrapDBServers`，含绑定 caller 展开），随后执行孤儿工具兜底清理（见 §1.4）；
+- **app 绑定**：`boundApps` 把连接绑到属主之外的多个 app，工具同步到每个绑定 app 名下（toolId 追加 `__<appKey>` 后缀避开全局唯一键，工具名不变）；解绑立即清理该 app 的工具副本；app 删除时级联清理绑定行；详情/列表返回 `boundApps`（属主在首位）；
+- 服务重启时按表内启用记录自动重连并同步（`mcpclient.Bootstrap` 内 `bootstrapDBServers`，含绑定 app 展开），随后执行孤儿工具兜底清理（见 §1.4）；
 - 停用/删除会软删除注册工具；重新启用/同名重建会复活软删除行（唯一键约束下的恢复式写入）。

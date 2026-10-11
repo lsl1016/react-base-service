@@ -12,25 +12,25 @@ import (
 func TestRuntimeScopePrefersUserOwnerForWrites(t *testing.T) {
 	scope := DefaultRuntime().ResolveScope("demo-app", "alice", true)
 	if len(scope.Owners) != 2 {
-		t.Fatalf("expected caller + caller_user owners, got %d", len(scope.Owners))
+		t.Fatalf("expected app + app_user owners, got %d", len(scope.Owners))
 	}
-	if scope.WriteOwner.OwnerType != model.MemoryOwnerTypeCallerUser {
-		t.Fatalf("expected caller_user write owner, got %s", scope.WriteOwner.OwnerType)
+	if scope.WriteOwner.OwnerType != model.MemoryOwnerTypeAppUser {
+		t.Fatalf("expected app_user write owner, got %s", scope.WriteOwner.OwnerType)
 	}
 	if _, ok := scope.AllowedKeys[OwnerScopeKey(scope.Owners[0].OwnerType, scope.Owners[0].OwnerKey)]; !ok {
-		t.Fatalf("caller scope should remain visible")
+		t.Fatalf("app scope should remain visible")
 	}
 }
 
 func TestMergeRuntimeItemsPrefersUserScope(t *testing.T) {
 	base := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 	items := []model.MemoryItem{
-		{ID: 1, ItemKey: "same", OwnerType: model.MemoryOwnerTypeCaller, UpdatedAt: base.Add(time.Hour)},
-		{ID: 2, ItemKey: "same", OwnerType: model.MemoryOwnerTypeCallerUser, UpdatedAt: base},
+		{ID: 1, ItemKey: "same", OwnerType: model.MemoryOwnerTypeApp, UpdatedAt: base.Add(time.Hour)},
+		{ID: 2, ItemKey: "same", OwnerType: model.MemoryOwnerTypeAppUser, UpdatedAt: base},
 	}
 	merged := MergeRuntimeItems(items)
 	if len(merged) != 1 || merged[0].ID != 2 {
-		t.Fatalf("caller_user should override caller item, got %+v", merged)
+		t.Fatalf("app_user should override app item, got %+v", merged)
 	}
 }
 

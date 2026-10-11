@@ -134,18 +134,18 @@ var ErrorReactPlaygroundForbidden = base.Error{
 	ErrMsg: "无权访问 ReAct playground，请联系管理员开通权限",
 }
 
-// Caller 相关错误 6010xxx
-var ErrorCallerNotFound = base.Error{
+// App 相关错误 6010xxx
+var ErrorAppNotFound = base.Error{
 	ErrNo:  6010001,
-	ErrMsg: "调用方不存在: %s",
+	ErrMsg: "应用(APP)不存在: %s",
 }
-var ErrorCallerRegFailed = base.Error{
+var ErrorAppRegFailed = base.Error{
 	ErrNo:  6010002,
-	ErrMsg: "调用方注册失败: %s",
+	ErrMsg: "应用(APP)注册失败: %s",
 }
-var ErrorCallerDuplicate = base.Error{
+var ErrorAppDuplicate = base.Error{
 	ErrNo:  6010003,
-	ErrMsg: "调用方已存在: %s",
+	ErrMsg: "应用(APP)已存在: %s",
 }
 
 // Skill 相关错误 6020xxx
@@ -167,7 +167,7 @@ var ErrorSkillExecFailed = base.Error{
 }
 var ErrorSkillDefaultExists = base.Error{
 	ErrNo:  6020005,
-	ErrMsg: "该路由下已存在兜底技能，不允许重复添加: callerKey=%s, routeValues=%s",
+	ErrMsg: "该路由下已存在兜底技能，不允许重复添加: appKey=%s, routeValues=%s",
 }
 var ErrorSkillImportInvalid = base.Error{
 	ErrNo:  6020006,
@@ -193,7 +193,7 @@ var ErrorToolExecTimeout = base.Error{
 }
 var ErrorToolDuplicate = base.Error{
 	ErrNo:  6030005,
-	ErrMsg: "同一调用方下工具名称已存在: callerKey=%s, name=%s",
+	ErrMsg: "同一调用方下工具名称已存在: appKey=%s, name=%s",
 }
 var ErrorToolUserPolicyNotFound = base.Error{
 	ErrNo:  6030006,
@@ -229,7 +229,7 @@ var ErrorApiKeyNotFound = base.Error{
 }
 var ErrorApiKeyDuplicate = base.Error{
 	ErrNo:  6050002,
-	ErrMsg: "该路由下已存在API Key: callerKey=%s, routeValues=%s",
+	ErrMsg: "该路由下已存在API Key: appKey=%s, routeValues=%s",
 }
 
 // 澄清相关错误 6070xxx
@@ -249,7 +249,7 @@ var ErrorSystemPromptNotFound = base.Error{
 }
 var ErrorSystemPromptDuplicate = base.Error{
 	ErrNo:  6060002,
-	ErrMsg: "该路由下已存在系统提示词: callerKey=%s, routeValues=%s",
+	ErrMsg: "该路由下已存在系统提示词: appKey=%s, routeValues=%s",
 }
 
 // 用户模型相关错误 6080xxx
@@ -297,7 +297,7 @@ var ErrorConnectionNotFound = base.Error{
 }
 var ErrorConnectionDuplicate = base.Error{
 	ErrNo:  6080011,
-	ErrMsg: "同一 caller+路由下已存在连接: %s",
+	ErrMsg: "同一 app+路由下已存在连接: %s",
 }
 var ErrorConnectionProtocolInvalid = base.Error{
 	ErrNo:  6080012,
@@ -339,7 +339,7 @@ var ErrorAgentNotFound = base.Error{
 }
 var ErrorAgentDuplicate = base.Error{
 	ErrNo:  6090002,
-	ErrMsg: "同一调用方下 agent_key 已存在: callerKey=%s, agentKey=%s",
+	ErrMsg: "同一调用方下 agent_key 已存在: appKey=%s, agentKey=%s",
 }
 var ErrorAgentKeyInvalid = base.Error{
 	ErrNo:  6090003,

@@ -12,7 +12,7 @@ import (
 
 // RegisterApiKey 注册 API Key
 // @Summary      注册 API Key
-// @Description  在指定 caller 的 routeValues 下注册一个 API Key，同一 caller+routeValues 组合不允许重复。
+// @Description  在指定 app 的 routeValues 下注册一个 API Key，同一 app+routeValues 组合不允许重复。
 // @Tags         apikey
 // @Accept       json
 // @Produce      json
@@ -97,7 +97,7 @@ func DeleteApiKey(ctx *gin.Context) {
 
 // ListApiKeys 查询 API Key 列表
 // @Summary      查询 API Key 列表
-// @Description  根据 callerKey 查询该调用方下的 API Key 列表。
+// @Description  根据 appKey 查询该调用方下的 API Key 列表。
 // @Tags         apikey
 // @Accept       json
 // @Produce      json
@@ -113,7 +113,7 @@ func ListApiKeys(ctx *gin.Context) {
 		return
 	}
 
-	keys, err := apikeyService.ListByCallerAndRoute(ctx, req.CallerKey, req.RouteValues)
+	keys, err := apikeyService.ListByAppAndRoute(ctx, req.AppKey, req.RouteValues)
 	if err != nil {
 		zlog.Errorf(ctx, "[ApiKey.List] 查询失败: %v", err)
 		components.RenderJsonFail(ctx, err)

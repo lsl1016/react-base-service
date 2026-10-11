@@ -26,12 +26,12 @@ import (
 func forkFixture() (*model.ReactSession, []model.ReactRun, []model.ReactMessage) {
 	base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	source := &model.ReactSession{
-		SessionID: "session_src", UserName: "u1", CallerKey: "c1",
+		SessionID: "session_src", UserName: "u1", AppKey: "c1",
 		RouteValues: `["r1"]`, SessionType: "chat", Title: "连接池排查", State: model.ReactSessionStateActive,
 	}
 	mkRun := func(id string, offset int, state, parent, agentPath string) model.ReactRun {
 		return model.ReactRun{
-			RunID: id, SessionID: source.SessionID, UserName: "u1", CallerKey: "c1",
+			RunID: id, SessionID: source.SessionID, UserName: "u1", AppKey: "c1",
 			RouteValues: source.RouteValues, State: state, MaxSteps: 10,
 			ParentRunID: parent, AgentPath: agentPath, CreatedAt: base.Add(time.Duration(offset) * time.Minute),
 		}
@@ -45,7 +45,7 @@ func forkFixture() (*model.ReactSession, []model.ReactRun, []model.ReactMessage)
 	}
 	mkMsg := func(id, runID string, offset int, seq int, role, msgType, content string) model.ReactMessage {
 		return model.ReactMessage{
-			MessageID: id, RunID: runID, SessionID: source.SessionID, UserName: "u1", CallerKey: "c1",
+			MessageID: id, RunID: runID, SessionID: source.SessionID, UserName: "u1", AppKey: "c1",
 			Seq: seq, StepIndex: 0, Role: role, MessageType: msgType, ContentJSON: content,
 			CreatedAt: base.Add(time.Duration(offset)*time.Minute + time.Duration(seq)*time.Second),
 		}
@@ -369,7 +369,7 @@ func TestForkReactSessionE2E(t *testing.T) {
 	baseReq := params.ReactSessionForkReq{
 		SessionID:        "session_e2e_fork_src",
 		ThroughMessageID: "msg_2_2",
-		CallerKey:        "c1",
+		AppKey:        "c1",
 		RouteValues:      []string{"r1"},
 	}
 
@@ -386,7 +386,7 @@ func TestForkReactSessionE2E(t *testing.T) {
 
 	// 2. 归属不匹配拒绝 / 跨会话分叉点拒绝 / 首个 run 前 fork 拒绝
 	wrongReq := baseReq
-	wrongReq.CallerKey = "other-caller"
+	wrongReq.AppKey = "other-app"
 	if _, err := ForkReactSession(ctx, wrongReq); err == nil {
 		t.Fatalf("归属不匹配应拒绝")
 	}
@@ -450,7 +450,7 @@ func TestForkReactSessionE2E(t *testing.T) {
 	// 3.5 run 级分叉（前端轮次入口）：inclusive=false 回到 run3 提问前 → 只保留 run1/run2(+sub2)
 	runReq := params.ReactSessionForkReq{
 		SessionID: baseReq.SessionID, ThroughRunID: "run_src_3", Inclusive: ptrBool(false),
-		CallerKey: "c1", RouteValues: []string{"r1"},
+		AppKey: "c1", RouteValues: []string{"r1"},
 	}
 	runResp, err := ForkReactSession(ctx, runReq)
 	if err != nil {
@@ -463,7 +463,7 @@ func TestForkReactSessionE2E(t *testing.T) {
 	// run 级 inclusive 缺省 true：不带 Inclusive 指针 → run1/2/3 全保留
 	runReq2 := params.ReactSessionForkReq{
 		SessionID: baseReq.SessionID, ThroughRunID: "run_src_3",
-		CallerKey: "c1", RouteValues: []string{"r1"},
+		AppKey: "c1", RouteValues: []string{"r1"},
 	}
 	runResp2, err := ForkReactSession(ctx, runReq2)
 	if err != nil {
@@ -476,7 +476,7 @@ func TestForkReactSessionE2E(t *testing.T) {
 
 	// 4. 独立性：删除源会话后分叉会话完好
 	if _, err := DeleteReactSession(ctx, params.ReactSessionDeleteReq{
-		SessionID: baseReq.SessionID, CallerKey: "c1", RouteValues: []string{"r1"},
+		SessionID: baseReq.SessionID, AppKey: "c1", RouteValues: []string{"r1"},
 	}); err != nil {
 		t.Fatalf("删除源会话失败: %v", err)
 	}

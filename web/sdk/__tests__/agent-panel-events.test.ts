@@ -168,7 +168,7 @@ describe('AgentPanel UI events', () => {
     const newSession = vi.fn(() => true);
     const session = {
       sessionId: 'session-history',
-      callerKey: 'test',
+      appKey: 'test',
       routeValues: [],
       title: '历史会话',
       state: 'done',

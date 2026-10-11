@@ -10,29 +10,29 @@
 
 按顺序注册四类资源（均为 POST）：
 
-### 1.1 Caller
+### 1.1 App
 
 ```
-POST /caller/register
-{ "callerKey": "my-app", "name": "我的应用", "description": "...", "platform": "web", "allowPlan": 1 }
+POST /app/register
+{ "appKey": "my-app", "name": "我的应用", "description": "...", "platform": "web", "allowPlan": 1 }
 ```
 
-`allowPlan`（可选，caller 级 Plan 能力开关）：不传或 `null`=跟随全局配置 `llm.react.allow_plan`（默认开）；`0`=该 caller 强制关闭 create_plan 工具与 `executionMode: "plan"` 入口；`1`=强制开启。`/caller/update` 可修改（不传=不更新）。典型用法：纯文本端（QQ 机器人等）注册时设 `allowPlan: 0`。
+`allowPlan`（可选，app 级 Plan 能力开关）：不传或 `null`=跟随全局配置 `llm.react.allow_plan`（默认开）；`0`=该 app 强制关闭 create_plan 工具与 `executionMode: "plan"` 入口；`1`=强制开启。`/app/update` 可修改（不传=不更新）。典型用法：纯文本端（QQ 机器人等）注册时设 `allowPlan: 0`。
 
-### 1.2 API Key（caller 级模型凭证）
+### 1.2 API Key（app 级模型凭证）
 
 ```
 POST /apikey/register
-{ "callerKey": "my-app", "routeValues": [], "name": "默认", "apiKey": "<LLM网关key>" }
+{ "appKey": "my-app", "routeValues": [], "name": "默认", "apiKey": "<LLM网关key>" }
 ```
 
-routeValues 为空数组表示通用；解析时按 callerKey + 路由前缀最长匹配。
+routeValues 为空数组表示通用；解析时按 appKey + 路由前缀最长匹配。
 
 ### 1.3 系统提示词（可选，强烈建议）
 
 ```
 POST /system-prompt/register
-{ "callerKey": "my-app", "routeValues": [], "name": "主提示词", "content": "你是一个……的助手。" }
+{ "appKey": "my-app", "routeValues": [], "name": "主提示词", "content": "你是一个……的助手。" }
 ```
 
 多条提示词按路由从短到长（通用→具体）拼接为最终 system 前缀。
@@ -66,7 +66,7 @@ GET ws://<host>:8080/react-base-service/react/ws?connection_attempt_id=<可选�
 
 ```jsonc
 {
-  "callerKey": "my-app",           // 必填
+  "appKey": "my-app",           // 必填
   "routeValues": ["pageA"],        // 路由（决定提示词/工具/Skill 可见范围）
   "type": "chat",                  // 会话类型，默认 chat
   "userPrompt": "帮我分析……",       // 必填，本轮用户输入
@@ -110,7 +110,7 @@ GET ws://<host>:8080/react-base-service/react/ws?connection_attempt_id=<可选�
 const ws = new WebSocket(`ws://${location.host}/react-base-service/react/ws`);
 ws.onopen = () => ws.send(JSON.stringify({
   type: 'run',
-  payload: { callerKey: 'my-app', userPrompt: '你好，介绍下你能做什么' },
+  payload: { appKey: 'my-app', userPrompt: '你好，介绍下你能做什么' },
 }));
 ws.onmessage = (e) => {
   const evt = JSON.parse(e.data);
@@ -143,7 +143,7 @@ ws.onmessage = (e) => {
 
 ### 注册类管理接口
 
-`/caller`（register/update/list/copy_config/batch_delete）、`/skill`（create/update/delete/list/detail）、`/tool`（register/update/delete/list/detail + `/tool/whitelist` CRUD）、`/apikey`（CRUD）、`/system-prompt`（CRUD）、`/model`（用户模型 CRUD、whitelist、check-connectivity、credits/adjust）、`/models`（模型目录）。
+`/app`（register/update/list/copy_config/batch_delete）、`/skill`（create/update/delete/list/detail）、`/tool`（register/update/delete/list/detail + `/tool/whitelist` CRUD）、`/apikey`（CRUD）、`/system-prompt`（CRUD）、`/model`（用户模型 CRUD、whitelist、check-connectivity、credits/adjust）、`/models`（模型目录）。
 
 ## 4. 工具接入
 
@@ -155,7 +155,7 @@ POST /tool/register
   "name": "查询订单",
   "description": "按订单号查询订单详情",
   "toolType": "http",
-  "callerKey": "my-app",
+  "appKey": "my-app",
   "routeValues": [],
   "config": {
     "url": "https://internal.example.com/api/order/detail",
@@ -186,7 +186,7 @@ POST /tool/register
 
 ### 4.4 白名单
 
-`POST /tool/whitelist/create`：`{toolId, whiteUserList: ["user1"]}`。配置后仅白名单用户可见该工具；未配置则对 caller 内所有用户可见。
+`POST /tool/whitelist/create`：`{toolId, whiteUserList: ["user1"]}`。配置后仅白名单用户可见该工具；未配置则对 app 内所有用户可见。
 
 ### 4.5 运行时调用模式（不变）
 
@@ -204,7 +204,7 @@ POST /skill/create
   "executionSteps": "1. 收集本周数据 2. 按模板生成 3. ……",
   "businessContext": "……",
   "promptSupplement": "……",
-  "callerKey": "my-app",
+  "appKey": "my-app",
   "routeValues": [],
   "isDefault": 0
 }
@@ -214,8 +214,8 @@ POST /skill/create
 
 ## 6. 会话管理与回放接入
 
-- **多轮对话**：首轮回执事件中取 `sessionId`，后续 run 带上即可延续上下文；切换用户/caller/路由会被拒绝（`sessionId 无权访问或上下文不匹配`）。
-- **历史侧边栏**：`POST /react/session/list`（按 callerKey+routeValues+登录用户过滤）。
+- **多轮对话**：首轮回执事件中取 `sessionId`，后续 run 带上即可延续上下文；切换用户/app/路由会被拒绝（`sessionId 无权访问或上下文不匹配`）。
+- **历史侧边栏**：`POST /react/session/list`（按 appKey+routeValues+登录用户过滤）。
 - **回放**：`POST /react/session/events` 拿到事件流后，用与实时 WS 完全相同的解析逻辑渲染；或直接跳转内置回放页 `/react-base-service/react/replay?sessionId=...`。
 - **反馈**：每轮回执后调 `POST /react/run/feedback`（feedback: 1/-1，problemFeedback 文本）。
 

@@ -35,7 +35,7 @@ func TestRenameReactSessionE2E(t *testing.T) {
 
 	const (
 		userName  = "e2e-rename-user"
-		callerKey = "e2e-rename-caller"
+		appKey = "e2e-rename-app"
 		sessionID = "session_e2e_rename_test"
 	)
 	ctx := newHeadlessGinContext(userName)
@@ -44,7 +44,7 @@ func TestRenameReactSessionE2E(t *testing.T) {
 		_ = model.GetLLMDB().WithContext(ctx).Where("session_id = ?", sessionID).Delete(&model.ReactRun{}).Error
 		_ = model.GetLLMDB().WithContext(ctx).Where("session_id = ?", sessionID).Delete(&model.ReactSession{}).Error
 		session := &model.ReactSession{
-			SessionID: sessionID, UserName: userName, CallerKey: callerKey,
+			SessionID: sessionID, UserName: userName, AppKey: appKey,
 			RouteValues: `["r1"]`, SessionType: "chat", Title: "旧标题",
 			State: model.ReactSessionStateActive,
 		}
@@ -53,7 +53,7 @@ func TestRenameReactSessionE2E(t *testing.T) {
 		}
 		if withActiveRun {
 			run := &model.ReactRun{
-				RunID: "run_e2e_rename_1", SessionID: sessionID, UserName: userName, CallerKey: callerKey,
+				RunID: "run_e2e_rename_1", SessionID: sessionID, UserName: userName, AppKey: appKey,
 				RouteValues: `["r1"]`, State: model.ReactRunStateRunning, MaxSteps: 10,
 			}
 			if err := model.GetLLMDB().WithContext(ctx).Create(run).Error; err != nil {
@@ -71,14 +71,14 @@ func TestRenameReactSessionE2E(t *testing.T) {
 	baseReq := params.ReactSessionRenameReq{
 		SessionID:   sessionID,
 		Title:       "新标题",
-		CallerKey:   callerKey,
+		AppKey:   appKey,
 		RouteValues: []string{"r1"},
 	}
 
 	// 1. 归属不匹配 / 会话不存在 / 空白标题拒绝
 	seed(false)
 	wrongReq := baseReq
-	wrongReq.CallerKey = "other-caller"
+	wrongReq.AppKey = "other-app"
 	if _, err := RenameReactSession(ctx, wrongReq); err == nil {
 		t.Fatalf("归属不匹配应拒绝重命名")
 	}

@@ -14,5 +14,5 @@ type RunContext struct {
 	RunID     string
 	SessionID string
 	UserName  string
-	CallerKey string
+	AppKey string
 }

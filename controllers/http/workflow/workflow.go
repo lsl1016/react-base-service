@@ -19,7 +19,7 @@ type workflowCreateRequest struct {
 	WorkflowKey      string   `json:"workflowKey"`
 	Name             string   `json:"name"`
 	Description      string   `json:"description"`
-	CallerKey        string   `json:"callerKey"`
+	AppKey        string   `json:"appKey"`
 	RouteValues      []string `json:"routeValues"`
 	UserName         string   `json:"userName"`
 	Prompt           string   `json:"prompt"`
@@ -39,7 +39,7 @@ type workflowCreateRequest struct {
 type workflowUpdateRequest struct {
 	Name             string   `json:"name"`
 	Description      string   `json:"description"`
-	CallerKey        string   `json:"callerKey"`
+	AppKey        string   `json:"appKey"`
 	RouteValues      []string `json:"routeValues"`
 	UserName         string   `json:"userName"`
 	Prompt           string   `json:"prompt"`
@@ -86,7 +86,7 @@ func CreateWorkflow(ctx *gin.Context) {
 		return
 	}
 	wf, err := workflowService.CreateWorkflowDef(ctx, req.WorkflowKey, toDefinitionInput(
-		req.Name, req.Description, req.CallerKey, req.RouteValues, req.UserName, req.Prompt,
+		req.Name, req.Description, req.AppKey, req.RouteValues, req.UserName, req.Prompt,
 		req.TriggerType, req.CronExpr, req.Timezone, req.ModelKey, req.ModelVersion,
 		req.MaxSteps, req.TimeoutSec, req.NotifyWebhookURL, req.RiskPatterns, req.Enabled))
 	if err != nil {
@@ -107,7 +107,7 @@ func UpdateWorkflow(ctx *gin.Context) {
 		return
 	}
 	wf, err := workflowService.UpdateWorkflowDef(ctx, ctx.Param("key"), toDefinitionInput(
-		req.Name, req.Description, req.CallerKey, req.RouteValues, req.UserName, req.Prompt,
+		req.Name, req.Description, req.AppKey, req.RouteValues, req.UserName, req.Prompt,
 		req.TriggerType, req.CronExpr, req.Timezone, req.ModelKey, req.ModelVersion,
 		req.MaxSteps, req.TimeoutSec, req.NotifyWebhookURL, req.RiskPatterns, req.Enabled))
 	if err != nil {
@@ -211,13 +211,13 @@ func ListWorkflowRuns(ctx *gin.Context) {
 }
 
 // toDefinitionInput 把控制器请求收敛为 service 层统一入参（创建/更新共用一套校验）。
-func toDefinitionInput(name, description, callerKey string, routeValues []string, userName, prompt,
+func toDefinitionInput(name, description, appKey string, routeValues []string, userName, prompt,
 	triggerType, cronExpr, timezone, modelKey, modelVersion string, maxSteps, timeoutSec int,
 	notifyWebhookURL, riskPatterns string, enabled *bool) workflowService.DefinitionInput {
 	return workflowService.DefinitionInput{
 		Name:             name,
 		Description:      description,
-		CallerKey:        callerKey,
+		AppKey:        appKey,
 		RouteValues:      routeValues,
 		UserName:         userName,
 		Prompt:           prompt,

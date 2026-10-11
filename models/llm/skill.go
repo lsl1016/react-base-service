@@ -28,7 +28,7 @@ type Skill struct {
 	TriggersJSON string `json:"triggersJson" gorm:"column:triggers_json"`
 	// Content 是 SKILL.md 正文（文件导入形态）；get_skill 全量返回时随模型注入。
 	Content     string                `json:"content" gorm:"column:content"`
-	CallerKey   string                `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey   string                `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues        string                `json:"routeValues" gorm:"column:route_values"`
 	IsDefault          int                   `json:"isDefault" gorm:"column:is_default;not null;default:0"`
 	Status             int                   `json:"status" gorm:"column:status;not null;default:1"`
@@ -64,12 +64,12 @@ func GetSkillBySkillID(ctx *gin.Context, skillID string) (*Skill, error) {
 	return &skill, nil
 }
 
-// FindActiveSkillByCallerAndName 按 caller+name 查未软删的 Skill（含禁用行），
+// FindActiveSkillByAppAndName 按 app+name 查未软删的 Skill（含禁用行），
 // 供 SKILL.md 导入的同名覆盖（upsert）判定：导入是权威定义，命中即更新而非重复新建。
-func FindActiveSkillByCallerAndName(ctx *gin.Context, callerKey, name string) (*Skill, error) {
+func FindActiveSkillByAppAndName(ctx *gin.Context, appKey, name string) (*Skill, error) {
 	var skill Skill
 	err := helpers.MysqlClientLLM.Model(&Skill{}).WithContext(ctx).
-		Where("caller_key = ? AND name = ?", callerKey, name).First(&skill).Error
+		Where("app_key = ? AND name = ?", appKey, name).First(&skill).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -122,10 +122,10 @@ func SoftDeleteSkillBySkillID(ctx *gin.Context, skillID string) error {
 	return nil
 }
 
-func ListSkillsByCaller(ctx *gin.Context, callerKey string) ([]Skill, error) {
+func ListSkillsByApp(ctx *gin.Context, appKey string) ([]Skill, error) {
 	var skills []Skill
 	err := helpers.MysqlClientLLM.Model(&Skill{}).WithContext(ctx).
-		Where("caller_key = ?", callerKey).
+		Where("app_key = ?", appKey).
 		Order("is_default ASC, created_at DESC").
 		Find(&skills).Error
 	if err != nil {
@@ -134,11 +134,11 @@ func ListSkillsByCaller(ctx *gin.Context, callerKey string) ([]Skill, error) {
 	return skills, nil
 }
 
-// ListSkillsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 skill 列表，保留 list 接口的全量状态语义
-func ListSkillsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Skill, error) {
+// ListSkillsByAppAndRoutes 按 appKey + 路由前缀匹配查询 skill 列表，保留 list 接口的全量状态语义
+func ListSkillsByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]Skill, error) {
 	var skills []Skill
 	err := helpers.MysqlClientLLM.Model(&Skill{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values IN ?", callerKey, routePrefixes).
+		Where("app_key = ? AND route_values IN ?", appKey, routePrefixes).
 		Order("is_default ASC, created_at DESC").
 		Find(&skills).Error
 	if err != nil {
@@ -150,10 +150,10 @@ func ListSkillsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefix
 // ListSkillsByRouteWithFallback 按精确路由返回全部 skill + 上级路由仅返回 isDefault=1 的 skill
 // exactRoute: 精确匹配的路由值 JSON 字符串，如 '["s_xxx","r_xxx"]'
 // parentPrefixes: 上级路由前缀列表，如 ['[]', '["s_xxx"]']
-func ListSkillsByRouteWithFallback(ctx *gin.Context, callerKey string, exactRoute string, parentPrefixes []string) ([]Skill, error) {
+func ListSkillsByRouteWithFallback(ctx *gin.Context, appKey string, exactRoute string, parentPrefixes []string) ([]Skill, error) {
 	var skills []Skill
 	db := helpers.MysqlClientLLM.Model(&Skill{}).WithContext(ctx).
-		Where("caller_key = ?", callerKey)
+		Where("app_key = ?", appKey)
 
 	if len(parentPrefixes) > 0 {
 		db = db.Where("(route_values = ?) OR (route_values IN ? AND is_default = 1)", exactRoute, parentPrefixes)
@@ -168,12 +168,13 @@ func ListSkillsByRouteWithFallback(ctx *gin.Context, callerKey string, exactRout
 	return skills, nil
 }
 
-// FindSkillsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 skill；
-// 同时并入「默认作用域」（caller_key=default）下命中的 skill，对全部 caller 生效。
-func FindSkillsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Skill, error) {
+// FindSkillsByAppAndRoutes 按解析作用域 + 路由前缀匹配查询 skill。
+// scopeKeys 由调用方预计算（AppCapabilityScopeKeys）：继承默认能力的 app 含 default 伪 app，
+// 关闭默认能力绑定的 app 只含自身；default 作用域下命中的 skill 对合并解析的 app 生效。
+func FindSkillsByAppAndRoutes(ctx *gin.Context, scopeKeys []string, routePrefixes []string) ([]Skill, error) {
 	var skills []Skill
 	err := helpers.MysqlClientLLM.Model(&Skill{}).WithContext(ctx).
-		Where("caller_key IN ? AND status = 1 AND route_values IN ?", CallerScopeKeys(callerKey), routePrefixes).
+		Where("app_key IN ? AND status = 1 AND route_values IN ?", scopeKeys, routePrefixes).
 		Order("is_default ASC").
 		Find(&skills).Error
 	if err != nil {
@@ -182,11 +183,11 @@ func FindSkillsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefix
 	return skills, nil
 }
 
-// ListAllSkills 列出全部 caller 的 skill（管理控制台「全部」视图用）。
+// ListAllSkills 列出全部 app 的 skill（管理控制台「全部」视图用）。
 func ListAllSkills(ctx *gin.Context) ([]Skill, error) {
 	var skills []Skill
 	err := helpers.MysqlClientLLM.Model(&Skill{}).WithContext(ctx).
-		Order("caller_key ASC, created_at DESC").
+		Order("app_key ASC, created_at DESC").
 		Find(&skills).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
@@ -194,11 +195,11 @@ func ListAllSkills(ctx *gin.Context) ([]Skill, error) {
 	return skills, nil
 }
 
-// GetDefaultSkillByCaller 获取 caller 级兜底 skill
-func GetDefaultSkillByCaller(ctx *gin.Context, callerKey string) (*Skill, error) {
+// GetDefaultSkillByApp 获取 app 级兜底 skill
+func GetDefaultSkillByApp(ctx *gin.Context, appKey string) (*Skill, error) {
 	var skill Skill
 	err := helpers.MysqlClientLLM.Model(&Skill{}).WithContext(ctx).
-		Where("caller_key = ? AND is_default = 1 AND status = 1", callerKey).
+		Where("app_key = ? AND is_default = 1 AND status = 1", appKey).
 		First(&skill).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -209,11 +210,11 @@ func GetDefaultSkillByCaller(ctx *gin.Context, callerKey string) (*Skill, error)
 	return &skill, nil
 }
 
-// GetDefaultSkillByCallerAndRoute 按 callerKey + routeValues 查询兜底 skill（不过滤 status，用于唯一性校验）
-func GetDefaultSkillByCallerAndRoute(ctx *gin.Context, callerKey, routeValues string) (*Skill, error) {
+// GetDefaultSkillByAppAndRoute 按 appKey + routeValues 查询兜底 skill（不过滤 status，用于唯一性校验）
+func GetDefaultSkillByAppAndRoute(ctx *gin.Context, appKey, routeValues string) (*Skill, error) {
 	var skill Skill
 	err := helpers.MysqlClientLLM.Model(&Skill{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ? AND is_default = 1", callerKey, routeValues).
+		Where("app_key = ? AND route_values = ? AND is_default = 1", appKey, routeValues).
 		First(&skill).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -75,7 +75,7 @@ describe('EventLedger', () => {
         seq: 1,
         runId: 'run_server',
         sessionId: sid,
-        payload: { userPrompt: '历史问题', type: 'chat', callerKey: 'report-editor' },
+        payload: { userPrompt: '历史问题', type: 'chat', appKey: 'report-editor' },
         createdAt: '2026-03-14 10:00:00',
       },
       {
@@ -91,7 +91,7 @@ describe('EventLedger', () => {
 
     await ledger.replaceSessionEvents(sid, serverEvents, {
       sessionId: sid,
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
       title: '历史会话',
     });
@@ -139,14 +139,14 @@ describe('EventLedger', () => {
   it('should upsertSession and getSession', async () => {
     await ledger.upsertSession({
       sessionId: 'session_1',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
       title: 'Test Session',
     });
 
     const meta = await ledger.getSession('session_1');
     expect(meta).not.toBeNull();
-    expect(meta!.callerKey).toBe('report-editor');
+    expect(meta!.appKey).toBe('report-editor');
     expect(meta!.title).toBe('Test Session');
     expect(meta!.type).toBe('chat');
     expect(meta!.state).toBe('active');
@@ -156,7 +156,7 @@ describe('EventLedger', () => {
     const sessions: SessionItem[] = [
       {
         sessionId: 'server_session_1',
-        callerKey: 'report-editor',
+        appKey: 'report-editor',
         routeValues: ['report_abc'],
         type: 'chat',
         title: 'Server Session',
@@ -180,10 +180,10 @@ describe('EventLedger', () => {
     expect(meta!.updatedAt).toBe('2026-03-14 10:01:00');
   });
 
-  it('should getLatestSession by callerKey', async () => {
-    await ledger.upsertSession({ sessionId: 's1', callerKey: 'report-editor', routeValues: ['r1'] });
+  it('should getLatestSession by appKey', async () => {
+    await ledger.upsertSession({ sessionId: 's1', appKey: 'report-editor', routeValues: ['r1'] });
     await new Promise((r) => setTimeout(r, 50));
-    await ledger.upsertSession({ sessionId: 's2', callerKey: 'report-editor', routeValues: ['r1'] });
+    await ledger.upsertSession({ sessionId: 's2', appKey: 'report-editor', routeValues: ['r1'] });
 
     const latest = await ledger.getLatestSession('report-editor', ['r1']);
     expect(latest).not.toBeNull();
@@ -191,23 +191,23 @@ describe('EventLedger', () => {
   });
 
   it('should listSessions', async () => {
-    await ledger.upsertSession({ sessionId: 's1', callerKey: 'a', routeValues: ['x'] });
-    await ledger.upsertSession({ sessionId: 's2', callerKey: 'a', routeValues: ['x'] });
-    await ledger.upsertSession({ sessionId: 's3', callerKey: 'b', routeValues: ['y'] });
+    await ledger.upsertSession({ sessionId: 's1', appKey: 'a', routeValues: ['x'] });
+    await ledger.upsertSession({ sessionId: 's2', appKey: 'a', routeValues: ['x'] });
+    await ledger.upsertSession({ sessionId: 's3', appKey: 'b', routeValues: ['y'] });
 
     const list = await ledger.listSessions('a', ['x']);
     expect(list).toHaveLength(2);
   });
 
-  it('should clearSessions by callerKey and routeValues', async () => {
+  it('should clearSessions by appKey and routeValues', async () => {
     ledger.append(makeEvent(1, 's1'));
     ledger.append(makeEvent(1, 's2'));
     ledger.append(makeEvent(1, 's3'));
     await new Promise((r) => setTimeout(r, 100));
 
-    await ledger.upsertSession({ sessionId: 's1', callerKey: 'a', routeValues: ['x'] });
-    await ledger.upsertSession({ sessionId: 's2', callerKey: 'a', routeValues: ['x'] });
-    await ledger.upsertSession({ sessionId: 's3', callerKey: 'a', routeValues: ['y'] });
+    await ledger.upsertSession({ sessionId: 's1', appKey: 'a', routeValues: ['x'] });
+    await ledger.upsertSession({ sessionId: 's2', appKey: 'a', routeValues: ['x'] });
+    await ledger.upsertSession({ sessionId: 's3', appKey: 'a', routeValues: ['y'] });
 
     await ledger.clearSessions('a', ['x']);
 

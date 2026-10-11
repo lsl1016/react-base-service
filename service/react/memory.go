@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"react-base-service/conf"
 	model "react-base-service/models/llm"
 	memoryService "react-base-service/service/memory"
 )
@@ -74,9 +73,9 @@ func (s *reactEngineState) executeMemoryList(input json.RawMessage) (string, boo
 	var req memoryListInput
 	_ = json.Unmarshal(input, &req)
 
-	cfg := conf.GetReactRuntimeConfig().Memory
+	cfg := s.req.runtimeConfig().Memory
 	memoryRuntime := s.services.memoryExecutor()
-	scope := memoryRuntime.ResolveScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
+	scope := memoryRuntime.ResolveScope(s.req.payload.AppKey, s.req.userName, cfg.MemoryAllowUserScope())
 	items, err := memoryRuntime.List(s.ctx, scope, memoryService.RuntimeListOptions{
 		Layer:      req.Layer,
 		MemoryType: req.MemoryType,
@@ -96,9 +95,9 @@ func (s *reactEngineState) executeMemoryRead(input json.RawMessage) (string, boo
 	var req memoryReadInput
 	_ = json.Unmarshal(input, &req)
 
-	cfg := conf.GetReactRuntimeConfig().Memory
+	cfg := s.req.runtimeConfig().Memory
 	memoryRuntime := s.services.memoryExecutor()
-	scope := memoryRuntime.ResolveScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
+	scope := memoryRuntime.ResolveScope(s.req.payload.AppKey, s.req.userName, cfg.MemoryAllowUserScope())
 	items, err := memoryRuntime.Read(s.ctx, scope, req.ItemIDs)
 	if err != nil {
 		return "", true, err
@@ -119,14 +118,14 @@ func (s *reactEngineState) executeMemoryWrite(input json.RawMessage) (string, bo
 		return "", true, fmt.Errorf("memory_write input must be a valid JSON object")
 	}
 
-	cfg := conf.GetReactRuntimeConfig().Memory
+	cfg := s.req.runtimeConfig().Memory
 	isReflection := s.req.payload.Type == model.ReactSessionTypeReflection
 	if isReflection && s.memoryWrites >= cfg.Reflection.MaxWritesPerRun {
 		return "", true, fmt.Errorf("本次整理的写操作已达上限（%d 次）：停止写入，直接进入总结阶段", cfg.Reflection.MaxWritesPerRun)
 	}
 
 	memoryRuntime := s.services.memoryExecutor()
-	scope := memoryRuntime.ResolveScope(s.req.payload.CallerKey, s.req.userName, cfg.MemoryAllowUserScope())
+	scope := memoryRuntime.ResolveScope(s.req.payload.AppKey, s.req.userName, cfg.MemoryAllowUserScope())
 	result, err := memoryRuntime.ApplyMutation(s.ctx, memoryService.MutationInput{
 		Action:           req.Action,
 		ItemID:           uint(req.ItemID),

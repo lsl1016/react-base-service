@@ -32,7 +32,7 @@ type ReactRun struct {
 	RunID                   string `json:"runId" gorm:"column:run_id;not null"`
 	SessionID               string `json:"sessionId" gorm:"column:session_id;not null"`
 	UserName                string `json:"userName" gorm:"column:user_name;not null"`
-	CallerKey               string `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey               string `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues             string `json:"routeValues" gorm:"column:route_values;not null;default:''"`
 	State                   string `json:"state" gorm:"column:state;not null"`
 	StepIndex               int    `json:"stepIndex" gorm:"column:step_index;not null;default:0"`

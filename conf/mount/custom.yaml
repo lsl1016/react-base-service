@@ -91,7 +91,7 @@ llm:
       resident_budget_chars: 2000   # 常驻层注入字符预算
       index_max_items: 64           # 按需层目录索引注入条数上限
       detached_max_items: 500       # 按需层 active 条目软上限（超出拒绝新增）
-      allow_user_scope: true        # false 时记忆收敛到 caller 维度（同 caller 用户共享）
+      allow_user_scope: true        # false 时记忆收敛到 app 维度（同 app 用户共享）
       # 自动整理（reflection）：compact_end 后异步派生受限子 run 审阅被压缩对话并整理记忆；默认关闭。
       reflection:
         enabled: false
@@ -160,8 +160,8 @@ llm:
   # 管理面板：/react-base-service/react/workflow/admin
   workflow:
     enabled: true
-    # caller 级并发闸门：该 caller 在途 run 数达上限时本次触发记 skipped
-    max_parallel_per_caller: 2
+    # app 级并发闸门：该 app 在途 run 数达上限时本次触发记 skipped
+    max_parallel_per_app: 2
     # workflow 未显式配置时的超时/步数兜底
     default_timeout_sec: 1800
     default_max_steps: 20
@@ -185,9 +185,9 @@ llm:
 # kind=http 走手写 Streamable HTTP；kind=http_sdk 走官方 MCP Go SDK（modelcontextprotocol/go-sdk）实现。
 # HTTP 两种均无鉴权；endpoint 仅允许公网 http/https（拒绝环回/私网/保留地址）；
 # 每次调用独立建会话，timeout_ms 默认 30000。
-# caller_key 是 MCP 工具同步进注册表时挂载的调用方；留空或不配置 mcp 段则不启用。
+# app_key 是 MCP 工具同步进注册表时挂载的调用方；留空或不配置 mcp 段则不启用。
 mcp:
-  caller_key: demo-app
+  app_key: demo-app
   servers:
     - name: repo
       kind: repo
@@ -219,7 +219,7 @@ async_task:
   # 异步任务状态同步框架总开关；无内置 Provider 时开启后也为空转
   enabled: false
 
-# MCP 服务端网关：把 tblLlmTool 中启用的 http 工具按 caller 作用域对外暴露成 MCP 协议
+# MCP 服务端网关：把 tblLlmTool 中启用的 http 工具按 app 作用域对外暴露成 MCP 协议
 #（端点 /react-base-service/mcp，独立进程可 go run ./cmd/mcp-gateway）。
 # 应用凭证在 playground「MCP 应用」页创建（Bearer <app_key>:<app_secret>）；
 # outputSchema 加 "x-output-projection": true 可启用服务端投影裁剪+字段说明渲染。

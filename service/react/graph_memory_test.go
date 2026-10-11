@@ -121,7 +121,7 @@ func TestGraphMemoryReflectionProfileDeniesTools(t *testing.T) {
 }
 
 // TestGraphMemorySearchForcesServerSideGroups 验证工具路径的组隔离：
-// group_ids 由服务端按 run 作用域注入（caller 组在前、user 组在后），模型入参不含组概念。
+// group_ids 由服务端按 run 作用域注入（app 组在前、user 组在后），模型入参不含组概念。
 func TestGraphMemorySearchForcesServerSideGroups(t *testing.T) {
 	original := conf.CustomConf.LLM.React.GraphMemory
 	defer func() { conf.CustomConf.LLM.React.GraphMemory = original }()
@@ -147,7 +147,7 @@ func TestGraphMemorySearchForcesServerSideGroups(t *testing.T) {
 		ctx:    nil,
 		runCtx: context.Background(),
 		req: &runtimeRequest{
-			payload:                params.ReactRunPayload{CallerKey: "demo-app"},
+			payload:                params.ReactRunPayload{AppKey: "demo-app"},
 			runtimeRequestIdentity: runtimeRequestIdentity{userName: "alice"},
 		},
 	}
@@ -182,7 +182,7 @@ func TestGraphMemorySearchForcesServerSideGroups(t *testing.T) {
 func TestGraphMemorySearchRejectsEmptyQuery(t *testing.T) {
 	state := &reactEngineState{
 		runCtx: context.Background(),
-		req:    &runtimeRequest{payload: params.ReactRunPayload{CallerKey: "demo-app"}, runtimeRequestIdentity: runtimeRequestIdentity{userName: "alice"}},
+		req:    &runtimeRequest{payload: params.ReactRunPayload{AppKey: "demo-app"}, runtimeRequestIdentity: runtimeRequestIdentity{userName: "alice"}},
 	}
 	if _, _, err := state.executeGraphMemorySearch(json.RawMessage(`{"query":"  "}`)); err == nil {
 		t.Fatalf("empty query should be rejected")

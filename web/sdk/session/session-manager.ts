@@ -91,13 +91,13 @@ export class SessionManager {
   }
 
   /** 查询 Plan 最新公开视图和 Attempt 索引。 */
-  async getPlanExecutionDetail(planExecutionId: string, sessionId: string, callerKey: string): Promise<PlanExecutionDetailResp> {
-    return this.post<PlanExecutionDetailResp>('/plan_execution/detail', { planExecutionId, sessionId, callerKey });
+  async getPlanExecutionDetail(planExecutionId: string, sessionId: string, appKey: string): Promise<PlanExecutionDetailResp> {
+    return this.post<PlanExecutionDetailResp>('/plan_execution/detail', { planExecutionId, sessionId, appKey });
   }
 
   /** 查询一个 Plan StepAttempt 的持久化详细事件。 */
-  async getPlanStepEvents(planExecutionId: string, stepAttemptId: string, sessionId: string, callerKey: string): Promise<PlanStepEventsResp> {
-    return this.post<PlanStepEventsResp>('/plan_execution/events', { planExecutionId, stepAttemptId, sessionId, callerKey });
+  async getPlanStepEvents(planExecutionId: string, stepAttemptId: string, sessionId: string, appKey: string): Promise<PlanStepEventsResp> {
+    return this.post<PlanStepEventsResp>('/plan_execution/events', { planExecutionId, stepAttemptId, sessionId, appKey });
   }
 
   /** 查询会话队列（S3）→ POST /queue/list */

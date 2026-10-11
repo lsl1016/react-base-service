@@ -112,31 +112,31 @@ type memoryRevisionView struct {
 
 // requireMemoryEnabled 是管理面统一前置：memory 未启用时直接参数错误返回，避免表未建时裸查报错。
 func requireMemoryEnabled(ctx *gin.Context) bool {
-	if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
+	if conf.GetReactRuntimeConfig().Memory.MemoryEnabled() {
 		return true
 	}
-	components.RenderJsonFail(ctx, components.ParamInvalidf("长期记忆未启用（llm.react.memory.enabled），请先开启并执行建表"))
+	components.RenderJsonFail(ctx, components.ParamInvalidf("长期记忆未启用（管理面板「运行时配置」或 llm.react.memory.enabled），请先开启并执行建表"))
 	return false
 }
 
-// validateMemoryOwner 校验 owner 维度取值；ownerKey 由调用方显式给出（caller_key 或 caller_key|userName）。
+// validateMemoryOwner 校验 owner 维度取值；ownerKey 由调用方显式给出（app_key 或 app_key|userName）。
 func validateMemoryOwner(ownerType, ownerKey string) (model.MemoryOwner, error) {
 	ownerType = strings.TrimSpace(ownerType)
 	ownerKey = strings.TrimSpace(ownerKey)
 	switch ownerType {
-	case model.MemoryOwnerTypeCaller:
+	case model.MemoryOwnerTypeApp:
 		if ownerKey == "" {
-			return model.MemoryOwner{}, components.ParamInvalidf("ownerKey 不能为空（caller 维度传 callerKey）")
+			return model.MemoryOwner{}, components.ParamInvalidf("ownerKey 不能为空（app 维度传 appKey）")
 		}
-		return model.BuildCallerMemoryOwner(ownerKey), nil
-	case model.MemoryOwnerTypeCallerUser:
+		return model.BuildAppMemoryOwner(ownerKey), nil
+	case model.MemoryOwnerTypeAppUser:
 		if ownerKey == "" || !strings.Contains(ownerKey, "|") {
-			return model.MemoryOwner{}, components.ParamInvalidf("caller_user 维度 ownerKey 格式为 callerKey|userName")
+			return model.MemoryOwner{}, components.ParamInvalidf("app_user 维度 ownerKey 格式为 appKey|userName")
 		}
 		parts := strings.SplitN(ownerKey, "|", 2)
-		return model.BuildCallerUserMemoryOwner(parts[0], parts[1]), nil
+		return model.BuildAppUserMemoryOwner(parts[0], parts[1]), nil
 	default:
-		return model.MemoryOwner{}, components.ParamInvalidf("ownerType 仅支持 caller / caller_user")
+		return model.MemoryOwner{}, components.ParamInvalidf("ownerType 仅支持 app / app_user")
 	}
 }
 
@@ -238,7 +238,7 @@ func ListMemories(ctx *gin.Context) {
 	components.RenderJsonSucc(ctx, gin.H{"items": views, "total": total})
 }
 
-// CreateMemory 新增记忆（管理面播种 caller 级公共记忆的主要入口）。
+// CreateMemory 新增记忆（管理面播种 app 级公共记忆的主要入口）。
 //
 //	@Summary      长期记忆新增
 //	@Description  在指定记忆空间新增条目；与模型写入共用幂等收敛/容量守门/敏感拦截/修订流水（source=admin）

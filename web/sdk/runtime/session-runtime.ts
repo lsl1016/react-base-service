@@ -55,7 +55,7 @@ export interface SessionRuntimeDeps {
   sessionId: string | null;
   /** WS 端点（各 runtime 同 URL，各自建连） */
   wsUrl: string;
-  /** 宿主配置（只读；callerKey/模型/hooks/控制参数） */
+  /** 宿主配置（只读；appKey/模型/hooks/控制参数） */
   config: AgentClientConfig;
   /** 共享客户端工具注册表（executor per-runtime，注册表全局一份） */
   registry: ClientToolRegistry;
@@ -301,7 +301,7 @@ export class SessionRuntime {
     }
 
     const payload: RunPayload = {
-      callerKey: config.callerKey,
+      appKey: config.appKey,
       routeValues: config.routeValues,
       type: 'chat',
       userPrompt,
@@ -352,7 +352,7 @@ export class SessionRuntime {
 
     const send = (llmContext?: LlmContext): void => {
       const payload: RunPayload = {
-        callerKey: config.callerKey,
+        appKey: config.appKey,
         routeValues: config.routeValues,
         type: 'chat',
         userPrompt,
@@ -529,7 +529,7 @@ export class SessionRuntime {
     if (event.sessionId) {
       this.deps.ledger.upsertSession({
         sessionId: event.sessionId,
-        callerKey: this.deps.config.callerKey,
+        appKey: this.deps.config.appKey,
         routeValues: this.deps.config.routeValues ?? [],
         type: 'chat',
       });

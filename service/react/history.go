@@ -43,7 +43,7 @@ func ListHistorySessions(ctx *gin.Context, req params.ReactSessionListReq) (para
 		pageSize = 100
 	}
 
-	sessions, total, err := model.ListReactSessionsByCallerRouteUser(ctx, strings.TrimSpace(req.CallerKey), string(routeValuesBytes), userName, normalizeSessionType(req.Type), req.Keyword, page, pageSize)
+	sessions, total, err := model.ListReactSessionsByAppRouteUser(ctx, strings.TrimSpace(req.AppKey), string(routeValuesBytes), userName, normalizeSessionType(req.Type), req.Keyword, page, pageSize)
 	if err != nil {
 		return params.ReactSessionListResp{}, err
 	}
@@ -52,7 +52,7 @@ func ListHistorySessions(ctx *gin.Context, req params.ReactSessionListReq) (para
 	for _, session := range sessions {
 		items = append(items, params.ReactSessionItem{
 			SessionID:   session.SessionID,
-			CallerKey:   session.CallerKey,
+			AppKey:   session.AppKey,
 			RouteValues: parseRouteValues(session.RouteValues),
 			Type:        session.SessionType,
 			Title:       session.Title,
@@ -97,7 +97,7 @@ func GetHistoryEvents(ctx *gin.Context, req params.ReactSessionEventsReq) (param
 
 	builder := newHistoryEventBuilder(sessionID, runs, messages)
 	builder.historyCtx = ctx
-	builder.historyCallerKey = session.CallerKey
+	builder.historyAppKey = session.AppKey
 	builder.toolMetaCache = make(map[string]ToolMeta)
 	events := builder.Build()
 	return params.ReactSessionEventsResp{SessionID: session.SessionID, Title: session.Title, Events: events}, nil
@@ -117,9 +117,9 @@ type historyEventBuilder struct {
 	runHasMessages             map[string]bool
 	closedRunTerminal          map[string]bool
 	// ToolMeta 徽标回放支持：历史事件由消息记录重建（原始 WS payload 不落库），
-	// 内置工具查注册表、业务工具按会话 caller 查库，解析结果按工具名缓存。
+	// 内置工具查注册表、业务工具按会话 app 查库，解析结果按工具名缓存。
 	historyCtx               *gin.Context
-	historyCallerKey         string
+	historyAppKey         string
 	toolMetaCache            map[string]ToolMeta
 	contextMessages          []llm.ChatMessage
 	contextMessageRefs       [][]reactMessageRef
@@ -298,7 +298,7 @@ func (b *historyEventBuilder) appendRunEvent(message model.ReactMessage) {
 	_ = json.Unmarshal([]byte(message.ContentJSON), &content)
 	run := b.runByID[message.RunID]
 	payload := params.ReactRunPayload{
-		CallerKey:      run.CallerKey,
+		AppKey:      run.AppKey,
 		RouteValues:    parseRouteValues(run.RouteValues),
 		Type:           model.ReactSessionTypeChat,
 		UserPrompt:     content.Content,
@@ -383,7 +383,7 @@ func (b *historyEventBuilder) appendToolUseStartEvent(message model.ReactMessage
 	}, message.CreatedAt)
 }
 
-// historyToolMeta 历史回放路径的 ToolMeta 解析：内置工具查注册表，业务工具按会话 caller
+// historyToolMeta 历史回放路径的 ToolMeta 解析：内置工具查注册表，业务工具按会话 app
 // 查注册工具行（businessToolMeta 解析 config 声明）；查不到回退零值（保守不标）。
 func (b *historyEventBuilder) historyToolMeta(toolName string) ToolMeta {
 	if toolName == "" {
@@ -397,7 +397,7 @@ func (b *historyEventBuilder) historyToolMeta(toolName string) ToolMeta {
 	}
 	meta := ToolMeta{}
 	if b.historyCtx != nil {
-		tools, err := model.ListToolsByCaller(b.historyCtx, b.historyCallerKey)
+		tools, err := model.ListToolsByApp(b.historyCtx, b.historyAppKey)
 		if err == nil {
 			for i := range tools {
 				if tools[i].Name == toolName {

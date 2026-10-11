@@ -5,7 +5,7 @@ window.REACT_AGENT_HOST_CONFIG = window.REACT_AGENT_HOST_CONFIG || undefined;
 const $ = (id) => document.getElementById(id);
 const container = $('agent-root');
 const configBar = $('config-bar');
-const callerKeyInput = $('caller-key-input');
+const appKeyInput = $('app-key-input');
 const routeValuesInput = $('route-values-input');
 const controlContextInput = $('control-context-input');
 const llmContextInput = $('llm-context-input');
@@ -13,25 +13,25 @@ const moreCapabilitiesPanel = $('more-capabilities-panel');
 const toggleMoreCapabilitiesButton = $('toggle-more-capabilities');
 const toggleSDKThemeButton = $('toggle-sdk-theme');
 const applyButton = $('apply-config');
-const copyCallerButton = $('copy-caller');
-const deleteCallerButton = $('delete-caller');
-const copyCallerModalMask = $('copy-caller-modal-mask');
-const copySourceCallerInput = $('copy-source-caller');
-const copyTargetCallerInput = $('copy-target-caller');
+const copyAppButton = $('copy-app');
+const deleteAppButton = $('delete-app');
+const copyAppModalMask = $('copy-app-modal-mask');
+const copySourceAppInput = $('copy-source-app');
+const copyTargetAppInput = $('copy-target-app');
 const copyTargetNameInput = $('copy-target-name');
 const copyTargetPlatformInput = $('copy-target-platform');
 const copyTargetDescriptionInput = $('copy-target-description');
-const copyCallerModalState = $('copy-caller-modal-state');
-const copyCallerModalClose = $('copy-caller-modal-close');
-const copyCallerModalCancel = $('copy-caller-modal-cancel');
-const copyCallerModalConfirm = $('copy-caller-modal-confirm');
-const deleteCallerModalMask = $('delete-caller-modal-mask');
-const deleteCallerConfirmLabel = $('delete-caller-confirm-label');
-const deleteCallerConfirmInput = $('delete-caller-confirm-input');
-const deleteCallerModalState = $('delete-caller-modal-state');
-const deleteCallerModalClose = $('delete-caller-modal-close');
-const deleteCallerModalCancel = $('delete-caller-modal-cancel');
-const deleteCallerModalConfirm = $('delete-caller-modal-confirm');
+const copyAppModalState = $('copy-app-modal-state');
+const copyAppModalClose = $('copy-app-modal-close');
+const copyAppModalCancel = $('copy-app-modal-cancel');
+const copyAppModalConfirm = $('copy-app-modal-confirm');
+const deleteAppModalMask = $('delete-app-modal-mask');
+const deleteAppConfirmLabel = $('delete-app-confirm-label');
+const deleteAppConfirmInput = $('delete-app-confirm-input');
+const deleteAppModalState = $('delete-app-modal-state');
+const deleteAppModalClose = $('delete-app-modal-close');
+const deleteAppModalCancel = $('delete-app-modal-cancel');
+const deleteAppModalConfirm = $('delete-app-modal-confirm');
 const inputAPIDemoValue = $('input-api-demo-value');
 const inputAPIFillButton = $('input-api-fill');
 const inputAPISubmitButton = $('input-api-submit');
@@ -173,9 +173,9 @@ const parseJSONObject = (value, fieldName) => {
 
 const resolveMountConfig = () => {
   const hostConfig = window.REACT_AGENT_HOST_CONFIG;
-  if (hostConfig && hostConfig.callerKey) {
+  if (hostConfig && hostConfig.appKey) {
     return {
-      callerKey: hostConfig.callerKey,
+      appKey: hostConfig.appKey,
       routeValues: Array.isArray(hostConfig.routeValues) ? hostConfig.routeValues : [],
       controlContext: hostConfig.controlContext && typeof hostConfig.controlContext === 'object' && !Array.isArray(hostConfig.controlContext)
         ? hostConfig.controlContext
@@ -188,7 +188,7 @@ const resolveMountConfig = () => {
   }
 
   return {
-    callerKey: callerKeyInput.value.trim() || 'demo-app',
+    appKey: appKeyInput.value.trim() || 'demo-app',
     routeValues: parseRouteValues(routeValuesInput.value),
     controlContext: parseJSONObject(controlContextInput.value, 'controlContext'),
     llmContext: parseJSONObject(llmContextInput.value, 'llmContext'),
@@ -212,7 +212,7 @@ const mountAgent = () => {
 
   currentHandle = window.AgentWebSDK.mount(container, {
     baseUrl,
-    callerKey: hostConfig.callerKey,
+    appKey: hostConfig.appKey,
     routeValues: hostConfig.routeValues,
     controlContext: hostConfig.controlContext,
     llmContext: hostConfig.llmContext,
@@ -298,20 +298,20 @@ const parseReplayScope = () => {
   }
 
   const sessionId = typeof scope.sessionId === 'string' ? scope.sessionId.trim() : '';
-  const callerKey = typeof scope.callerKey === 'string' ? scope.callerKey.trim() : '';
+  const appKey = typeof scope.appKey === 'string' ? scope.appKey.trim() : '';
   if (!sessionId) throw new Error('sessionId 不能为空');
-  if (!callerKey) throw new Error('callerKey 不能为空');
+  if (!appKey) throw new Error('appKey 不能为空');
   if (!Array.isArray(scope.routeValues) || scope.routeValues.some((item) => typeof item !== 'string')) {
     throw new Error('routeValues 必须是字符串数组');
   }
 
-  return { sessionId, callerKey, routeValues: scope.routeValues };
+  return { sessionId, appKey, routeValues: scope.routeValues };
 };
 
 const buildReplayURL = (scope) => {
   const replayURL = new URL('/react-base-service/react/replay', location.origin);
   replayURL.searchParams.set('sessionId', scope.sessionId);
-  replayURL.searchParams.set('callerKey', scope.callerKey);
+  replayURL.searchParams.set('appKey', scope.appKey);
   replayURL.searchParams.set('routeValues', JSON.stringify(scope.routeValues));
   replayURL.searchParams.set('theme', sdkTheme);
   return replayURL;
@@ -363,33 +363,33 @@ const setOperationState = (element, message, isError = false) => {
   element.classList.toggle('rp-error', isError);
 };
 
-const closeCopyCallerModal = () => {
-  copyCallerModalMask.classList.remove('rp-visible');
-  setOperationState(copyCallerModalState, '');
+const closeCopyAppModal = () => {
+  copyAppModalMask.classList.remove('rp-visible');
+  setOperationState(copyAppModalState, '');
 };
 
-const openCopyCallerModal = async () => {
-  const sourceCallerKey = callerKeyInput.value.trim();
-  if (!sourceCallerKey) {
-    alert('请先填写源 callerKey');
-    callerKeyInput.focus();
+const openCopyAppModal = async () => {
+  const sourceAppKey = appKeyInput.value.trim();
+  if (!sourceAppKey) {
+    alert('请先填写源 appKey');
+    appKeyInput.focus();
     return;
   }
-  copySourceCallerInput.value = sourceCallerKey;
-  copyTargetCallerInput.value = `${sourceCallerKey.slice(0, 27)}_copy`;
-  copyTargetNameInput.value = `${sourceCallerKey} 副本`;
+  copySourceAppInput.value = sourceAppKey;
+  copyTargetAppInput.value = `${sourceAppKey.slice(0, 27)}_copy`;
+  copyTargetNameInput.value = `${sourceAppKey} 副本`;
   copyTargetPlatformInput.value = '';
-  copyTargetDescriptionInput.value = `从 ${sourceCallerKey} 复制`;
-  setOperationState(copyCallerModalState, '');
-  copyCallerModalMask.classList.add('rp-visible');
-  copyTargetCallerInput.focus();
-  copyTargetCallerInput.select();
+  copyTargetDescriptionInput.value = `从 ${sourceAppKey} 复制`;
+  setOperationState(copyAppModalState, '');
+  copyAppModalMask.classList.add('rp-visible');
+  copyTargetAppInput.focus();
+  copyTargetAppInput.select();
 
   try {
-    const callers = await post('/caller/list', {});
-    const source = Array.isArray(callers) ? callers.find((item) => item.callerKey === sourceCallerKey) : null;
-    if (source && copyCallerModalMask.classList.contains('rp-visible') && copySourceCallerInput.value === sourceCallerKey) {
-      copyTargetNameInput.value = `${source.name || sourceCallerKey} 副本`;
+    const apps = await post('/app/list', {});
+    const source = Array.isArray(apps) ? apps.find((item) => item.appKey === sourceAppKey) : null;
+    if (source && copyAppModalMask.classList.contains('rp-visible') && copySourceAppInput.value === sourceAppKey) {
+      copyTargetNameInput.value = `${source.name || sourceAppKey} 副本`;
       copyTargetPlatformInput.value = source.platform || '';
     }
   } catch {
@@ -397,91 +397,91 @@ const openCopyCallerModal = async () => {
   }
 };
 
-const confirmCopyCaller = async () => {
-  const sourceCallerKey = copySourceCallerInput.value.trim();
-  const targetCallerKey = copyTargetCallerInput.value.trim();
+const confirmCopyApp = async () => {
+  const sourceAppKey = copySourceAppInput.value.trim();
+  const targetAppKey = copyTargetAppInput.value.trim();
   const name = copyTargetNameInput.value.trim();
   const platform = copyTargetPlatformInput.value.trim();
-  if (!targetCallerKey || !name || !platform) {
-    setOperationState(copyCallerModalState, '目标 callerKey、名称和平台不能为空', true);
+  if (!targetAppKey || !name || !platform) {
+    setOperationState(copyAppModalState, '目标 appKey、名称和平台不能为空', true);
     return;
   }
 
-  copyCallerModalConfirm.disabled = true;
-  setOperationState(copyCallerModalState, '正在复制...');
+  copyAppModalConfirm.disabled = true;
+  setOperationState(copyAppModalState, '正在复制...');
   try {
-    const result = await post('/caller/copy_config', {
-      sourceCallerKey,
-      targetCaller: {
-        callerKey: targetCallerKey,
+    const result = await post('/app/copy_config', {
+      sourceAppKey,
+      targetApp: {
+        appKey: targetAppKey,
         name,
         description: copyTargetDescriptionInput.value,
         platform,
       },
     });
-    closeCopyCallerModal();
-    callerKeyInput.value = result.targetCallerKey;
+    closeCopyAppModal();
+    appKeyInput.value = result.targetAppKey;
     await remountAgent();
     const copied = result.copied || {};
     management.setState(`复制完成：Skill ${copied.skills || 0}，系统提示词 ${copied.systemPrompts || 0}，Tool ${copied.tools || 0}，Tool 策略 ${copied.toolUserPolicies || 0}，API Key ${copied.apiKeys || 0}`);
   } catch (error) {
-    setOperationState(copyCallerModalState, error?.message || '复制失败', true);
+    setOperationState(copyAppModalState, error?.message || '复制失败', true);
   } finally {
-    copyCallerModalConfirm.disabled = false;
+    copyAppModalConfirm.disabled = false;
   }
 };
 
-const closeDeleteCallerModal = () => {
-  deleteCallerModalMask.classList.remove('rp-visible');
-  deleteCallerConfirmInput.value = '';
-  setOperationState(deleteCallerModalState, '');
+const closeDeleteAppModal = () => {
+  deleteAppModalMask.classList.remove('rp-visible');
+  deleteAppConfirmInput.value = '';
+  setOperationState(deleteAppModalState, '');
 };
 
-const openDeleteCallerModal = () => {
-  const callerKey = callerKeyInput.value.trim();
-  if (!callerKey) {
-    alert('请先填写要删除的 callerKey');
-    callerKeyInput.focus();
+const openDeleteAppModal = () => {
+  const appKey = appKeyInput.value.trim();
+  if (!appKey) {
+    alert('请先填写要删除的 appKey');
+    appKeyInput.focus();
     return;
   }
-  deleteCallerConfirmLabel.textContent = `请输入 ${callerKey} 确认删除`;
-  deleteCallerConfirmInput.value = '';
-  setOperationState(deleteCallerModalState, '');
-  deleteCallerModalMask.classList.add('rp-visible');
-  deleteCallerConfirmInput.focus();
+  deleteAppConfirmLabel.textContent = `请输入 ${appKey} 确认删除`;
+  deleteAppConfirmInput.value = '';
+  setOperationState(deleteAppModalState, '');
+  deleteAppModalMask.classList.add('rp-visible');
+  deleteAppConfirmInput.focus();
 };
 
-const clearDeletedCaller = () => {
+const clearDeletedApp = () => {
   disposeSQLClientTools?.();
   disposeSQLClientTools = null;
   detachContextUsageCard();
   currentHandle?.destroy?.();
   currentHandle = null;
-  callerKeyInput.value = '';
+  appKeyInput.value = '';
   routeValuesInput.value = '';
   container.innerHTML = '';
   management.items = [];
   management.renderTable();
-  management.setState('Caller 已删除');
+  management.setState('App 已删除');
 };
 
-const confirmDeleteCaller = async () => {
-  const callerKey = callerKeyInput.value.trim();
-  if (deleteCallerConfirmInput.value.trim() !== callerKey) {
-    setOperationState(deleteCallerModalState, `请输入完整的 ${callerKey}`, true);
+const confirmDeleteApp = async () => {
+  const appKey = appKeyInput.value.trim();
+  if (deleteAppConfirmInput.value.trim() !== appKey) {
+    setOperationState(deleteAppModalState, `请输入完整的 ${appKey}`, true);
     return;
   }
 
-  deleteCallerModalConfirm.disabled = true;
-  setOperationState(deleteCallerModalState, '正在删除...');
+  deleteAppModalConfirm.disabled = true;
+  setOperationState(deleteAppModalState, '正在删除...');
   try {
-    await post('/caller/batch_delete', { callerKey });
-    closeDeleteCallerModal();
-    clearDeletedCaller();
+    await post('/app/batch_delete', { appKey });
+    closeDeleteAppModal();
+    clearDeletedApp();
   } catch (error) {
-    setOperationState(deleteCallerModalState, error?.message || '删除失败', true);
+    setOperationState(deleteAppModalState, error?.message || '删除失败', true);
   } finally {
-    deleteCallerModalConfirm.disabled = false;
+    deleteAppModalConfirm.disabled = false;
   }
 };
 
@@ -515,10 +515,10 @@ const mcpStatusBadge = (item) => {
 
 const getConfig = () => resolveMountConfig();
 
-// 管理面板 Caller 筛选：'' = 全部（跨 caller 列出），'default' = 默认作用域，其余为具体 callerKey。
-const callerFilterValue = () => document.getElementById('management-caller-filter')?.value ?? '';
-// 新建资源的目标 caller：跟随 Caller 筛选（全部时回落到左上角全局 callerKey）。
-const createTargetCallerKey = () => callerFilterValue() || getConfig().callerKey;
+// 管理面板 App 筛选：'' = 全部（跨 app 列出），'default' = 默认作用域，其余为具体 appKey。
+const appFilterValue = () => document.getElementById('management-app-filter')?.value ?? '';
+// 新建资源的目标 app：跟随 App 筛选（全部时回落到左上角全局 appKey）。
+const createTargetAppKey = () => appFilterValue() || getConfig().appKey;
 
 // 弹窗「适用路由」字段与 routeValues 数组的互转（逗号分隔，留空 = [] 通用）。
 const splitRouteText = (text) => String(text ?? '').split(',').map((value) => value.trim()).filter(Boolean);
@@ -527,21 +527,21 @@ const joinRouteValues = (routeValues) => (Array.isArray(routeValues) ? routeValu
 const createDefaultRouteText = () => joinRouteValues(getConfig().routeValues);
 
 const resources = {
-  caller: {
-    title: 'Caller 管理',
-    addText: '注册 Caller',
-    idKey: 'callerKey',
-    listPath: '/caller/list',
-    createPath: '/caller/register',
-    updatePath: '/caller/update',
-    // 不提供 deletePath：Caller 删除连带其全部资源，统一走「更多能力」里的强确认入口。
+  app: {
+    title: 'App 管理',
+    addText: '注册 App',
+    idKey: 'appKey',
+    listPath: '/app/list',
+    createPath: '/app/register',
+    updatePath: '/app/update',
+    // 不提供 deletePath：App 删除连带其全部资源，统一走「更多能力」里的强确认入口。
     columns: [
-      ['callerKey', 'callerKey'], ['name', '名称'], ['description', '描述'], ['platform', '平台'], ['createdAt', '创建时间'], ['planEnabled', 'Plan'], ['status', '状态'], ['actions', '操作'],
+      ['appKey', 'appKey'], ['name', '名称'], ['description', '描述'], ['platform', '平台'], ['createdAt', '创建时间'], ['planEnabled', 'Plan'], ['status', '状态'], ['actions', '操作'],
     ],
-    empty: () => ({ callerKey: '', name: '', description: '', platform: '', planEnabled: false, status: 1 }),
+    empty: () => ({ appKey: '', name: '', description: '', platform: '', planEnabled: false, status: 1 }),
     toDraft: (item) => ({ ...item }),
     toPayload: (draft) => ({
-      callerKey: draft.callerKey,
+      appKey: draft.appKey,
       name: draft.name,
       description: draft.description,
       platform: draft.platform,
@@ -549,8 +549,8 @@ const resources = {
       status: Number(draft.status),
     }),
     fields: (mode) => mode === 'create'
-      ? [['callerKey', 'callerKey'], ['name', '名称'], ['platform', '平台'], ['planEnabled', 'Plan', 'select'], ['description', '描述', 'textarea']]
-      : [['callerKey', 'callerKey', 'readonly'], ['name', '名称'], ['platform', '平台'], ['planEnabled', 'Plan', 'select'], ['status', '状态', 'select'], ['description', '描述', 'textarea']],
+      ? [['appKey', 'appKey'], ['name', '名称'], ['platform', '平台'], ['planEnabled', 'Plan', 'select'], ['description', '描述', 'textarea']]
+      : [['appKey', 'appKey', 'readonly'], ['name', '名称'], ['platform', '平台'], ['planEnabled', 'Plan', 'select'], ['status', '状态', 'select'], ['description', '描述', 'textarea']],
   },
   tool: {
     title: '工具管理',
@@ -563,22 +563,22 @@ const resources = {
     batchStatusPayload: (item, status) => ({ toolId: item.toolId, status }),
     // 工具页支持「只看 MCP」筛选（toolbar 按钮），筛出 MCP 连接同步进注册表的工具。
     mcpFilter: true,
-    // 支持 Caller 筛选：全部（跨 caller）/ 默认作用域 / 各 caller。
-    callerFilter: true,
+    // 支持 App 筛选：全部（跨 app）/ 默认作用域 / 各 app。
+    appFilter: true,
     listPath: '/tool/list',
     createPath: '/tool/register',
     updatePath: '/tool/update',
     deletePath: '/tool/delete',
     deleteBody: (item) => ({ toolId: item.toolId }),
     columns: [
-      ['toolId', '工具标识'], ['name', '工具名称'], ['description', '工具描述'], ['toolType', '工具类型'], ['callerKey', '归属 caller'], ['config', '工具配置'], ['routeValues', '适用路由'], ['status', '状态'], ['actions', '操作'],
+      ['toolId', '工具标识'], ['name', '工具名称'], ['description', '工具描述'], ['toolType', '工具类型'], ['appKey', '归属 app'], ['config', '工具配置'], ['routeValues', '适用路由'], ['status', '状态'], ['actions', '操作'],
     ],
-    empty: () => ({ name: '', description: '', toolType: 'client', callerKey: createTargetCallerKey(), routeText: createDefaultRouteText(), configText: '{}', status: 1 }),
+    empty: () => ({ name: '', description: '', toolType: 'client', appKey: createTargetAppKey(), routeText: createDefaultRouteText(), configText: '{}', status: 1 }),
     toDraft: (item) => ({ ...item, routeText: joinRouteValues(item.routeValues), configText: JSON.stringify(item.config ?? {}, null, 2) }),
     toPayload: (draft, config) => {
       const payload = {
         toolId: draft.toolId,
-        callerKey: draft.callerKey || config.callerKey,
+        appKey: draft.appKey || config.appKey,
         routeValues: splitRouteText(draft.routeText),
         name: draft.name,
         description: draft.description,
@@ -593,7 +593,7 @@ const resources = {
       const isMcp = draft?.toolType === 'mcp';
       return [
         ['name', '工具名称'],
-        ['callerKey', '归属 caller', 'readonly'],
+        ['appKey', '归属 app', 'readonly'],
         ['routeText', '适用路由（逗号分隔）'],
         ['toolType', '工具类型', isMcp ? 'readonly' : 'text'],
         ['status', '状态', 'select'],
@@ -612,27 +612,27 @@ const resources = {
     title: '系统提示词管理',
     addText: '新增提示词',
     idKey: 'id',
-    callerFilter: true,
+    appFilter: true,
     listPath: '/system-prompt/list',
     createPath: '/system-prompt/register',
     updatePath: '/system-prompt/update',
     deletePath: '/system-prompt/delete',
     deleteBody: (item) => ({ id: item.id }),
     columns: [
-      ['id', 'ID'], ['name', '名称'], ['content', '内容'], ['callerKey', '归属 caller'], ['routeValues', '适用路由'], ['status', '状态'], ['actions', '操作'],
+      ['id', 'ID'], ['name', '名称'], ['content', '内容'], ['appKey', '归属 app'], ['routeValues', '适用路由'], ['status', '状态'], ['actions', '操作'],
     ],
-    empty: () => ({ name: '', content: '', callerKey: createTargetCallerKey(), routeText: createDefaultRouteText(), status: 1 }),
+    empty: () => ({ name: '', content: '', appKey: createTargetAppKey(), routeText: createDefaultRouteText(), status: 1 }),
     toDraft: (item) => ({ ...item, routeText: joinRouteValues(item.routeValues) }),
     toPayload: (draft, config) => ({
       id: draft.id,
-      callerKey: draft.callerKey || config.callerKey,
+      appKey: draft.appKey || config.appKey,
       routeValues: splitRouteText(draft.routeText),
       name: draft.name,
       content: draft.content,
       status: Number(draft.status),
     }),
     fields: (mode) => [
-      ['name', '名称'], ['callerKey', '归属 caller', 'readonly'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['content', '内容', 'textarea'],
+      ['name', '名称'], ['appKey', '归属 app', 'readonly'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['content', '内容', 'textarea'],
     ],
   },
   skill: {
@@ -642,7 +642,7 @@ const resources = {
     // 批量改状态：/skill/update 要求全量字段，走默认 payload（列表项原值 + 新 status）。
     batchStatus: true,
     batchItemName: '技能',
-    callerFilter: true,
+    appFilter: true,
     listPath: '/skill/list',
     createPath: '/skill/create',
     updatePath: '/skill/update',
@@ -650,17 +650,17 @@ const resources = {
     deleteBody: (item) => ({ skillId: item.skillId }),
     // P2-2 SKILL.md 粘贴导入（frontmatter：name/description/triggers + 正文；同名覆盖）。
     importPath: '/skill/import',
-    importNote: '粘贴「frontmatter + 正文」格式的 SKILL.md（frontmatter 支持 name/description/triggers/caller_key/route_values，正文即技能说明）。同 caller 同名覆盖更新。',
+    importNote: '粘贴「frontmatter + 正文」格式的 SKILL.md（frontmatter 支持 name/description/triggers/app_key/route_values，正文即技能说明）。同 app 同名覆盖更新。',
     columns: [
-      ['skillId', 'skill 标识'], ['name', '名称'], ['description', '描述'], ['triggerCondition', '触发条件'], ['isDefault', '默认'], ['callerKey', '归属 caller'], ['routeValues', '适用路由'], ['status', '状态'], ['actions', '操作'],
+      ['skillId', 'skill 标识'], ['name', '名称'], ['description', '描述'], ['triggerCondition', '触发条件'], ['isDefault', '默认'], ['appKey', '归属 app'], ['routeValues', '适用路由'], ['status', '状态'], ['actions', '操作'],
     ],
     empty: () => ({
-      name: '', description: '', triggerCondition: '', forbiddenCondition: '', executionSteps: '', businessContext: '', promptSupplement: '', isDefault: 0, callerKey: createTargetCallerKey(), routeText: createDefaultRouteText(), status: 1,
+      name: '', description: '', triggerCondition: '', forbiddenCondition: '', executionSteps: '', businessContext: '', promptSupplement: '', isDefault: 0, appKey: createTargetAppKey(), routeText: createDefaultRouteText(), status: 1,
     }),
     toDraft: (item) => ({ ...item, routeText: joinRouteValues(item.routeValues) }),
     toPayload: (draft, config) => ({
       skillId: draft.skillId,
-      callerKey: draft.callerKey || config.callerKey,
+      appKey: draft.appKey || config.appKey,
       routeValues: splitRouteText(draft.routeText),
       name: draft.name,
       description: draft.description,
@@ -673,11 +673,11 @@ const resources = {
       status: Number(draft.status),
     }),
     fields: (mode) => [
-      ['name', '名称'], ['callerKey', '归属 caller', 'readonly'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['isDefault', '默认', 'defaultSelect'], ['description', '描述', 'textarea'], ['triggerCondition', '触发条件', 'textarea'], ['forbiddenCondition', '禁用条件', 'textarea'], ['executionSteps', '执行步骤', 'textarea'], ['businessContext', '业务上下文', 'textarea'], ['promptSupplement', '补充提示词', 'textarea'],
+      ['name', '名称'], ['appKey', '归属 app', 'readonly'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['isDefault', '默认', 'defaultSelect'], ['description', '描述', 'textarea'], ['triggerCondition', '触发条件', 'textarea'], ['forbiddenCondition', '禁用条件', 'textarea'], ['executionSteps', '执行步骤', 'textarea'], ['businessContext', '业务上下文', 'textarea'], ['promptSupplement', '补充提示词', 'textarea'],
     ],
   },
-  // 「API Key 管理」页已撤除（P1 Key 双轨消除）：caller 级凭证并入模型配置面板的
-  // 「连接与密钥」（tblLlmConnection，协议+地址+Key，无 ModelHash run 按 caller+路由
+  // 「API Key 管理」页已撤除（P1 Key 双轨消除）：app 级凭证并入模型配置面板的
+  // 「连接与密钥」（tblLlmConnection，协议+地址+Key，无 ModelHash run 按 app+路由
   // 解析、优先于旧 tblLlmApiKey）；后端 /apikey/* 路由保留作为契约兼容层。
   agent: {
     title: '子 Agent 管理',
@@ -685,7 +685,7 @@ const resources = {
     itemName: '子 Agent',
     addText: '新增子 Agent',
     idKey: 'agentId',
-    callerFilter: true,
+    appFilter: true,
     listPath: '/agent/list',
     createPath: '/agent/create',
     updatePath: '/agent/update',
@@ -693,12 +693,12 @@ const resources = {
     deleteBody: (item) => ({ agentId: item.agentId }),
     // P1 Markdown 导入（frontmatter + 正文即 system_prompt）。
     importPath: '/agent/import',
-    importNote: '粘贴「frontmatter + 正文」格式的子 Agent 定义（frontmatter 支持 agent_key/name/description/caller_key/route_values/model_key/model_version/tools/skills/max_steps/max_tokens_per_run/permission_mode，正文即系统提示词）。同 caller 同 agent_key 重复会报错。',
+    importNote: '粘贴「frontmatter + 正文」格式的子 Agent 定义（frontmatter 支持 agent_key/name/description/app_key/route_values/model_key/model_version/tools/skills/max_steps/max_tokens_per_run/permission_mode，正文即系统提示词）。同 app 同 agent_key 重复会报错。',
     columns: [
-      ['agentKey', 'agent_key'], ['name', '名称'], ['description', '委派说明'], ['callerKey', '归属 caller'], ['maxSteps', '步数上限'], ['maxTokensPerRun', 'token 预算'], ['readOnly', '只读'], ['permissionMode', '权限模式'], ['status', '状态'], ['actions', '操作'],
+      ['agentKey', 'agent_key'], ['name', '名称'], ['description', '委派说明'], ['appKey', '归属 app'], ['maxSteps', '步数上限'], ['maxTokensPerRun', 'token 预算'], ['readOnly', '只读'], ['permissionMode', '权限模式'], ['status', '状态'], ['actions', '操作'],
     ],
     empty: () => ({
-      agentKey: '', name: '', description: '', callerKey: createTargetCallerKey(), routeText: createDefaultRouteText(),
+      agentKey: '', name: '', description: '', appKey: createTargetAppKey(), routeText: createDefaultRouteText(),
       systemPrompt: '', modelKey: '', modelVersion: '', toolsText: '', skillsText: '', maxSteps: 8, maxTokensPerRun: 0, readOnly: 0, permissionMode: 'inherit', status: 1,
     }),
     toDraft: (item) => ({
@@ -712,7 +712,7 @@ const resources = {
       agentKey: draft.agentKey,
       name: draft.name,
       description: draft.description,
-      callerKey: draft.callerKey || config.callerKey,
+      appKey: draft.appKey || config.appKey,
       routeValues: splitRouteText(draft.routeText),
       systemPrompt: draft.systemPrompt,
       modelKey: draft.modelKey || '',
@@ -728,7 +728,7 @@ const resources = {
     fields: (mode) => [
       ['agentKey', 'agent_key', mode === 'edit' ? 'readonly' : 'text'],
       ['name', '名称'],
-      ['callerKey', '归属 caller', 'readonly'],
+      ['appKey', '归属 app', 'readonly'],
       ['routeText', '适用路由（逗号分隔）'],
       ['status', '状态', 'select'],
       ['maxSteps', '步数上限（0=默认）'],
@@ -758,7 +758,7 @@ const resources = {
     createPath: '/react/mcp/create',
     updatePath: '/react/mcp/update',
     deletePath: '/react/mcp/delete',
-    deleteBody: (item) => ({ callerKey: getConfig().callerKey, serverId: item.serverId }),
+    deleteBody: (item) => ({ appKey: getConfig().appKey, serverId: item.serverId }),
     empty: () => ({
       rawConfig: JSON.stringify({
         mcpServers: {
@@ -771,28 +771,28 @@ const resources = {
     }),
     modalNote: (mode) => (mode === 'create'
       ? '请从 MCP Servers 的介绍页面复制配置 JSON，并粘贴到输入框中。仅支持 url 形式（HTTP MCP）；command/args 形式（npx/uvx）不在基座开放范围内。<span class="rp-note-warning">配置前请确认来源，甄别风险。</span>'
-      : '修改端点、请求头、超时或绑定 caller 后会自动重连并重新同步工具清单；停用会同时下线其同步的全部注册工具。绑定 caller 填逗号分隔的 callerKey（属主恒定生效，不用填）。'),
+      : '修改端点、请求头、超时或绑定 app 后会自动重连并重新同步工具清单；停用会同时下线其同步的全部注册工具。绑定 app 填逗号分隔的 appKey（属主恒定生效，不用填）。'),
     loadDetail: async (item, config) => {
-      const detail = await post('/react/mcp/detail', { callerKey: config.callerKey, serverId: item.serverId });
+      const detail = await post('/react/mcp/detail', { appKey: config.appKey, serverId: item.serverId });
       const server = detail?.server ?? {};
-      const bound = Array.isArray(server.boundCallers) ? server.boundCallers : [];
-      return { ...item, ...server, boundCallersText: bound.slice(1).join(','), headersText: JSON.stringify(detail?.headers ?? {}, null, 2) };
+      const bound = Array.isArray(server.boundApps) ? server.boundApps : [];
+      return { ...item, ...server, boundAppsText: bound.slice(1).join(','), headersText: JSON.stringify(detail?.headers ?? {}, null, 2) };
     },
     toPayload: (draft, config, mode) => (mode === 'create'
-      ? { callerKey: config.callerKey, rawConfig: draft.rawConfig }
+      ? { appKey: config.appKey, rawConfig: draft.rawConfig }
       : {
-        callerKey: config.callerKey,
+        appKey: config.appKey,
         serverId: draft.serverId,
         endpoint: draft.endpoint,
         headers: JSON.parse(draft.headersText || '{}'),
         timeoutMs: Number(draft.timeoutMs) || 30000,
         description: draft.description || '',
-        boundCallers: splitRouteText(draft.boundCallersText),
+        boundApps: splitRouteText(draft.boundAppsText),
         status: Number(draft.status),
       }),
     fields: (mode) => (mode === 'create'
       ? [['rawConfig', '原始配置（mcpServers JSON）', 'codeTextarea']]
-      : [['name', '名称', 'readonly'], ['kind', '传输', 'readonly'], ['boundCallersText', '绑定 caller（逗号分隔）'], ['endpoint', '端点 URL'], ['timeoutMs', '超时(ms)'], ['status', '状态', 'select'], ['description', '描述', 'textarea'], ['headersText', '请求头 JSON', 'codeTextarea']]),
+      : [['name', '名称', 'readonly'], ['kind', '传输', 'readonly'], ['boundAppsText', '绑定 app（逗号分隔）'], ['endpoint', '端点 URL'], ['timeoutMs', '超时(ms)'], ['status', '状态', 'select'], ['description', '描述', 'textarea'], ['headersText', '请求头 JSON', 'codeTextarea']]),
   },
   // MCP 应用（服务端网关接入凭证）：卡片列表 + 创建/重置密钥（secret 一次性展示）+ 工具绑定 + 调用审计。
   mcpapp: {
@@ -881,8 +881,22 @@ const settingCards = {
       { field: 'residentBudgetChars', label: '常驻层字符预算', hint: '常驻层注入 system 的字符预算', type: 'number', min: 100, range: '100-32000' },
       { field: 'indexMaxItems', label: '目录索引上限', hint: '按需层目录索引注入条数', type: 'number', min: 1, range: '1-200' },
       { field: 'detachedMaxItems', label: '按需层软上限', hint: '按需层 active 条目软上限，超出拒绝新增', type: 'number', min: 10, range: '10-5000' },
-      { field: 'allowUserScope', label: '用户维度隔离', hint: '开启=caller+user 双维度隔离；关闭=收敛到 caller 维度共享', type: 'switch' },
+      { field: 'allowUserScope', label: '用户维度隔离', hint: '开启=app+user 双维度隔离；关闭=收敛到 app 维度共享', type: 'switch' },
     ],
+  },
+  workspace: {
+    title: '检索代码和工作区',
+    kind: 'load_runtime_code + ws_*',
+    saveHint: '保存后新 run 即生效（全局设置，不按 app 隔离）',
+    rows: [
+      { field: 'enabled', label: '检索代码和工作区总开关', hint: '开启后注册 load_runtime_code（加载服务线上代码到只读工作区，并挂载 ws_* 文件/文本/符号检索工具）；关闭后对所有 app 隐藏该能力', type: 'switch' },
+    ],
+    // 半配置警示：开关开了但解析表为空（custom.yaml 未配 workspace.resolvers）时工具不会注册。
+    badge: (data) => {
+      if (!data.effective.enabled) return '<span class="rp-mcp-badge rp-mcp-badge-off">已关闭</span>';
+      if (!data.effective.resolversConfigured) return '<span class="rp-mcp-badge rp-mcp-badge-bad" title="custom.yaml 未配置 workspace.resolvers 解析表：开关已开但 load_runtime_code 工具不会注册">已开启·解析表未配置</span>';
+      return '<span class="rp-mcp-badge rp-mcp-badge-ok">已开启</span>';
+    },
   },
   web: {
     title: '网页检索',
@@ -935,8 +949,8 @@ const management = {
     });
     $('management-keyword').addEventListener('input', () => this.renderTable());
     $('management-status').addEventListener('change', () => this.renderTable());
-    $('management-caller-filter').addEventListener('change', () => this.reload());
-    this.loadCallerFilterOptions();
+    $('management-app-filter').addEventListener('change', () => this.reload());
+    this.loadAppFilterOptions();
     $('management-mcp-filter').addEventListener('change', () => {
       this.mcpConnection = $('management-mcp-filter').value;
       this.renderTable();
@@ -1058,7 +1072,7 @@ const management = {
     document.querySelectorAll('.rp-management-tab').forEach((tab) => tab.classList.toggle('rp-active', tab.dataset.type === this.type));
     $('management-table-wrap').classList.toggle('rp-hidden', useCards);
     $('management-cards').classList.toggle('rp-hidden', !useCards);
-    document.querySelector('.rp-caller-filter-field')?.classList.toggle('rp-hidden', !resource.callerFilter);
+    document.querySelector('.rp-app-filter-field')?.classList.toggle('rp-hidden', !resource.appFilter);
     document.querySelector('.rp-mcp-filter-field')?.classList.toggle('rp-hidden', !resource.mcpFilter);
     // 批量改状态控件：仅 batchStatus 资源显示；切页换 id 空间，勾选集清空。
     const batchable = Boolean(resource.batchStatus) && !useCards;
@@ -1085,26 +1099,26 @@ const management = {
     // 工具批量注册/编辑/上下线/应用授权都在管理台里做）。
     $('management-gwadmin').hidden = !(this.type === 'mcp' || this.type === 'mcpapp');
   },
-  // 拉取 caller 清单填充筛选下拉：固定「全部 / 默认」+ 扁平的 caller 列表（平台并入文案）。
-  async loadCallerFilterOptions() {
-    const select = $('management-caller-filter');
+  // 拉取 app 清单填充筛选下拉：固定「全部 / 默认」+ 扁平的 app 列表（平台并入文案）。
+  async loadAppFilterOptions() {
+    const select = $('management-app-filter');
     const current = select.value;
     try {
-      const fetched = await post('/caller/list', {});
-      const callers = Array.isArray(fetched) ? fetched : [];
-      let html = '<option value="">全部</option><option value="default">默认（全 caller 通用）</option>';
-      for (const item of callers) {
+      const fetched = await post('/app/list', {});
+      const apps = Array.isArray(fetched) ? fetched : [];
+      let html = '<option value="">全部</option><option value="default">默认（全 app 通用）</option>';
+      for (const item of apps) {
         const platform = String(item.platform || '').trim();
         const suffix = [
-          item.name && item.name !== item.callerKey ? item.name : '',
+          item.name && item.name !== item.appKey ? item.name : '',
           platform,
         ].filter(Boolean).map(escapeHtml).join(' · ');
-        html += `<option value="${escapeHtml(item.callerKey)}">${escapeHtml(item.callerKey)}${suffix ? `（${suffix}）` : ''}</option>`;
+        html += `<option value="${escapeHtml(item.appKey)}">${escapeHtml(item.appKey)}${suffix ? `（${suffix}）` : ''}</option>`;
       }
       select.innerHTML = html;
       if ([...select.options].some((option) => option.value === current)) select.value = current;
     } catch (error) {
-      this.setState(`Caller 清单加载失败：${error.message || error}`, true);
+      this.setState(`App 清单加载失败：${error.message || error}`, true);
     }
   },
   async reload() {
@@ -1122,9 +1136,9 @@ const management = {
         this.renderTable();
         return;
       }
-      // Caller 筛选资源：选中值优先（空 = 全部 caller），未启用筛选的资源沿用全局 callerKey。
-      const callerKey = resource.callerFilter ? callerFilterValue() : config.callerKey;
-      const data = await post(resource.listPath, { callerKey, routeValues: config.routeValues });
+      // App 筛选资源：选中值优先（空 = 全部 app），未启用筛选的资源沿用全局 appKey。
+      const appKey = resource.appFilter ? appFilterValue() : config.appKey;
+      const data = await post(resource.listPath, { appKey, routeValues: config.routeValues });
       this.items = Array.isArray(data) ? data.map(resource.toDraft) : [];
       this.setState('');
       this.renderTable();
@@ -1143,7 +1157,7 @@ const management = {
     }
     this.setState('正在重新检测 MCP 连接并同步工具清单...');
     try {
-      const summary = await post('/react/mcp/refresh', { callerKey: this.config().callerKey });
+      const summary = await post('/react/mcp/refresh', { appKey: this.config().appKey });
       await this.reload();
       const entries = Array.isArray(summary?.results) ? summary.results : [];
       const failed = entries.filter((item) => item.status === 'disconnected');
@@ -1183,9 +1197,9 @@ const management = {
   },
   renderValue(key, item) {
     if (key === 'actions') {
-      // 内置子智能体（source=builtin）：仅提供 fork（预填创建表单，同 caller 保存后覆盖内置）。
+      // 内置子智能体（source=builtin）：仅提供 fork（预填创建表单，同 app 保存后覆盖内置）。
       if (item.source === 'builtin') {
-        return '<div class="rp-row-actions"><button class="rp-button rp-link-btn" data-action="fork" type="button" title="以此定义为模板新建（保存后覆盖同 caller 同 agent_key 的内置定义）">Fork</button></div>';
+        return '<div class="rp-row-actions"><button class="rp-button rp-link-btn" data-action="fork" type="button" title="以此定义为模板新建（保存后覆盖同 app 同 agent_key 的内置定义）">Fork</button></div>';
       }
       // MCP 工具随连接生命周期管理：不可单独删除（修改仍可用，但配置 JSON 只读）。
       const deleteButton = this.resource().deletePath && item.toolType !== 'mcp'
@@ -1200,7 +1214,7 @@ const management = {
     if (key === 'readOnly') return Number(item.readOnly) === 1 ? '<span class="rp-mcp-kind-badge" title="只读执行域：非 readOnly 业务工具被硬拦截">只读</span>' : '';
     if (key === 'status') return `<button class="rp-button rp-switch ${isEnabled(item) ? 'rp-on' : ''}" data-action="toggle" type="button" title="${isEnabled(item) ? '启用' : '停用'}"></button>`;
     if (key === 'planEnabled') return `<button class="rp-button rp-switch ${isPlanEnabled(item) ? 'rp-on' : ''}" data-action="toggle-plan" type="button" title="Plan ${isPlanEnabled(item) ? '启用' : '停用'}"></button>`;
-    if (key === 'callerKey' && this.resource().callerFilter) return item.callerKey === 'default' ? '<span class="rp-mcp-badge rp-mcp-badge-ok" title="挂在 default 伪 caller 下，全部 caller 的请求都能解析到">默认（全 caller）</span>' : escapeHtml(plainValue(item.callerKey));
+    if (key === 'appKey' && this.resource().appFilter) return item.appKey === 'default' ? '<span class="rp-mcp-badge rp-mcp-badge-ok" title="挂在 default 伪 app 下，全部 app 的请求都能解析到">默认（全 app）</span>' : escapeHtml(plainValue(item.appKey));
     if (key === 'toolType' && item.toolType === 'mcp') {
       const server = item.config?.mcpServer || '';
       return `<span class="rp-mcp-kind-badge" title="MCP 连接：${escapeHtml(server)}">MCP·${escapeHtml(server)}</span>`;
@@ -1303,7 +1317,7 @@ const management = {
   },
   async loadMcpTools(item) {
     try {
-      const detail = await post('/react/mcp/detail', { callerKey: this.config().callerKey, serverId: item.serverId });
+      const detail = await post('/react/mcp/detail', { appKey: this.config().appKey, serverId: item.serverId });
       item.tools = detail?.server?.tools ?? [];
     } catch (error) {
       this.setState(error.message || '加载工具清单失败', true);
@@ -1315,10 +1329,10 @@ const management = {
     const enabled = isEnabled(item);
     const expanded = this.expandedMcp.has(item.serverId);
     const tools = Array.isArray(item.tools) ? item.tools : [];
-    // 工具同步目标 caller：属主（绿）+ 绑定 caller（蓝）。
-    const boundCallers = Array.isArray(item.boundCallers) ? item.boundCallers : [];
-    const boundLine = boundCallers.length
-      ? `<div class="rp-mcp-bound">同步 caller：${boundCallers.map((caller, i) => `<span class="rp-mcp-bound-chip${i === 0 ? ' rp-mcp-bound-owner' : ''}" title="${i === 0 ? '属主 caller（登记方，恒定生效）' : '绑定 caller'}">${escapeHtml(caller)}</span>`).join('')}</div>`
+    // 工具同步目标 app：属主（绿）+ 绑定 app（蓝）。
+    const boundApps = Array.isArray(item.boundApps) ? item.boundApps : [];
+    const boundLine = boundApps.length
+      ? `<div class="rp-mcp-bound">同步 app：${boundApps.map((app, i) => `<span class="rp-mcp-bound-chip${i === 0 ? ' rp-mcp-bound-owner' : ''}" title="${i === 0 ? '属主 app（登记方，恒定生效）' : '绑定 app'}">${escapeHtml(app)}</span>`).join('')}</div>`
       : '';
     return `
       <div class="rp-mcp-card${enabled ? '' : ' rp-mcp-disabled'}${expanded ? ' rp-expanded' : ''}" data-index="${index}">
@@ -1485,7 +1499,7 @@ const management = {
     const rowsHtml = tools.map((tool) => `
       <label class="rp-field rp-span-all" style="flex-direction:row;align-items:center;gap:8px">
         <input type="checkbox" data-grant-tool="${escapeHtml(tool.toolId)}" ${tool.granted ? 'checked' : ''} />
-        <span style="flex:1;min-width:0"><b>${escapeHtml(tool.name)}</b> <span class="rp-mcp-endpoint">${escapeHtml(tool.callerKey)}</span>${Number(tool.status) !== 1 ? ' <span class="rp-mcp-badge rp-mcp-badge-off">已下线</span>' : ''}${tool.description ? ` — ${escapeHtml(tool.description)}` : ''}</span>
+        <span style="flex:1;min-width:0"><b>${escapeHtml(tool.name)}</b> <span class="rp-mcp-endpoint">${escapeHtml(tool.appKey)}</span>${Number(tool.status) !== 1 ? ' <span class="rp-mcp-badge rp-mcp-badge-off">已下线</span>' : ''}${tool.description ? ` — ${escapeHtml(tool.description)}` : ''}</span>
       </label>`).join('');
     const grantedCount = tools.filter((tool) => tool.granted).length;
     return `
@@ -1555,7 +1569,7 @@ const management = {
           <span class="rp-mcp-toolcount">${escapeHtml(item.tools || '')}</span>
         </div>
         <div class="rp-mcp-card-body">
-          <div class="rp-mcp-bound">runId：${escapeHtml(item.runId)} · caller：${escapeHtml(item.callerKey)} · 挂载于 ${escapeHtml(item.loadedAt ? String(item.loadedAt).replace('T', ' ').slice(0, 19) : '-')}</div>
+          <div class="rp-mcp-bound">runId：${escapeHtml(item.runId)} · app：${escapeHtml(item.appKey)} · 挂载于 ${escapeHtml(item.loadedAt ? String(item.loadedAt).replace('T', ' ').slice(0, 19) : '-')}</div>
         </div>
       </div>`).join('');
     this.visibleItems = rows;
@@ -1712,7 +1726,7 @@ const management = {
   async connectMcp(item) {
     this.setState(`正在连接 ${item.name}...`);
     try {
-      const result = await post('/react/mcp/connect', { callerKey: this.config().callerKey, serverId: item.serverId });
+      const result = await post('/react/mcp/connect', { appKey: this.config().appKey, serverId: item.serverId });
       await this.reload();
       this.expandedMcp.add(item.serverId);
       this.setState(`${item.name} 连接成功，已同步 ${result?.toolCount ?? 0} 个工具`);
@@ -1770,13 +1784,13 @@ const management = {
     this.draft = this.resource().empty();
     this.renderModal();
   },
-  // 内置子智能体 Fork：以内置定义为模板打开创建表单（当前 caller 保存后同名覆盖内置）。
+  // 内置子智能体 Fork：以内置定义为模板打开创建表单（当前 app 保存后同名覆盖内置）。
   openFork(item) {
     const resource = this.resource();
     this.mode = 'create';
     const draft = { ...resource.empty(), ...resource.toDraft(item) };
     delete draft.agentId;
-    draft.callerKey = callerFilterValue() || this.config().callerKey || 'default';
+    draft.appKey = appFilterValue() || this.config().appKey || 'default';
     draft.status = 1;
     this.draft = draft;
     this.renderModal();
@@ -1788,7 +1802,7 @@ const management = {
     this.mode = 'import';
     this.draft = {
       markdown: '',
-      callerKey: callerFilterValue() || this.config().callerKey || 'default',
+      appKey: appFilterValue() || this.config().appKey || 'default',
       routeText: createDefaultRouteText(),
     };
     this.renderModal();
@@ -1800,7 +1814,7 @@ const management = {
       source: '',
       ref: '',
       repoPath: '',
-      callerKey: callerFilterValue() || this.config().callerKey || 'default',
+      appKey: appFilterValue() || this.config().appKey || 'default',
       routeText: createDefaultRouteText(),
     };
     this.renderModal();
@@ -1921,7 +1935,7 @@ const management = {
     let title;
     if (this.mode === 'import') {
       fields = [
-        ['callerKey', '兜底 caller（frontmatter 缺省时生效）', 'readonly'],
+        ['appKey', '兜底 app（frontmatter 缺省时生效）', 'readonly'],
         ['routeText', '兜底路由（逗号分隔）'],
         ['markdown', '定义 Markdown（frontmatter + 正文）', 'codeTextarea'],
       ];
@@ -1932,7 +1946,7 @@ const management = {
         ['source', '来源（选择本地目录 / 白名单内 git URL 或本地路径）', 'sourcePath'],
         ['ref', 'git ref（空=HEAD，本地路径忽略）'],
         ['repoPath', '包内子目录（可选，本地目录一般不需要）'],
-        ['callerKey', '兜底 caller', 'readonly'],
+        ['appKey', '兜底 app', 'readonly'],
         ['routeText', '兜底路由（逗号分隔）'],
       ];
       note = '安装会把包内 agents/skills/mcp.json 展开写入注册表（同名覆盖）；卸载可整体回滚。可直接选择本地 bundle 目录（内容上传服务端暂存后安装，无需配置路径）；其余来源必须在 llm.react.bundle.allowed_source_prefixes 白名单内。';
@@ -1994,7 +2008,7 @@ const management = {
       if (this.mode === 'import') {
         if (!this.draft.markdown || !this.draft.markdown.trim()) throw new Error('请粘贴定义 Markdown');
         await post(resource.importPath, {
-          callerKey: this.draft.callerKey || config.callerKey || 'default',
+          appKey: this.draft.appKey || config.appKey || 'default',
           routeValues: splitRouteText(this.draft.routeText),
           markdown: this.draft.markdown,
         });
@@ -2009,7 +2023,7 @@ const management = {
           source: this.draft.source.trim(),
           ref: this.draft.ref || '',
           repoPath: this.draft.repoPath || '',
-          callerKey: this.draft.callerKey || config.callerKey || 'default',
+          appKey: this.draft.appKey || config.appKey || 'default',
           routeValues: splitRouteText(this.draft.routeText),
         });
         this.closeModal();
@@ -2136,8 +2150,8 @@ const management = {
 };
 
 const initialConfig = window.REACT_AGENT_HOST_CONFIG;
-if (initialConfig && initialConfig.callerKey) {
-  callerKeyInput.value = initialConfig.callerKey;
+if (initialConfig && initialConfig.appKey) {
+  appKeyInput.value = initialConfig.appKey;
   routeValuesInput.value = Array.isArray(initialConfig.routeValues)
     ? initialConfig.routeValues.join(',')
     : '';
@@ -2430,25 +2444,25 @@ const remountAgent = async () => {
 };
 
 applyButton.addEventListener('click', remountAgent);
-copyCallerButton.addEventListener('click', openCopyCallerModal);
-deleteCallerButton.addEventListener('click', openDeleteCallerModal);
-copyCallerModalClose.addEventListener('click', closeCopyCallerModal);
-copyCallerModalCancel.addEventListener('click', closeCopyCallerModal);
-copyCallerModalConfirm.addEventListener('click', confirmCopyCaller);
-copyCallerModalMask.addEventListener('click', (event) => {
-  if (event.target === copyCallerModalMask) closeCopyCallerModal();
+copyAppButton.addEventListener('click', openCopyAppModal);
+deleteAppButton.addEventListener('click', openDeleteAppModal);
+copyAppModalClose.addEventListener('click', closeCopyAppModal);
+copyAppModalCancel.addEventListener('click', closeCopyAppModal);
+copyAppModalConfirm.addEventListener('click', confirmCopyApp);
+copyAppModalMask.addEventListener('click', (event) => {
+  if (event.target === copyAppModalMask) closeCopyAppModal();
 });
 copyTargetDescriptionInput.addEventListener('keydown', (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') confirmCopyCaller();
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') confirmCopyApp();
 });
-deleteCallerModalClose.addEventListener('click', closeDeleteCallerModal);
-deleteCallerModalCancel.addEventListener('click', closeDeleteCallerModal);
-deleteCallerModalConfirm.addEventListener('click', confirmDeleteCaller);
-deleteCallerModalMask.addEventListener('click', (event) => {
-  if (event.target === deleteCallerModalMask) closeDeleteCallerModal();
+deleteAppModalClose.addEventListener('click', closeDeleteAppModal);
+deleteAppModalCancel.addEventListener('click', closeDeleteAppModal);
+deleteAppModalConfirm.addEventListener('click', confirmDeleteApp);
+deleteAppModalMask.addEventListener('click', (event) => {
+  if (event.target === deleteAppModalMask) closeDeleteAppModal();
 });
-deleteCallerConfirmInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') confirmDeleteCaller();
+deleteAppConfirmInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') confirmDeleteApp();
 });
 openReplayLink.addEventListener('click', openReplayModal);
 replayModalClose.addEventListener('click', closeReplayModal);
@@ -2473,7 +2487,7 @@ inputAPIDemoValue.addEventListener('keydown', (event) => {
   event.preventDefault();
   runInputAPIDemo(event.metaKey || event.ctrlKey);
 });
-[routeValuesInput, callerKeyInput].forEach((input) => {
+[routeValuesInput, appKeyInput].forEach((input) => {
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') remountAgent();
   });

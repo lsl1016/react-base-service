@@ -28,7 +28,7 @@ var memoryExtractorCooldown = &scopedCooldownTable{last: make(map[string]time.Ti
 // maybeTriggerMemoryMaintenance 是 compact_end 后的记忆维护入口：
 // extractor.enabled 时走自动沉淀流水线，否则走 agentic reflection；二者互斥。
 func maybeTriggerMemoryMaintenance(s *reactEngineState, summary string, compacted []llm.ChatMessage) {
-	if conf.GetReactRuntimeConfig().Memory.Extractor.ExtractorEnabled() {
+	if s.req.runtimeConfig().Memory.Extractor.ExtractorEnabled() {
 		maybeTriggerMemoryExtraction(s, summary, compacted)
 		return
 	}
@@ -44,7 +44,7 @@ func maybeTriggerMemoryExtraction(s *reactEngineState, summary string, compacted
 		}
 	}()
 
-	cfg := conf.GetReactRuntimeConfig().Memory
+	cfg := s.req.runtimeConfig().Memory
 	if !cfg.MemoryEnabled() || !cfg.Extractor.ExtractorEnabled() {
 		return
 	}
@@ -66,7 +66,7 @@ func maybeTriggerMemoryExtraction(s *reactEngineState, summary string, compacted
 		apiKey:       s.req.apiKey,
 		modelKey:     s.currentModel.ModelKey,
 		modelVersion: s.currentModel.ModelVersion,
-		callerKey:    s.req.payload.CallerKey,
+		appKey:    s.req.payload.AppKey,
 		userName:     s.req.userName,
 		runID:        s.runID,
 	}
@@ -81,7 +81,7 @@ type extractionRunSpec struct {
 	apiKey       string
 	modelKey     string
 	modelVersion string
-	callerKey    string
+	appKey    string
 	userName     string
 	runID        string
 }
@@ -99,16 +99,16 @@ func runMemoryExtraction(spec extractionRunSpec, summary string, compacted []llm
 			if outcome.candidates == 0 {
 				status = "empty"
 			}
-			zlog.Infof(ginCtx, "[react.runMemoryExtraction] 沉淀完成: caller=%s run=%s 候选=%d 落库=%d",
-				spec.callerKey, spec.runID, outcome.candidates, outcome.applied)
+			zlog.Infof(ginCtx, "[react.runMemoryExtraction] 沉淀完成: app=%s run=%s 候选=%d 落库=%d",
+				spec.appKey, spec.runID, outcome.candidates, outcome.applied)
 			return
 		}
 		if IsReactRunCancelled(err) {
 			return
 		}
 		status = "error"
-		zlog.Warnf(ginCtx, "[react.runMemoryExtraction] 沉淀失败(第%d次): caller=%s run=%s err=%v",
-			attempt+1, spec.callerKey, spec.runID, err)
+		zlog.Warnf(ginCtx, "[react.runMemoryExtraction] 沉淀失败(第%d次): app=%s run=%s err=%v",
+			attempt+1, spec.appKey, spec.runID, err)
 	}
 }
 
@@ -129,7 +129,7 @@ func runMemoryExtractionOnce(ctx *gin.Context, spec extractionRunSpec, summary s
 	invoker := extractorLLMInvoker{client: client, model: spec.modelVersion}
 
 	runtime := memoryService.DefaultRuntime()
-	scope := runtime.ResolveScope(spec.callerKey, spec.userName, cfg.MemoryAllowUserScope())
+	scope := runtime.ResolveScope(spec.appKey, spec.userName, cfg.MemoryAllowUserScope())
 	items, err := runtime.ActiveItems(ctx, scope)
 	if err != nil {
 		return extractionOutcome{}, err

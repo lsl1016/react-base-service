@@ -17,7 +17,7 @@
  *
  *   const agent = createAgentClient({
  *     baseUrl: '/react-base-service/react',
- *     callerKey: 'report-editor',
+ *     appKey: 'report-editor',
  *     routeValues: ['report_abc123'],
  *   });
  *
@@ -484,7 +484,7 @@ export class AgentClient {
   async clearConversation(): Promise<void> {
     this.currentRuntime.clearConversationState();
     try {
-      await this.ledger.clearSessions(this.config.callerKey, this.config.routeValues);
+      await this.ledger.clearSessions(this.config.appKey, this.config.routeValues);
     } catch (error) {
       console.warn('[AgentClient] clear conversation ledger failed:', error);
     }
@@ -500,7 +500,7 @@ export class AgentClient {
   /** 获取当前会话的业务路由作用域，返回副本避免外部修改运行配置。 */
   getSessionScope(): AgentSessionScope {
     return {
-      callerKey: this.config.callerKey,
+      appKey: this.config.appKey,
       routeValues: [...(this.config.routeValues ?? [])],
     };
   }
@@ -571,9 +571,9 @@ export class AgentClient {
 
   /** 只读取本地缓存中的会话列表 */
   async listCachedSessions(params?: Partial<SessionListParams>): Promise<SessionMeta[]> {
-    const callerKey = params?.callerKey ?? this.config.callerKey;
+    const appKey = params?.appKey ?? this.config.appKey;
     const routeValues = params?.routeValues ?? this.config.routeValues;
-    return this.ledger.listSessions(callerKey, routeValues, {
+    return this.ledger.listSessions(appKey, routeValues, {
       type: params?.type,
       keyword: params?.keyword,
     });
@@ -582,7 +582,7 @@ export class AgentClient {
   /** 从服务端同步会话列表到本地缓存，然后返回本地缓存快照 */
   async syncSessions(params?: Partial<SessionListParams>): Promise<SessionMeta[]> {
     const request: SessionListParams = {
-      callerKey: this.config.callerKey,
+      appKey: this.config.appKey,
       routeValues: this.config.routeValues,
       ...params,
     };
@@ -594,7 +594,7 @@ export class AgentClient {
   /** 查询会话列表：先同步服务端，再返回本地缓存快照 */
   async listSessions(params?: Partial<SessionListParams>): Promise<SessionListResp> {
     const request: SessionListParams = {
-      callerKey: this.config.callerKey,
+      appKey: this.config.appKey,
       routeValues: this.config.routeValues,
       ...params,
     };
@@ -632,7 +632,7 @@ export class AgentClient {
   async deleteSession(sessionId: string): Promise<void> {
     await this.sessionManager.deleteSession({
       sessionId,
-      callerKey: this.config.callerKey,
+      appKey: this.config.appKey,
       routeValues: this.config.routeValues,
     });
 
@@ -673,7 +673,7 @@ export class AgentClient {
       throughMessageId: options.throughMessageId,
       inclusive: options.inclusive,
       title: options.title,
-      callerKey: this.config.callerKey,
+      appKey: this.config.appKey,
       routeValues: this.config.routeValues,
     });
     // 同步服务端列表让新会话进入本地缓存，再切换视图并懒恢复历史事件
@@ -690,7 +690,7 @@ export class AgentClient {
     const resp = await this.sessionManager.renameSession({
       sessionId,
       title,
-      callerKey: this.config.callerKey,
+      appKey: this.config.appKey,
       routeValues: this.config.routeValues,
     });
     try {
@@ -699,7 +699,7 @@ export class AgentClient {
       await this.ledger.upsertSession({
         sessionId,
         title: resp.title,
-        callerKey: this.config.callerKey,
+        appKey: this.config.appKey,
         routeValues: this.config.routeValues ?? [],
       });
     } catch (error) {
@@ -723,7 +723,7 @@ export class AgentClient {
 
     return this.ledger.replaceSessionEvents(sessionId, resp.events, {
       sessionId,
-      callerKey: this.config.callerKey,
+      appKey: this.config.appKey,
       routeValues: this.config.routeValues ?? [],
       type: 'chat',
       title: resp.title,
@@ -801,7 +801,7 @@ export class AgentClient {
     if (!sessionId) return null;
     return {
       sessionId,
-      callerKey: this.config.callerKey,
+      appKey: this.config.appKey,
       routeValues: this.config.routeValues,
     };
   }
@@ -894,7 +894,7 @@ export class AgentClient {
   async loadPlanExecutionDetail(planExecutionId: string): Promise<void> {
     const sessionId = this.getState().sessionId;
     if (!sessionId) return;
-    const detail = await this.sessionManager.getPlanExecutionDetail(planExecutionId, sessionId, this.config.callerKey);
+    const detail = await this.sessionManager.getPlanExecutionDetail(planExecutionId, sessionId, this.config.appKey);
     this.currentRuntime.reducer.applyPlanDetail(detail.view, detail.attempts ?? []);
   }
 
@@ -902,7 +902,7 @@ export class AgentClient {
   async loadPlanStepEvents(planExecutionId: string, stepAttemptId: string): Promise<void> {
     const sessionId = this.getState().sessionId;
     if (!sessionId) return;
-    const detail = await this.sessionManager.getPlanStepEvents(planExecutionId, stepAttemptId, sessionId, this.config.callerKey);
+    const detail = await this.sessionManager.getPlanStepEvents(planExecutionId, stepAttemptId, sessionId, this.config.appKey);
     this.currentRuntime.reducer.applyPlanStepEvents(detail.planExecutionId, detail.stepId, detail.stepAttemptId, detail.attemptNo, detail.events ?? []);
   }
 
@@ -911,7 +911,7 @@ export class AgentClient {
   /**
    * 从本地账本恢复最近会话（作用于初始草稿 runtime）
    *
-   * 构造时自动调用。从 IndexedDB 读取 callerKey + routeValues 匹配的最近 session，
+   * 构造时自动调用。从 IndexedDB 读取 appKey + routeValues 匹配的最近 session，
    * replay 其事件流重建 AgentState。如果本地无缓存则跳过。
    */
   private async restoreFromLedger(): Promise<void> {
@@ -920,7 +920,7 @@ export class AgentClient {
 
     try {
       const latest = await this.ledger.getLatestSession(
-        this.config.callerKey,
+        this.config.appKey,
         this.config.routeValues,
       );
 

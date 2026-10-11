@@ -51,22 +51,31 @@ type subAgentOverrideJSON struct {
 
 // GetSubAgentSetting 返回 subagent 委派策略的生效视图：effective（合并 yaml/默认值后的
 // 引擎实际消费口径）+ 逐字段 source + DB 覆盖原文。
-func GetSubAgentSetting(ctx *gin.Context) (*params.SubAgentSettingResp, error) {
-	override, updatedBy, updatedAt, err := loadSubAgentOverride(ctx)
+func GetSubAgentSetting(ctx *gin.Context, appKey string) (*params.SubAgentSettingResp, error) {
+	override, updatedBy, updatedAt, err := loadSubAgentOverride(ctx, appKey)
 	if err != nil {
 		return nil, err
+	}
+	// app 维度读取视图：在全局覆盖基线上叠加 app 行（app > 全局 > yaml），
+	// 与引擎 GetReactRuntimeConfigForApp 的生效口径一致；无 app 行时即全局视图。
+	if strings.TrimSpace(appKey) != "" {
+		globalOverride, _, _, err := loadSubAgentOverride(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		override = mergeSubAgentOverrideJSON(globalOverride, override)
 	}
 	return buildSubAgentSettingResp(override, updatedBy, updatedAt), nil
 }
 
 // UpdateSubAgentSetting 更新 subagent 委派策略：校验 → 合并现状 → 整行写回 → 立即刷新
 // conf 覆盖快照（本进程下一个 run 即生效）。clearFields 用于把指定字段清回 yaml/默认值。
-func UpdateSubAgentSetting(ctx *gin.Context, req *params.UpdateSubAgentSettingReq, userName string) (*params.SubAgentSettingResp, error) {
+func UpdateSubAgentSetting(ctx *gin.Context, appKey string, req *params.UpdateSubAgentSettingReq, userName string) (*params.SubAgentSettingResp, error) {
 	if err := validateSubAgentUpdate(req); err != nil {
 		return nil, err
 	}
 
-	current, _, _, err := loadSubAgentOverride(ctx)
+	current, _, _, err := loadSubAgentOverride(ctx, appKey)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +87,7 @@ func UpdateSubAgentSetting(ctx *gin.Context, req *params.UpdateSubAgentSettingRe
 	}
 	if err := model.UpsertRuntimeSetting(ctx, &model.RuntimeSetting{
 		SettingKey: SettingKeySubAgent,
+		AppKey:     strings.TrimSpace(appKey),
 		ValueJSON:  string(valueJSON),
 		UpdatedBy:  userName,
 	}); err != nil {
@@ -96,8 +106,9 @@ func UpdateSubAgentSetting(ctx *gin.Context, req *params.UpdateSubAgentSettingRe
 
 // loadSubAgentOverride 读 DB 覆盖原文；行缺失/JSON 解析失败按「无覆盖」处理并告警
 // （解析失败回落 yaml 而非报错，避免脏数据把管理面与引擎一起打挂）。
-func loadSubAgentOverride(ctx *gin.Context) (override *subAgentOverrideJSON, updatedBy, updatedAt string, err error) {
-	row, err := model.GetRuntimeSettingByKey(ctx, SettingKeySubAgent)
+// loadSubAgentOverride 读指定 app 的 subagent 覆盖原文（appKey 为空 = 全局行）。
+func loadSubAgentOverride(ctx *gin.Context, appKey string) (override *subAgentOverrideJSON, updatedBy, updatedAt string, err error) {
+	row, err := model.GetRuntimeSettingByKeyAndApp(ctx, SettingKeySubAgent, strings.TrimSpace(appKey))
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -112,6 +123,31 @@ func loadSubAgentOverride(ctx *gin.Context) (override *subAgentOverrideJSON, upd
 		}
 	}
 	return parsed, row.UpdatedBy, row.UpdatedAt.Format("2006-01-02 15:04:05"), nil
+}
+
+// mergeSubAgentOverrideJSON 把两层 subagent 覆盖合并（top 覆盖 base 的非 nil 字段）：
+// app 维度读取视图用（app 行 > 全局行），引擎侧同语义合并在 conf.mergeRuntimeSettingOverride。
+func mergeSubAgentOverrideJSON(base, top *subAgentOverrideJSON) *subAgentOverrideJSON {
+	merged := &subAgentOverrideJSON{}
+	if base != nil {
+		*merged = *base
+	}
+	if top == nil {
+		return merged
+	}
+	if top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	if top.MaxParallel != nil {
+		merged.MaxParallel = top.MaxParallel
+	}
+	if top.DefaultMaxSteps != nil {
+		merged.DefaultMaxSteps = top.DefaultMaxSteps
+	}
+	if top.MaxDepth != nil {
+		merged.MaxDepth = top.MaxDepth
+	}
+	return merged
 }
 
 // validateSubAgentUpdate 校验更新请求：覆盖值范围 + clearFields 字段名合法。
@@ -298,20 +334,27 @@ func toConfOverride(override *subAgentOverrideJSON) *conf.SubAgentSettingOverrid
 }
 
 // refreshOverrideFromDB 读 DB 覆盖并注入 conf 内存快照（subagent + context + memory + web 四组）。
+// 除全局行（app_key=''）外，同时为每个存在专属覆盖行的 app 重建一份快照集合：
+// app 快照只含该 app 自己的覆盖字段，合并链（app 覆盖 > 全局覆盖 > yaml）在
+// conf.GetReactRuntimeConfigForApp 中完成。某个 app 的四组全部读取失败时跳过该 app 并告警。
 func refreshOverrideFromDB(ctx *gin.Context) error {
-	subOverride, _, _, err := loadSubAgentOverride(ctx)
+	subOverride, _, _, err := loadSubAgentOverride(ctx, "")
 	if err != nil {
 		return err
 	}
-	contextOverride, _, _, err := loadContextCompactOverride(ctx)
+	contextOverride, _, _, err := loadContextCompactOverride(ctx, "")
 	if err != nil {
 		return err
 	}
-	memoryOverride, _, _, err := loadMemoryOverride(ctx)
+	memoryOverride, _, _, err := loadMemoryOverride(ctx, "")
 	if err != nil {
 		return err
 	}
-	webOverride, _, _, err := loadWebAccessOverride(ctx)
+	webOverride, _, _, err := loadWebAccessOverride(ctx, "")
+	if err != nil {
+		return err
+	}
+	workspaceOverride, _, _, err := loadWorkspaceOverride(ctx)
 	if err != nil {
 		return err
 	}
@@ -320,8 +363,45 @@ func refreshOverrideFromDB(ctx *gin.Context) error {
 		ContextCompact: toConfContextCompactOverride(contextOverride),
 		Memory:         toConfMemoryOverride(memoryOverride),
 		Web:            toConfWebAccessOverride(webOverride),
+		Workspace:      toConfWorkspaceOverride(workspaceOverride),
 	}
 	conf.SetRuntimeSettingOverride(snapshot)
+
+	// app 级覆盖快照：为每个有专属行的 app 装载四组覆盖，注入 conf 的 app 快照集合。
+	appKeys, err := model.ListAppKeysWithRuntimeSettings(ctx)
+	if err != nil {
+		return err
+	}
+	appSnapshots := make(map[string]conf.RuntimeSettingOverride, len(appKeys))
+	for _, appKey := range appKeys {
+		subApp, _, _, err := loadSubAgentOverride(ctx, appKey)
+		if err != nil {
+			zlog.Warnf(ctx, "[Setting] app 级 subagent 覆盖读取失败(跳过该app): appKey=%s, err=%v", appKey, err)
+			continue
+		}
+		contextApp, _, _, err := loadContextCompactOverride(ctx, appKey)
+		if err != nil {
+			zlog.Warnf(ctx, "[Setting] app 级 context 覆盖读取失败(跳过该app): appKey=%s, err=%v", appKey, err)
+			continue
+		}
+		memoryApp, _, _, err := loadMemoryOverride(ctx, appKey)
+		if err != nil {
+			zlog.Warnf(ctx, "[Setting] app 级 memory 覆盖读取失败(跳过该app): appKey=%s, err=%v", appKey, err)
+			continue
+		}
+		webApp, _, _, err := loadWebAccessOverride(ctx, appKey)
+		if err != nil {
+			zlog.Warnf(ctx, "[Setting] app 级 web 覆盖读取失败(跳过该app): appKey=%s, err=%v", appKey, err)
+			continue
+		}
+		appSnapshots[appKey] = conf.RuntimeSettingOverride{
+			SubAgent:       toConfOverride(subApp),
+			ContextCompact: toConfContextCompactOverride(contextApp),
+			Memory:         toConfMemoryOverride(memoryApp),
+			Web:            toConfWebAccessOverride(webApp),
+		}
+	}
+	conf.SetAppRuntimeSettingOverrides(appSnapshots)
 	return nil
 }
 

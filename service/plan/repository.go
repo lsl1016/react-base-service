@@ -167,7 +167,7 @@ func createExecution(ctx *gin.Context, prepared *reactService.PreparedExternalRu
 		PlanExecutionID: newID("plan_exec_"),
 		SessionID: prepared.SessionID,
 		OuterRunID: prepared.RunID,
-		CallerKey: prepared.CallerKey,
+		AppKey: prepared.AppKey,
 		UserName: prepared.UserName,
 		Status: model.PlanExecutionStatusPlanning,
 		ExecutionMode: "plan",

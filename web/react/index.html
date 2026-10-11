@@ -14,8 +14,8 @@
       <div id="config-bar" class="rp-config-bar">
         <div class="rp-config-row rp-config-row-primary">
           <div class="rp-field">
-            <label class="rp-field-label" for="caller-key-input">callerKey</label>
-            <input id="caller-key-input" class="rp-control rp-control-size-default" value="demo-app" />
+            <label class="rp-field-label" for="app-key-input">appKey</label>
+            <input id="app-key-input" class="rp-control rp-control-size-default" value="demo-app" />
           </div>
           <div class="rp-field">
             <label class="rp-field-label" for="route-values-input">routeValues</label>
@@ -41,14 +41,14 @@
           </div>
         </div>
         <div id="more-capabilities-panel" class="rp-more-capabilities rp-hidden">
-          <div class="rp-caller-actions-row">
+          <div class="rp-app-actions-row">
             <div>
-              <div class="rp-config-section-title">Caller 配置管理</div>
-              <div class="rp-caller-actions-description">复制或删除当前 Caller 下的全部配置资源。</div>
+              <div class="rp-config-section-title">App 配置管理</div>
+              <div class="rp-app-actions-description">复制或删除当前 App 下的全部配置资源。</div>
             </div>
-            <div class="rp-actions rp-caller-actions">
-              <button id="copy-caller" class="rp-button rp-secondary-btn" type="button">复制 Caller</button>
-              <button id="delete-caller" class="rp-button rp-danger-outline-btn" type="button">删除 Caller</button>
+            <div class="rp-actions rp-app-actions">
+              <button id="copy-app" class="rp-button rp-secondary-btn" type="button">复制 App</button>
+              <button id="delete-app" class="rp-button rp-danger-outline-btn" type="button">删除 App</button>
             </div>
           </div>
           <div id="context-config-panel" class="rp-config-row rp-config-row-context">
@@ -131,11 +131,11 @@
       <div class="rp-management-tabs" id="management-tabs"></div>
       <div class="rp-management-toolbar">
         <div id="management-title" class="rp-management-title">工具管理</div>
-        <label class="rp-field rp-compact rp-caller-filter-field rp-hidden">
-          <span class="rp-field-label">Caller</span>
-          <select id="management-caller-filter" class="rp-control rp-control-size-default">
+        <label class="rp-field rp-compact rp-app-filter-field rp-hidden">
+          <span class="rp-field-label">App</span>
+          <select id="management-app-filter" class="rp-control rp-control-size-default">
             <option value="">全部</option>
-            <option value="default">默认（全 caller 通用）</option>
+            <option value="default">默认（全 app 通用）</option>
           </select>
         </label>
         <label class="rp-field rp-compact">
@@ -188,7 +188,7 @@
           <span class="rp-field-label">会话定位信息</span>
           <textarea id="replay-scope-input" class="rp-control rp-textarea rp-replay-textarea" spellcheck="false">{
   "sessionId": "session_64b5fc2d95dd4a8bbf56efd1432aeb4a",
-  "callerKey": "demo-app",
+  "appKey": "demo-app",
   "routeValues": []
 }</textarea>
         </label>
@@ -201,21 +201,21 @@
     </div>
   </div>
 
-  <div id="copy-caller-modal-mask" class="rp-modal-mask">
-    <div class="rp-modal" role="dialog" aria-modal="true" aria-labelledby="copy-caller-modal-title">
+  <div id="copy-app-modal-mask" class="rp-modal-mask">
+    <div class="rp-modal" role="dialog" aria-modal="true" aria-labelledby="copy-app-modal-title">
       <div class="rp-modal-header">
-        <h3 id="copy-caller-modal-title" class="rp-modal-title">复制 Caller</h3>
-        <button id="copy-caller-modal-close" class="rp-button" type="button" aria-label="关闭">×</button>
+        <h3 id="copy-app-modal-title" class="rp-modal-title">复制 App</h3>
+        <button id="copy-app-modal-close" class="rp-button" type="button" aria-label="关闭">×</button>
       </div>
       <div class="rp-modal-body">
         <div class="rp-form-grid">
           <label class="rp-field">
-            <span class="rp-field-label">源 Caller</span>
-            <input id="copy-source-caller" class="rp-control rp-control-size-default" readonly />
+            <span class="rp-field-label">源 App</span>
+            <input id="copy-source-app" class="rp-control rp-control-size-default" readonly />
           </label>
           <label class="rp-field">
-            <span class="rp-field-label">目标 callerKey</span>
-            <input id="copy-target-caller" class="rp-control rp-control-size-default" maxlength="32" />
+            <span class="rp-field-label">目标 appKey</span>
+            <input id="copy-target-app" class="rp-control rp-control-size-default" maxlength="32" />
           </label>
           <label class="rp-field">
             <span class="rp-field-label">目标名称</span>
@@ -230,33 +230,33 @@
             <textarea id="copy-target-description" class="rp-control rp-textarea"></textarea>
           </label>
         </div>
-        <div class="rp-operation-note">将复制源 Caller 下所有路由层级的 Skill、系统提示词、Tool、Tool 用户策略和 API Key。</div>
-        <div id="copy-caller-modal-state" class="rp-operation-state" role="status" aria-live="polite"></div>
+        <div class="rp-operation-note">将复制源 App 下所有路由层级的 Skill、系统提示词、Tool、Tool 用户策略和 API Key。</div>
+        <div id="copy-app-modal-state" class="rp-operation-state" role="status" aria-live="polite"></div>
       </div>
       <div class="rp-modal-footer">
-        <button id="copy-caller-modal-cancel" class="rp-button" type="button">取消</button>
-        <button id="copy-caller-modal-confirm" class="rp-button rp-primary-btn" type="button">确认复制</button>
+        <button id="copy-app-modal-cancel" class="rp-button" type="button">取消</button>
+        <button id="copy-app-modal-confirm" class="rp-button rp-primary-btn" type="button">确认复制</button>
       </div>
     </div>
   </div>
 
-  <div id="delete-caller-modal-mask" class="rp-modal-mask">
-    <div class="rp-modal rp-danger-modal" role="dialog" aria-modal="true" aria-labelledby="delete-caller-modal-title">
+  <div id="delete-app-modal-mask" class="rp-modal-mask">
+    <div class="rp-modal rp-danger-modal" role="dialog" aria-modal="true" aria-labelledby="delete-app-modal-title">
       <div class="rp-modal-header">
-        <h3 id="delete-caller-modal-title" class="rp-modal-title">删除 Caller</h3>
-        <button id="delete-caller-modal-close" class="rp-button" type="button" aria-label="关闭">×</button>
+        <h3 id="delete-app-modal-title" class="rp-modal-title">删除 App</h3>
+        <button id="delete-app-modal-close" class="rp-button" type="button" aria-label="关闭">×</button>
       </div>
       <div class="rp-modal-body">
-        <div class="rp-operation-note rp-operation-note-danger">此操作将软删除 Caller 及其 Skill、系统提示词、Tool、Tool 用户策略和 API Key。历史会话与运行记录会保留。</div>
+        <div class="rp-operation-note rp-operation-note-danger">此操作将软删除 App 及其 Skill、系统提示词、Tool、Tool 用户策略和 API Key。历史会话与运行记录会保留。</div>
         <label class="rp-field rp-span-all">
-          <span id="delete-caller-confirm-label" class="rp-field-label">请输入 callerKey 确认</span>
-          <input id="delete-caller-confirm-input" class="rp-control rp-control-size-default" autocomplete="off" />
+          <span id="delete-app-confirm-label" class="rp-field-label">请输入 appKey 确认</span>
+          <input id="delete-app-confirm-input" class="rp-control rp-control-size-default" autocomplete="off" />
         </label>
-        <div id="delete-caller-modal-state" class="rp-operation-state" role="status" aria-live="polite"></div>
+        <div id="delete-app-modal-state" class="rp-operation-state" role="status" aria-live="polite"></div>
       </div>
       <div class="rp-modal-footer">
-        <button id="delete-caller-modal-cancel" class="rp-button" type="button">取消</button>
-        <button id="delete-caller-modal-confirm" class="rp-button rp-danger-btn" type="button">确认删除</button>
+        <button id="delete-app-modal-cancel" class="rp-button" type="button">取消</button>
+        <button id="delete-app-modal-confirm" class="rp-button rp-danger-btn" type="button">确认删除</button>
       </div>
     </div>
   </div>

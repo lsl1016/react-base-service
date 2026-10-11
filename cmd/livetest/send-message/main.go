@@ -50,7 +50,7 @@ func main() {
 		"第四步，调用 todo_write 写入一条『等待后台子任务』，然后结束回复。"
 
 	runPayload, _ := json.Marshal(map[string]any{
-		"callerKey":    "demo-app",
+		"appKey":    "demo-app",
 		"userPrompt":   prompt,
 		"modelKey":     "deepseek",
 		"modelVersion": "deepseek-flash",

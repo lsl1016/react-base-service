@@ -20,7 +20,7 @@ type ReactArtifact struct {
 	RunID      string    `json:"runId" gorm:"column:run_id;not null"`
 	ToolUseID  string    `json:"toolUseId" gorm:"column:tool_use_id;not null;default:''"`
 	UserName   string    `json:"userName" gorm:"column:user_name;not null;default:''"`
-	CallerKey  string    `json:"callerKey" gorm:"column:caller_key;not null;default:''"`
+	AppKey  string    `json:"appKey" gorm:"column:app_key;not null;default:''"`
 	FileName   string    `json:"fileName" gorm:"column:file_name;not null;default:''"`
 	MimeType   string    `json:"mimeType" gorm:"column:mime_type;not null;default:''"`
 	CosKey     string    `json:"cosKey" gorm:"column:cos_key;not null"`

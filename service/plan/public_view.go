@@ -17,10 +17,10 @@ import (
 
 const publicTimeFormat = time.RFC3339
 
-func executionVisibleTo(ctx *gin.Context, execution *model.PlanExecution, sessionID, callerKey string) bool {
+func executionVisibleTo(ctx *gin.Context, execution *model.PlanExecution, sessionID, appKey string) bool {
 	return execution != nil &&
 		execution.SessionID == strings.TrimSpace(sessionID) &&
-		execution.CallerKey == strings.TrimSpace(callerKey) &&
+		execution.AppKey == strings.TrimSpace(appKey) &&
 		execution.UserName == strings.TrimSpace(helpers.GetUserName(ctx))
 }
 
@@ -29,7 +29,7 @@ func Detail(ctx *gin.Context, req params.PlanExecutionDetailReq) (params.PlanExe
 	if err != nil {
 		return params.PlanExecutionDetailResp{}, err
 	}
-	if !executionVisibleTo(ctx, execution, req.SessionID, req.CallerKey) {
+	if !executionVisibleTo(ctx, execution, req.SessionID, req.AppKey) {
 		return params.PlanExecutionDetailResp{}, components.ErrorParamInvalid.Sprintf("plan execution not found")
 	}
 	view, err := buildPublicView(ctx, execution)
@@ -63,7 +63,7 @@ func StepEvents(ctx *gin.Context, req params.PlanStepEventsReq) (params.PlanStep
 	if err != nil {
 		return params.PlanStepEventsResp{}, err
 	}
-	if !executionVisibleTo(ctx, execution, req.SessionID, req.CallerKey) {
+	if !executionVisibleTo(ctx, execution, req.SessionID, req.AppKey) {
 		return params.PlanStepEventsResp{}, components.ErrorParamInvalid.Sprintf("plan execution not found")
 	}
 	attempt, err := getAttempt(ctx, execution.PlanExecutionID, req.StepAttemptID)

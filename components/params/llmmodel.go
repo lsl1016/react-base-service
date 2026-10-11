@@ -114,7 +114,7 @@ type CreateConnectionReq struct {
 	Protocol    string   `json:"protocol" binding:"required"` // openai | anthropic
 	BaseURL     string   `json:"baseUrl" binding:"required"`
 	ApiKey      string   `json:"apiKey" binding:"required"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 }
 
@@ -125,7 +125,7 @@ type UpdateConnectionReq struct {
 	Protocol    string   `json:"protocol"`
 	BaseURL     string   `json:"baseUrl"`
 	ApiKey      string   `json:"apiKey"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	Status      *int     `json:"status"`
 }
@@ -142,7 +142,7 @@ type ConnectionItem struct {
 	Protocol    string   `json:"protocol"`
 	BaseURL     string   `json:"baseUrl"`
 	ApiKey      string   `json:"apiKey"` // 脱敏展示；编辑时留空=保持原值
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	Status      int      `json:"status"`
 	CreatedAt   string   `json:"createdAt"`

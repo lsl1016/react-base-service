@@ -31,7 +31,7 @@ type ReactSession struct {
 	ID          uint      `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
 	SessionID   string    `json:"sessionId" gorm:"column:session_id;not null"`
 	UserName    string    `json:"userName" gorm:"column:user_name;not null"`
-	CallerKey   string    `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey   string    `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues string    `json:"routeValues" gorm:"column:route_values;not null;default:''"`
 	SessionType string    `json:"sessionType" gorm:"column:session_type;not null;default:'chat'"`
 	Title       string    `json:"title" gorm:"column:title;not null;default:''"`
@@ -90,19 +90,19 @@ func GetReactSessionBySessionIDForUpdate(ctx *gin.Context, db *gorm.DB, sessionI
 	return &session, nil
 }
 
-func GetLatestReactSessionByCallerRouteUser(ctx *gin.Context, callerKey, routeValues, userName, sessionType string) (*ReactSession, error) {
-	return getLatestReactSessionByCallerRouteUser(ctx, helpers.MysqlClientLLM, callerKey, routeValues, userName, sessionType, false)
+func GetLatestReactSessionByAppRouteUser(ctx *gin.Context, appKey, routeValues, userName, sessionType string) (*ReactSession, error) {
+	return getLatestReactSessionByAppRouteUser(ctx, helpers.MysqlClientLLM, appKey, routeValues, userName, sessionType, false)
 }
 
-func GetLatestReactSessionByCallerRouteUserForUpdate(ctx *gin.Context, db *gorm.DB, callerKey, routeValues, userName, sessionType string) (*ReactSession, error) {
-	return getLatestReactSessionByCallerRouteUser(ctx, db, callerKey, routeValues, userName, sessionType, true)
+func GetLatestReactSessionByAppRouteUserForUpdate(ctx *gin.Context, db *gorm.DB, appKey, routeValues, userName, sessionType string) (*ReactSession, error) {
+	return getLatestReactSessionByAppRouteUser(ctx, db, appKey, routeValues, userName, sessionType, true)
 }
 
-func getLatestReactSessionByCallerRouteUser(ctx *gin.Context, db *gorm.DB, callerKey, routeValues, userName, sessionType string, forUpdate bool) (*ReactSession, error) {
+func getLatestReactSessionByAppRouteUser(ctx *gin.Context, db *gorm.DB, appKey, routeValues, userName, sessionType string, forUpdate bool) (*ReactSession, error) {
 	var session ReactSession
 	query := db.Model(&ReactSession{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ? AND user_name = ? AND state = ?",
-			callerKey, routeValues, userName, ReactSessionStateActive)
+		Where("app_key = ? AND route_values = ? AND user_name = ? AND state = ?",
+			appKey, routeValues, userName, ReactSessionStateActive)
 	if forUpdate {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
@@ -136,7 +136,7 @@ func UpdateReactSessionBySessionIDWithDB(ctx *gin.Context, db *gorm.DB, sessionI
 	return nil
 }
 
-func ListReactSessionsByCallerRouteUser(ctx *gin.Context, callerKey, routeValues, userName, sessionType, keyword string, page, pageSize int) ([]ReactSession, int64, error) {
+func ListReactSessionsByAppRouteUser(ctx *gin.Context, appKey, routeValues, userName, sessionType, keyword string, page, pageSize int) ([]ReactSession, int64, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -148,8 +148,8 @@ func ListReactSessionsByCallerRouteUser(ctx *gin.Context, callerKey, routeValues
 	}
 
 	query := helpers.MysqlClientLLM.Model(&ReactSession{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ? AND user_name = ? AND state <> ?",
-			callerKey, routeValues, userName, ReactSessionStateDeleted)
+		Where("app_key = ? AND route_values = ? AND user_name = ? AND state <> ?",
+			appKey, routeValues, userName, ReactSessionStateDeleted)
 	if strings.TrimSpace(sessionType) != "" {
 		query = query.Where("session_type = ?", sessionType)
 	}

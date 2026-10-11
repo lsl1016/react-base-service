@@ -160,14 +160,14 @@ func validateToolConfig(raw json.RawMessage, toolType string) error {
 }
 
 func RegisterTool(ctx *gin.Context, req *params.RegisterToolReq, createdBy string) (*model.Tool, error) {
-	// caller_key=default 是默认作用域伪 caller（全 caller 可用），不要求真实 caller 存在。
-	if !model.IsReservedCallerKey(req.CallerKey) {
-		caller, err := model.GetActiveCallerByKey(ctx, req.CallerKey)
+	// app_key=default 是默认作用域伪 app（全 app 可用），不要求真实 app 存在。
+	if !model.IsReservedAppKey(req.AppKey) {
+		app, err := model.GetActiveAppByKey(ctx, req.AppKey)
 		if err != nil {
 			return nil, err
 		}
-		if caller == nil {
-			return nil, components.ErrorCallerNotFound.Sprintf(req.CallerKey)
+		if app == nil {
+			return nil, components.ErrorAppNotFound.Sprintf(req.AppKey)
 		}
 	}
 
@@ -188,12 +188,12 @@ func RegisterTool(ctx *gin.Context, req *params.RegisterToolReq, createdBy strin
 		return nil, components.ErrorToolRegisterFailed.Sprintf(err.Error())
 	}
 
-	exists, err := model.ExistToolByCallerAndName(ctx, req.CallerKey, name)
+	exists, err := model.ExistToolByAppAndName(ctx, req.AppKey, name)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, components.ErrorToolDuplicate.Sprintf(req.CallerKey, name)
+		return nil, components.ErrorToolDuplicate.Sprintf(req.AppKey, name)
 	}
 
 	toolID := "tool_" + strings.ReplaceAll(uuid.New().String(), "-", "")
@@ -208,7 +208,7 @@ func RegisterTool(ctx *gin.Context, req *params.RegisterToolReq, createdBy strin
 		Name:           name,
 		Description:    description,
 		ToolType:       normalizedToolType,
-		CallerKey:      req.CallerKey,
+		AppKey:      req.AppKey,
 		RouteValues:    string(routeValues),
 		Config:         string(req.Config),
 		PermissionMode: permissionMode,
@@ -266,12 +266,12 @@ func UpdateTool(ctx *gin.Context, req *params.UpdateToolReq, updatedBy string) e
 			return components.ErrorToolRegisterFailed.Sprintf(err.Error())
 		}
 		if name != existing.Name {
-			exists, err := model.ExistToolByCallerAndName(ctx, existing.CallerKey, name)
+			exists, err := model.ExistToolByAppAndName(ctx, existing.AppKey, name)
 			if err != nil {
 				return err
 			}
 			if exists {
-				return components.ErrorToolDuplicate.Sprintf(existing.CallerKey, name)
+				return components.ErrorToolDuplicate.Sprintf(existing.AppKey, name)
 			}
 		}
 		updates["name"] = name
@@ -341,12 +341,12 @@ func GetDetail(ctx *gin.Context, toolID string) (*model.Tool, error) {
 	return t, nil
 }
 
-func ListByCallerAndRoute(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Tool, error) {
-	// callerKey 为空：管理控制台「全部」视图，跨 caller 列出，忽略路由过滤。
-	if strings.TrimSpace(callerKey) == "" {
+func ListByAppAndRoute(ctx *gin.Context, appKey string, routeValues []string) ([]model.Tool, error) {
+	// appKey 为空：管理控制台「全部」视图，跨 app 列出，忽略路由过滤。
+	if strings.TrimSpace(appKey) == "" {
 		return model.ListAllTools(ctx)
 	}
-	return model.ListToolsByCallerAndExactRoute(ctx, callerKey, route.SerializeRouteValues(routeValues))
+	return model.ListToolsByAppAndExactRoute(ctx, appKey, route.SerializeRouteValues(routeValues))
 }
 
 // ToToolResp 将 model.Tool 转换为 params.ToolResp
@@ -362,7 +362,7 @@ func ToToolResp(t *model.Tool) params.ToolResp {
 		Name:           t.Name,
 		Description:    t.Description,
 		ToolType:       t.ToolType,
-		CallerKey:      t.CallerKey,
+		AppKey:      t.AppKey,
 		RouteValues:    routeValues,
 		Config:         json.RawMessage(t.Config),
 		PermissionMode: permissionMode,

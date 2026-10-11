@@ -32,7 +32,7 @@ import { createAgentClient, mountAgentUI } from '@react-agent-web-sdk';
 // Create agent client
 const agent = createAgentClient({
   baseUrl: 'http://localhost:8080',
-  callerKey: 'my-app',
+  appKey: 'my-app',
   routeValues: ['demo'],
 });
 
@@ -159,7 +159,7 @@ function createAgentClient(config: AgentClientConfig): AgentClient
 
 interface AgentClientConfig {
   baseUrl: string;
-  callerKey: string;
+  appKey: string;
   routeValues?: string[];
   controlContext?: Record<string, unknown>;
   llmContext?: string | Record<string, unknown>;
@@ -186,7 +186,7 @@ back to `run()` options and then the client-level `llmContext`.
 ```typescript
 const agent = createAgentClient({
   baseUrl: '/react',
-  callerKey: 'demo-app',
+  appKey: 'demo-app',
   hooks: {
     beforeRun() {
       return {
@@ -200,7 +200,7 @@ const agent = createAgentClient({
 // Plain text is also supported.
 const textAgent = createAgentClient({
   baseUrl: '/react',
-  callerKey: 'demo-app',
+  appKey: 'demo-app',
   hooks: {
     beforeRun: () => '<context>User is editing SQL</context>',
   },

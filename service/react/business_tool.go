@@ -67,7 +67,7 @@ func renderToolIndexSummary(snapshotJSON string) string {
 	return strings.TrimSpace(sb.String())
 }
 
-// getTool 加载一个当前 Caller/Route/User 可见的 Business Tool。
+// getTool 加载一个当前 App/Route/User 可见的 Business Tool。
 //
 // 成功后会把 Tool 放入 activeTools，并把 parameters/outputSchema 作为普通 Tool Result 返回给模型。
 // activeTools 是“本 Run 中模型已经显式了解过 Schema”的集合；execute_tool 只允许执行这个集合中的 Tool，
@@ -78,7 +78,7 @@ func (s *reactEngineState) getTool(input json.RawMessage) (string, bool, error) 
 		Name   string `json:"name"`
 	}
 	_ = json.Unmarshal(input, &req)
-	tools, err := toolService.FindVisibleToolsByCallerAndRoutes(s.ctx, s.req.payload.CallerKey, route.BuildRoutePrefixes(s.req.payload.RouteValues), s.req.userName)
+	tools, err := toolService.FindVisibleToolsByAppAndRoutes(s.ctx, s.req.capabilityScopeKeys, route.BuildRoutePrefixes(s.req.payload.RouteValues), s.req.userName)
 	if err != nil {
 		return "", true, err
 	}
@@ -258,7 +258,7 @@ func businessToolIdentifiersMatch(tool model.Tool, toolID, name, callName string
 }
 
 func (s *reactEngineState) revalidateBusinessToolForExecution(tool model.Tool) (model.Tool, error) {
-	visible, err := toolService.FindVisibleToolsByCallerAndRoutes(s.ctx, s.req.payload.CallerKey, route.BuildRoutePrefixes(s.req.payload.RouteValues), s.req.userName)
+	visible, err := toolService.FindVisibleToolsByAppAndRoutes(s.ctx, s.req.capabilityScopeKeys, route.BuildRoutePrefixes(s.req.payload.RouteValues), s.req.userName)
 	if err != nil {
 		return model.Tool{}, err
 	}
@@ -407,7 +407,7 @@ func (s *reactEngineState) restoreActiveToolsFromPreviousRun() error {
 		return nil
 	}
 
-	tools, err := toolService.FindVisibleToolsByCallerAndRoutes(s.ctx, s.req.payload.CallerKey, route.BuildRoutePrefixes(s.req.payload.RouteValues), s.req.userName)
+	tools, err := toolService.FindVisibleToolsByAppAndRoutes(s.ctx, s.req.capabilityScopeKeys, route.BuildRoutePrefixes(s.req.payload.RouteValues), s.req.userName)
 	if err != nil {
 		return err
 	}
@@ -420,7 +420,7 @@ func (s *reactEngineState) restoreActiveToolsFromPreviousRun() error {
 	for _, toolID := range prevIDs {
 		tool, ok := toolByID[toolID]
 		if !ok {
-			// 工具已下线或当前 caller/route 不再可见，不恢复。
+			// 工具已下线或当前 app/route 不再可见，不恢复。
 			continue
 		}
 		callName := businessToolCallName(tool)
@@ -441,7 +441,7 @@ func (s *reactEngineState) restoreActiveToolsFromPreviousRun() error {
 // reloadBusinessToolIfUnchanged 是 execute_tool 未命中时的自愈：现查最新工具，仅当定义与上一个 run 加载时一致才自动激活。
 // 返回值第二项表示是否成功激活；未激活时第三项给出面向模型的失败原因。
 func (s *reactEngineState) reloadBusinessToolIfUnchanged(toolID, name, callName string) (model.Tool, bool, string) {
-	tools, err := toolService.FindVisibleToolsByCallerAndRoutes(s.ctx, s.req.payload.CallerKey, route.BuildRoutePrefixes(s.req.payload.RouteValues), s.req.userName)
+	tools, err := toolService.FindVisibleToolsByAppAndRoutes(s.ctx, s.req.capabilityScopeKeys, route.BuildRoutePrefixes(s.req.payload.RouteValues), s.req.userName)
 	if err != nil {
 		return model.Tool{}, false, "business tool is not loaded, call get_tool first"
 	}

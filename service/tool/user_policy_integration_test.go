@@ -33,13 +33,13 @@ func TestToolUserPolicyCRUDAndVisibilityWithLocalMySQL(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	testSuffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	toolID := "codex_tool_policy_" + testSuffix
-	callerKey := "ctp_" + testSuffix[:24]
+	appKey := "ctp_" + testSuffix[:24]
 	testTool := &model.Tool{
 		ToolID:      toolID,
 		Name:        "codex_tool_policy_test",
 		Description: "tool user policy integration test",
 		ToolType:    ToolTypeClient,
-		CallerKey:   callerKey,
+		AppKey:   appKey,
 		RouteValues: "[]",
 		Config:      "{}",
 		Status:      0,
@@ -69,21 +69,21 @@ func TestToolUserPolicyCRUDAndVisibilityWithLocalMySQL(t *testing.T) {
 	require.Len(t, listed, 1)
 
 	require.NoError(t, model.UpdateToolByToolID(ctx, toolID, map[string]interface{}{"status": 1}))
-	// 可见性会并入「默认作用域」（caller_key=default）下其他用例登记的工具，
-	// 断言只关注本用例 caller 名下的工具。
+	// 可见性会并入「默认作用域」（app_key=default）下其他用例登记的工具，
+	// 断言只关注本用例 app 名下的工具。
 	ownVisible := func(tools []model.Tool) []model.Tool {
 		own := make([]model.Tool, 0, len(tools))
 		for i := range tools {
-			if tools[i].CallerKey == callerKey {
+			if tools[i].AppKey == appKey {
 				own = append(own, tools[i])
 			}
 		}
 		return own
 	}
-	visible, err := FindVisibleToolsByCallerAndRoutes(ctx, callerKey, []string{"[]"}, "user_a")
+	visible, err := FindVisibleToolsByAppAndRoutes(ctx, appKey, []string{"[]"}, "user_a")
 	require.NoError(t, err)
 	require.Len(t, ownVisible(visible), 1)
-	visible, err = FindVisibleToolsByCallerAndRoutes(ctx, callerKey, []string{"[]"}, "user_c")
+	visible, err = FindVisibleToolsByAppAndRoutes(ctx, appKey, []string{"[]"}, "user_c")
 	require.NoError(t, err)
 	require.Empty(t, ownVisible(visible))
 
@@ -102,12 +102,12 @@ func TestToolUserPolicyCRUDAndVisibilityWithLocalMySQL(t *testing.T) {
 		Where("tool_id = ?", toolID).
 		Update("black_user_list", `["user_c"]`).Error)
 	require.NoError(t, model.UpdateToolByToolID(ctx, toolID, map[string]interface{}{"status": 1}))
-	visible, err = FindVisibleToolsByCallerAndRoutes(ctx, callerKey, []string{"[]"}, "user_c")
+	visible, err = FindVisibleToolsByAppAndRoutes(ctx, appKey, []string{"[]"}, "user_c")
 	require.NoError(t, err)
 	require.Len(t, ownVisible(visible), 1, "black_user_list is reserved and must not affect this release")
 
 	require.NoError(t, DeleteToolUserPolicy(ctx, toolID, "codex"))
-	visible, err = FindVisibleToolsByCallerAndRoutes(ctx, callerKey, []string{"[]"}, "user_a")
+	visible, err = FindVisibleToolsByAppAndRoutes(ctx, appKey, []string{"[]"}, "user_a")
 	require.NoError(t, err)
 	require.Len(t, ownVisible(visible), 1, "deleting the policy must restore unrestricted visibility")
 

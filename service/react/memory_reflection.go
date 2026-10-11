@@ -40,7 +40,7 @@ func reflectionExecutionProfile() ExecutionProfile {
 	return ExecutionProfile{AllowMemory: true}
 }
 
-// executionProfileForSessionType 按会话类型选择执行档案（caller 级能力覆盖随 req 传递）。
+// executionProfileForSessionType 按会话类型选择执行档案（app 级能力覆盖随 req 传递）。
 func executionProfileForSessionType(req *runtimeRequest) ExecutionProfile {
 	if req.payload.Type == model.ReactSessionTypeReflection {
 		return reflectionExecutionProfile()
@@ -74,7 +74,7 @@ func executionProfileForRun(req *runtimeRequest) ExecutionProfile {
 // reflection 只暴露记忆三工具（执行侧由 ExecutionProfile 双重拦截）。
 func internalMetaToolDefinitionsForType(sessionType string) []llm.ToolDefinition {
 	if sessionType == model.ReactSessionTypeReflection {
-		// 经 GetReactRuntimeConfig 合并管理面板「运行时配置」的 DB 覆盖（与外层注入同口径）。
+		// 运行时设置口径（DB 覆盖 > yaml，全局生效），与外层记忆注入同源。
 		if conf.GetReactRuntimeConfig().Memory.MemoryEnabled() {
 			return memoryToolDefinitions()
 		}
@@ -141,7 +141,7 @@ func maybeTriggerMemoryReflection(s *reactEngineState, summary string, compacted
 	metrics.MemoryReflectionTotal.WithLabelValues("triggered").Inc()
 
 	payload := params.ReactRunPayload{
-		CallerKey:    s.req.payload.CallerKey,
+		AppKey:    s.req.payload.AppKey,
 		RouteValues:  s.req.payload.RouteValues,
 		Type:         model.ReactSessionTypeReflection,
 		UserPrompt:   buildMemoryReflectionPrompt(summary, compacted, cfg),
@@ -150,17 +150,17 @@ func maybeTriggerMemoryReflection(s *reactEngineState, summary string, compacted
 		MaxSteps:     memoryReflectionMaxSteps,
 	}
 	userName := s.req.userName
-	callerKey := s.req.payload.CallerKey
+	appKey := s.req.payload.AppKey
 
 	go func() {
 		// 父 context 用 Background：reflection 生命周期独立于触发它的 WS 连接，
 		// 优雅停机由 run() 内部的注册/注销机制统一覆盖。
-		runMemoryReflection(payload, userName, callerKey)
+		runMemoryReflection(payload, userName, appKey)
 	}()
 }
 
 // runMemoryReflection 执行一次 reflection run；失败静默重试一次，终态（success/error）统一打点。
-func runMemoryReflection(payload params.ReactRunPayload, userName, callerKey string) {
+func runMemoryReflection(payload params.ReactRunPayload, userName, appKey string) {
 	status := "success"
 	defer func() {
 		metrics.MemoryReflectionTotal.WithLabelValues(status).Inc()
@@ -176,7 +176,7 @@ func runMemoryReflection(payload params.ReactRunPayload, userName, callerKey str
 			// 停机取消属正常收敛，不计为 error。
 			return
 		}
-		zlog.Warnf(ginCtx, "[react.runMemoryReflection] 整理失败(第%d次): caller=%s err=%v", attempt+1, callerKey, err)
+		zlog.Warnf(ginCtx, "[react.runMemoryReflection] 整理失败(第%d次): app=%s err=%v", attempt+1, appKey, err)
 		status = "error"
 	}
 }
@@ -219,7 +219,7 @@ func HeadlessEventWriter(ctx *gin.Context) EventWriter {
 func buildMemoryReflectionPrompt(summary string, compacted []llm.ChatMessage, cfg conf.ReactMemoryConfig) string {
 	var sb strings.Builder
 	sb.WriteString("<memory_reflection_task>\n")
-	sb.WriteString("你是长期记忆的维护子任务，负责整理本 caller 作用域的记忆。当前记忆索引已注入上下文（<memory> 块），可用工具仅有 memory_list / memory_read / memory_write。\n\n")
+	sb.WriteString("你是长期记忆的维护子任务，负责整理本 app 作用域的记忆。当前记忆索引已注入上下文（<memory> 块），可用工具仅有 memory_list / memory_read / memory_write。\n\n")
 	sb.WriteString("按五个阶段推进，每个阶段的结论先在正文中简述再进入下一阶段：\n")
 	sb.WriteString("1. Investigate：用 memory_list（layer=all）与 memory_read 查看现有记忆全貌；阅读下方压缩摘要与近期对话原文。\n")
 	sb.WriteString("2. Extract：列出候选动作——新事实（create）、表述更新（update）、重复项合并（保留更准确的一条，删除另一条）、过期项淘汰（delete）。没有价值就什么都不做，宁可少动不错动。\n")

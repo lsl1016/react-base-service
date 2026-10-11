@@ -9,8 +9,8 @@ package workspace
 //     tag 模拟不同 env → 不同 commit 的多实例并存；
 //   - ensureRepoServer/removeRepoServer 用真实 mcpclient 实现（仅包裹计数），
 //     bin/repo-mcp 子进程真实拉起，ListTools/CallTool 走真实 stdio JSON-RPC；
-//   - 仅 syncCallerTools/removeCallerTools（注册表 DB）用替身；
-//   - 多会话（run）/多 caller 并发 Load、并发 CallTool 同一共享 server，
+//   - 仅 syncAppTools/removeAppTools（注册表 DB）用替身；
+//   - 多会话（run）/多 app 并发 Load、并发 CallTool 同一共享 server，
 //     验证共享单实例、真实检索隔离、两级释放与回收后再加载。
 //
 // 前置：仓库根目录存在可执行的 bin/repo-mcp（go build -o bin/repo-mcp ./cmd/repo-mcp）。
@@ -77,7 +77,7 @@ func setupIntegration(t *testing.T) (*Manager, *itCounters) {
 	t.Cleanup(func() { conf.CustomConf.LLM.React.Workspace = origWS })
 
 	counters := &itCounters{synced: map[string]int{}, cleaned: map[string]int{}}
-	origEnsure, origRemove, origSync, origClean := ensureRepoServer, removeRepoServer, syncCallerTools, removeCallerTools
+	origEnsure, origRemove, origSync, origClean := ensureRepoServer, removeRepoServer, syncAppTools, removeAppTools
 	ensureRepoServer = func(cfg mcpclient.ServerConfig) (mcpclient.Server, error) {
 		server, err := mcpclient.EnsureServer(cfg) // 真实子进程
 		counters.mu.Lock()
@@ -92,20 +92,20 @@ func setupIntegration(t *testing.T) (*Manager, *itCounters) {
 		counters.mu.Unlock()
 		return err
 	}
-	syncCallerTools = func(callerKey, serverName string, primary bool) (int, error) {
+	syncAppTools = func(appKey, serverName string, primary bool) (int, error) {
 		counters.mu.Lock()
-		counters.synced[callerKey]++
+		counters.synced[appKey]++
 		counters.mu.Unlock()
 		return 0, nil
 	}
-	removeCallerTools = func(ctx *gin.Context, serverName, callerKey string) (int, error) {
+	removeAppTools = func(ctx *gin.Context, serverName, appKey string) (int, error) {
 		counters.mu.Lock()
-		counters.cleaned[callerKey]++
+		counters.cleaned[appKey]++
 		counters.mu.Unlock()
 		return 0, nil
 	}
 	t.Cleanup(func() {
-		ensureRepoServer, removeRepoServer, syncCallerTools, removeCallerTools = origEnsure, origRemove, origSync, origClean
+		ensureRepoServer, removeRepoServer, syncAppTools, removeAppTools = origEnsure, origRemove, origSync, origClean
 	})
 
 	return newTestManager(t), counters
@@ -145,12 +145,12 @@ func TestWorkspaceSharingIntegration(t *testing.T) {
 	m, counters := setupIntegration(t)
 	ctx := &gin.Context{}
 
-	// ---- 阶段 1：两个会话（不同 caller）加载同一 service → 共享单实例 ----
-	allocA, err := m.Load(ctx, "run-a1", "caller-a", itSvcLogrus, "")
+	// ---- 阶段 1：两个会话（不同 app）加载同一 service → 共享单实例 ----
+	allocA, err := m.Load(ctx, "run-a1", "app-a", itSvcLogrus, "")
 	if err != nil {
 		t.Fatalf("run-a1 加载 logrus 失败: %v", err)
 	}
-	allocB, err := m.Load(ctx, "run-b1", "caller-b", itSvcLogrus, "")
+	allocB, err := m.Load(ctx, "run-b1", "app-b", itSvcLogrus, "")
 	if err != nil {
 		t.Fatalf("run-b1 加载 logrus 失败: %v", err)
 	}
@@ -165,11 +165,11 @@ func TestWorkspaceSharingIntegration(t *testing.T) {
 	}
 
 	// ---- 阶段 2：同 service 不同 env（tag v1.0.0）→ 独立实例并存 ----
-	allocUUIDNew, err := m.Load(ctx, "run-a2", "caller-a", itSvcUUID, "")
+	allocUUIDNew, err := m.Load(ctx, "run-a2", "app-a", itSvcUUID, "")
 	if err != nil {
 		t.Fatalf("加载 uuid 默认分支失败: %v", err)
 	}
-	allocUUIDOld, err := m.Load(ctx, "run-b2", "caller-b", itSvcUUID, "old")
+	allocUUIDOld, err := m.Load(ctx, "run-b2", "app-b", itSvcUUID, "old")
 	if err != nil {
 		t.Fatalf("加载 uuid v1.0.0 失败: %v", err)
 	}
@@ -206,15 +206,15 @@ func TestWorkspaceSharingIntegration(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			runID := fmt.Sprintf("run-c%d", i)
-			caller := "caller-a"
+			app := "app-a"
 			if i%2 == 1 {
-				caller = "caller-b"
+				app = "app-b"
 			}
 			svc, env := itSvcLogrus, ""
 			if i%3 == 0 {
 				svc, env = itSvcUUID, ""
 			}
-			if _, err := m.Load(ctx, runID, caller, svc, env); err != nil {
+			if _, err := m.Load(ctx, runID, app, svc, env); err != nil {
 				t.Errorf("并发 Load %s 失败: %v", runID, err)
 			}
 		}(i)
@@ -246,7 +246,7 @@ func TestWorkspaceSharingIntegration(t *testing.T) {
 	totalLoads := 2 + 2 + 6
 	t.Logf("共 %d 次加载共享 %d 个实例（%d 次冷启动）", totalLoads, 3, counters.ensureCount())
 
-	// ---- 阶段 5：两级释放（caller 归零清副本、总归零回收实例） ----
+	// ---- 阶段 5：两级释放（app 归零清副本、总归零回收实例） ----
 	// 持有者账目：logrus = {run-a1, run-b1, run-c1, run-c2, run-c4, run-c5}；
 	// uuid 默认 = {run-a2, run-c0, run-c3}；uuid old = {run-b2}。
 	m.ReleaseRun(ctx, "run-a1")
@@ -297,7 +297,7 @@ func TestWorkspaceSharingIntegration(t *testing.T) {
 	}
 
 	// ---- 阶段 6：回收后再加载 → 干净的重新冷启动（teardown/重建路径回归） ----
-	allocZ, err := m.Load(ctx, "run-z", "caller-a", itSvcLogrus, "")
+	allocZ, err := m.Load(ctx, "run-z", "app-a", itSvcLogrus, "")
 	if err != nil {
 		t.Fatalf("回收后再加载失败: %v", err)
 	}

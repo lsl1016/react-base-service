@@ -15,7 +15,7 @@ let currentTheme = 'light';
 const parseReplayScope = () => {
   const params = new URLSearchParams(location.search);
   const sessionId = params.get('sessionId')?.trim() ?? '';
-  const callerKey = params.get('callerKey')?.trim() ?? '';
+  const appKey = params.get('appKey')?.trim() ?? '';
   const routeValuesText = params.get('routeValues') ?? '[]';
   let routeValues;
 
@@ -26,14 +26,14 @@ const parseReplayScope = () => {
   }
 
   if (!sessionId) throw new Error('URL 中缺少 sessionId');
-  if (!callerKey) throw new Error('URL 中缺少 callerKey');
+  if (!appKey) throw new Error('URL 中缺少 appKey');
   if (!Array.isArray(routeValues) || routeValues.some((item) => typeof item !== 'string')) {
     throw new Error('URL 中的 routeValues 必须是字符串数组');
   }
 
   return {
     sessionId,
-    callerKey,
+    appKey,
     routeValues,
     theme: params.get('theme') === 'dark' ? 'dark' : 'light',
   };
@@ -71,14 +71,14 @@ const createReplayClient = (initialState, scope, initialReducer, manager) => {
     },
     loadPlanExecutionDetail: async (planExecutionId) => {
       const activeReducer = reducer;
-      const detail = await manager.getPlanExecutionDetail(planExecutionId, scope.sessionId, scope.callerKey);
+      const detail = await manager.getPlanExecutionDetail(planExecutionId, scope.sessionId, scope.appKey);
       if (activeReducer !== reducer) return;
       reducer.applyPlanDetail(detail.view, detail.attempts ?? []);
       publishReducerState();
     },
     loadPlanStepEvents: async (planExecutionId, stepAttemptId) => {
       const activeReducer = reducer;
-      const detail = await manager.getPlanStepEvents(planExecutionId, stepAttemptId, scope.sessionId, scope.callerKey);
+      const detail = await manager.getPlanStepEvents(planExecutionId, stepAttemptId, scope.sessionId, scope.appKey);
       if (activeReducer !== reducer) return;
       reducer.applyPlanStepEvents(
         detail.planExecutionId,
@@ -90,7 +90,7 @@ const createReplayClient = (initialState, scope, initialReducer, manager) => {
       publishReducerState();
     },
     getRegisteredTool: () => undefined,
-    getSessionScope: () => ({ callerKey: scope.callerKey, routeValues: [...scope.routeValues] }),
+    getSessionScope: () => ({ appKey: scope.appKey, routeValues: [...scope.routeValues] }),
   };
 };
 

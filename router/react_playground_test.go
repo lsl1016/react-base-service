@@ -118,7 +118,7 @@ func TestReactPlaygroundPublishesTreeSelectMock(t *testing.T) {
 	require.Contains(t, body, "tag: 'user_select_analysis_theme'")
 }
 
-func TestReactPlaygroundPublishesCallerApiKeyAndPlanTemplateManagement(t *testing.T) {
+func TestReactPlaygroundPublishesAppApiKeyAndPlanTemplateManagement(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	Http(engine)
@@ -130,10 +130,10 @@ func TestReactPlaygroundPublishesCallerApiKeyAndPlanTemplateManagement(t *testin
 		{
 			path: "/react-base-service/react/playground",
 			contains: []string{
-				`id="copy-caller"`,
-				`id="delete-caller"`,
-				`id="copy-caller-modal-mask"`,
-				`id="delete-caller-modal-mask"`,
+				`id="copy-app"`,
+				`id="delete-app"`,
+				`id="copy-app-modal-mask"`,
+				`id="delete-app-modal-mask"`,
 			},
 		},
 		{
@@ -142,8 +142,8 @@ func TestReactPlaygroundPublishesCallerApiKeyAndPlanTemplateManagement(t *testin
 				"title: 'API Key 管理'",
 				"await resource.loadDetail(item, this.config(), resource)",
 				"type === 'codeTextarea'",
-				"/caller/copy_config",
-				"/caller/batch_delete",
+				"/app/copy_config",
+				"/app/batch_delete",
 				"type=\"password\"",
 			},
 		},
@@ -165,14 +165,14 @@ func TestReactPlaygroundPublishesCallerApiKeyAndPlanTemplateManagement(t *testin
 				"item.toolType !== 'mcp'",
 				"refreshMcpConnectionOptions()",
 				"rp-mcp-kind-badge",
-				// Caller 筛选（全部/默认作用域/各 caller）+ 归属 caller 列
-				"callerFilter: true",
-				"loadCallerFilterOptions()",
-				"callerFilterValue()",
-				"createTargetCallerKey()",
-				// MCP 连接绑定 caller
-				"boundCallersText",
-				"boundCallers: splitRouteText(draft.boundCallersText)",
+				// App 筛选（全部/默认作用域/各 app）+ 归属 app 列
+				"appFilter: true",
+				"loadAppFilterOptions()",
+				"appFilterValue()",
+				"createTargetAppKey()",
+				// MCP 连接绑定 app
+				"boundAppsText",
+				"boundApps: splitRouteText(draft.boundAppsText)",
 			},
 		},
 		{
@@ -180,7 +180,7 @@ func TestReactPlaygroundPublishesCallerApiKeyAndPlanTemplateManagement(t *testin
 			contains: []string{
 				`id="management-cards"`,
 				`id="management-mcp-filter"`,
-				`id="management-caller-filter"`,
+				`id="management-app-filter"`,
 			},
 		},
 	} {

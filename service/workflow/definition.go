@@ -23,7 +23,7 @@ import (
 type DefinitionInput struct {
 	Name             string
 	Description      string
-	CallerKey        string
+	AppKey        string
 	RouteValues      []string
 	UserName         string
 	Prompt           string
@@ -60,8 +60,8 @@ func CreateWorkflowDef(ctx context.Context, workflowKey string, input Definition
 		return nil, err
 	}
 	manager.SyncRegister(wf)
-	zlog.Infof(nil, "[workflow.definition] 创建 workflow: key=%s trigger=%s expr=%s caller=%s",
-		wf.WorkflowKey, wf.TriggerType, wf.CronExpr, wf.CallerKey)
+	zlog.Infof(nil, "[workflow.definition] 创建 workflow: key=%s trigger=%s expr=%s app=%s",
+		wf.WorkflowKey, wf.TriggerType, wf.CronExpr, wf.AppKey)
 	return wf, nil
 }
 
@@ -89,9 +89,9 @@ func UpdateWorkflowDef(ctx context.Context, workflowKey string, input Definition
 		merged.Description = input.Description
 		updates["description"] = input.Description
 	}
-	if input.CallerKey != "" {
-		merged.CallerKey = strings.TrimSpace(input.CallerKey)
-		updates["caller_key"] = merged.CallerKey
+	if input.AppKey != "" {
+		merged.AppKey = strings.TrimSpace(input.AppKey)
+		updates["app_key"] = merged.AppKey
 	}
 	if input.RouteValues != nil {
 		routeJSON, err := marshalRouteValues(input.RouteValues)
@@ -281,7 +281,7 @@ func buildWorkflowRow(workflowKey string, input DefinitionInput) (*model.Workflo
 		WorkflowKey:      workflowKey,
 		Name:             strings.TrimSpace(input.Name),
 		Description:      input.Description,
-		CallerKey:        strings.TrimSpace(input.CallerKey),
+		AppKey:        strings.TrimSpace(input.AppKey),
 		RouteValues:      routeJSON,
 		UserName:         strings.TrimSpace(input.UserName),
 		Prompt:           input.Prompt,
@@ -302,13 +302,13 @@ func buildWorkflowRow(workflowKey string, input DefinitionInput) (*model.Workflo
 	return wf, nil
 }
 
-// validateWorkflowRow 整行完整性校验：prompt/caller 必填；cron 型必须有合法表达式与时区。
+// validateWorkflowRow 整行完整性校验：prompt/app 必填；cron 型必须有合法表达式与时区。
 func validateWorkflowRow(wf *model.Workflow) error {
 	if err := validateWorkflowName(wf.Name); err != nil {
 		return err
 	}
-	if strings.TrimSpace(wf.CallerKey) == "" {
-		return components.ParamInvalidf("callerKey 不能为空（触发的 run 依赖 caller 解析提示词/工具/Skill）")
+	if strings.TrimSpace(wf.AppKey) == "" {
+		return components.ParamInvalidf("appKey 不能为空（触发的 run 依赖 app 解析提示词/工具/Skill）")
 	}
 	if strings.TrimSpace(wf.Prompt) == "" {
 		return components.ParamInvalidf("prompt 不能为空")

@@ -5,7 +5,7 @@ type CreateAgentReq struct {
 	AgentKey        string   `json:"agentKey" binding:"required"`
 	Name            string   `json:"name" binding:"required"`
 	Description     string   `json:"description" binding:"required"`
-	CallerKey       string   `json:"callerKey" binding:"required"`
+	AppKey       string   `json:"appKey" binding:"required"`
 	RouteValues     []string `json:"routeValues"`
 	SystemPrompt    string   `json:"systemPrompt" binding:"required"`
 	ModelKey        string   `json:"modelKey"`
@@ -43,9 +43,9 @@ type DeleteAgentReq struct {
 	AgentID string `json:"agentId" binding:"required"`
 }
 
-// ListAgentsReq 子 Agent 列表请求；callerKey 为空表示跨 caller 列出全部（管理控制台「全部」视图）。
+// ListAgentsReq 子 Agent 列表请求；appKey 为空表示跨 app 列出全部（管理控制台「全部」视图）。
 type ListAgentsReq struct {
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues" binding:"required"`
 }
 
@@ -56,9 +56,9 @@ type AgentDetailReq struct {
 
 // ImportAgentReq 子 Agent Markdown 定义导入请求：
 // markdown 为「frontmatter + 正文」格式，frontmatter 字段与 CreateAgentReq 同名（yaml 风格），
-// 正文即 system_prompt；frontmatter 中的 callerKey/routeValues 缺省时取请求体字段。
+// 正文即 system_prompt；frontmatter 中的 appKey/routeValues 缺省时取请求体字段。
 type ImportAgentReq struct {
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	Status      *int     `json:"status"`
 	Markdown    string   `json:"markdown" binding:"required"`
@@ -70,7 +70,7 @@ type AgentResp struct {
 	AgentKey        string   `json:"agentKey"`
 	Name            string   `json:"name"`
 	Description     string   `json:"description"`
-	CallerKey       string   `json:"callerKey"`
+	AppKey       string   `json:"appKey"`
 	RouteValues     []string `json:"routeValues"`
 	SystemPrompt    string   `json:"systemPrompt"`
 	ModelKey        string   `json:"modelKey"`

@@ -1,7 +1,7 @@
 // livetest/queue-manage：S3 队列管理全链路实测客户端。
 //
 // 前置：服务运行于 127.0.0.1:8180；llm.react.steering.{enabled,queue}=true（queue_auto_drain 默认 true）；
-// caller=demo-app；deepseek/deepseek-flash 可用。
+// app=demo-app；deepseek/deepseek-flash 可用。
 //
 // 流程：run 调用 ask_question 进入等待态 → 连续 steer 三条消息（均落队列）→
 // HTTP 队列管理：list(3) → update(改写 B) → reorder(倒序 C,B,A) → list(校验顺序) → delete(删 A) →
@@ -27,7 +27,7 @@ const (
 	baseURL   = "http://127.0.0.1:8180/react-base-service"
 	wsURL     = "ws://127.0.0.1:8180/react-base-service/react/ws"
 	userName  = "steer-tester"
-	callerKey = "demo-app"
+	appKey = "demo-app"
 )
 
 type wsMsg struct {
@@ -72,7 +72,7 @@ func main() {
 	defer conn.Close()
 
 	runPayload, _ := json.Marshal(map[string]any{
-		"callerKey":    callerKey,
+		"appKey":    appKey,
 		"userPrompt":   "请调用 ask_question 工具问我一个问题（一个问题即可），然后等待我的回答再继续。",
 		"modelKey":     "deepseek",
 		"modelVersion": "deepseek-flash",
@@ -138,7 +138,7 @@ func main() {
 					// 进入等待态后连续排队三条（等待态 + queue 开启 → 全部落队列）。
 					for i, text := range []string{"【原始A】请以【A原始】开头回应", "【原始B】请以【B改写】开头回应", "【原始C】请以【C重排】开头回应"} {
 						steer, _ := json.Marshal(map[string]any{
-							"callerKey":  callerKey,
+							"appKey":  appKey,
 							"userPrompt": text,
 						})
 						_ = websocket.JSON.Send(conn, wsMsg{Type: "run", SessionID: sessionID, RunID: runID, Payload: steer})
@@ -172,7 +172,7 @@ func main() {
 // runQueueManagement 依次执行 list → update(B) → reorder(C,B) → list → delete(C)。
 func runQueueManagement(sessionID string) {
 	common := func() map[string]any {
-		return map[string]any{"sessionId": sessionID, "callerKey": callerKey, "routeValues": []string{}}
+		return map[string]any{"sessionId": sessionID, "appKey": appKey, "routeValues": []string{}}
 	}
 
 	list1 := queueAPI("queue/list", common())
@@ -186,11 +186,11 @@ func runQueueManagement(sessionID string) {
 	a, b, c := items[0], items[1], items[2]
 
 	queueAPI("queue/update", map[string]any{
-		"sessionId": sessionID, "callerKey": callerKey, "routeValues": []string{},
+		"sessionId": sessionID, "appKey": appKey, "routeValues": []string{},
 		"id": b["id"], "content": "【B改写】请以【B改写】开头回应",
 	})
 	queueAPI("queue/reorder", map[string]any{
-		"sessionId": sessionID, "callerKey": callerKey, "routeValues": []string{},
+		"sessionId": sessionID, "appKey": appKey, "routeValues": []string{},
 		"idList": []any{c["id"], b["id"], a["id"]},
 	})
 	list2 := queueAPI("queue/list", common())
@@ -201,7 +201,7 @@ func runQueueManagement(sessionID string) {
 		fmt.Println("ASSERT_FAIL reorder not reflected:", items2)
 	}
 	queueAPI("queue/delete", map[string]any{
-		"sessionId": sessionID, "callerKey": callerKey, "routeValues": []string{},
+		"sessionId": sessionID, "appKey": appKey, "routeValues": []string{},
 		"id": a["id"],
 	})
 	queueAPI("queue/list", common())

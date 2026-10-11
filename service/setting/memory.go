@@ -46,22 +46,30 @@ type memoryOverrideJSON struct {
 
 // GetMemorySetting 返回长期记忆策略的生效视图：effective（合并 yaml/默认值后的引擎实际
 // 消费口径）+ 逐字段 source + DB 覆盖原文。
-func GetMemorySetting(ctx *gin.Context) (*params.MemorySettingResp, error) {
-	override, updatedBy, updatedAt, err := loadMemoryOverride(ctx)
+func GetMemorySetting(ctx *gin.Context, appKey string) (*params.MemorySettingResp, error) {
+	override, updatedBy, updatedAt, err := loadMemoryOverride(ctx, appKey)
 	if err != nil {
 		return nil, err
+	}
+	// app 维度读取视图：在全局覆盖基线上叠加 app 行（app > 全局 > yaml），与引擎生效口径一致。
+	if strings.TrimSpace(appKey) != "" {
+		globalOverride, _, _, err := loadMemoryOverride(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		override = mergeMemoryOverrideJSON(globalOverride, override)
 	}
 	return buildMemorySettingResp(override, updatedBy, updatedAt), nil
 }
 
 // UpdateMemorySetting 更新长期记忆策略：校验 → 合并现状 → 整行写回 → 立即刷新覆盖快照
 //（本进程下一个 run 即生效）。clearFields 用于把指定字段清回 yaml/默认值。
-func UpdateMemorySetting(ctx *gin.Context, req *params.UpdateMemorySettingReq, userName string) (*params.MemorySettingResp, error) {
+func UpdateMemorySetting(ctx *gin.Context, appKey string, req *params.UpdateMemorySettingReq, userName string) (*params.MemorySettingResp, error) {
 	if err := validateMemoryUpdate(req); err != nil {
 		return nil, err
 	}
 
-	current, _, _, err := loadMemoryOverride(ctx)
+	current, _, _, err := loadMemoryOverride(ctx, appKey)
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +81,7 @@ func UpdateMemorySetting(ctx *gin.Context, req *params.UpdateMemorySettingReq, u
 	}
 	if err := model.UpsertRuntimeSetting(ctx, &model.RuntimeSetting{
 		SettingKey: SettingKeyMemory,
+		AppKey:     strings.TrimSpace(appKey),
 		ValueJSON:  string(valueJSON),
 		UpdatedBy:  userName,
 	}); err != nil {
@@ -89,8 +98,8 @@ func UpdateMemorySetting(ctx *gin.Context, req *params.UpdateMemorySettingReq, u
 }
 
 // loadMemoryOverride 读 DB 覆盖原文；行缺失/JSON 解析失败按「无覆盖」处理并告警。
-func loadMemoryOverride(ctx *gin.Context) (override *memoryOverrideJSON, updatedBy, updatedAt string, err error) {
-	row, err := model.GetRuntimeSettingByKey(ctx, SettingKeyMemory)
+func loadMemoryOverride(ctx *gin.Context, appKey string) (override *memoryOverrideJSON, updatedBy, updatedAt string, err error) {
+	row, err := model.GetRuntimeSettingByKeyAndApp(ctx, SettingKeyMemory, strings.TrimSpace(appKey))
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -150,6 +159,36 @@ func validateMemoryUpdate(req *params.UpdateMemorySettingReq) error {
 		}
 	}
 	return nil
+}
+
+// mergeMemoryOverrideJSON 把两层 memory 覆盖合并（top 覆盖 base 非 nil 字段）。
+func mergeMemoryOverrideJSON(base, top *memoryOverrideJSON) *memoryOverrideJSON {
+	merged := &memoryOverrideJSON{}
+	if base != nil {
+		*merged = *base
+	}
+	if top == nil {
+		return merged
+	}
+	if top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	if top.ResidentMaxItems != nil {
+		merged.ResidentMaxItems = top.ResidentMaxItems
+	}
+	if top.ResidentBudgetChars != nil {
+		merged.ResidentBudgetChars = top.ResidentBudgetChars
+	}
+	if top.IndexMaxItems != nil {
+		merged.IndexMaxItems = top.IndexMaxItems
+	}
+	if top.DetachedMaxItems != nil {
+		merged.DetachedMaxItems = top.DetachedMaxItems
+	}
+	if top.AllowUserScope != nil {
+		merged.AllowUserScope = top.AllowUserScope
+	}
+	return merged
 }
 
 // mergeMemoryUpdate 把请求合并进现状：clear 优先清空，否则覆盖非 nil 值。

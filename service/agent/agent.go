@@ -23,18 +23,18 @@ const (
 	maxAgentSkills = 32
 )
 
-// CreateAgent 创建子 Agent 定义；caller_key=default 是默认作用域伪 caller，不要求真实 caller 存在。
+// CreateAgent 创建子 Agent 定义；app_key=default 是默认作用域伪 app，不要求真实 app 存在。
 func CreateAgent(ctx *gin.Context, req *params.CreateAgentReq, createdBy string) (*model.Agent, error) {
 	if err := validateAgentKey(req.AgentKey); err != nil {
 		return nil, err
 	}
-	if !model.IsReservedCallerKey(req.CallerKey) {
-		caller, err := model.GetActiveCallerByKey(ctx, req.CallerKey)
+	if !model.IsReservedAppKey(req.AppKey) {
+		app, err := model.GetActiveAppByKey(ctx, req.AppKey)
 		if err != nil {
 			return nil, err
 		}
-		if caller == nil {
-			return nil, components.ErrorCallerNotFound.Sprintf(req.CallerKey)
+		if app == nil {
+			return nil, components.ErrorAppNotFound.Sprintf(req.AppKey)
 		}
 	}
 	if err := validatePermissionMode(req.PermissionMode); err != nil {
@@ -55,15 +55,15 @@ func CreateAgent(ctx *gin.Context, req *params.CreateAgentReq, createdBy string)
 	toolsJSON, _ := json.Marshal(normalizeReferenceList(req.Tools))
 	skillsJSON, _ := json.Marshal(normalizeReferenceList(req.Skills))
 
-	existing, err := model.GetAgentByCallerAndAgentKey(ctx, req.CallerKey, req.AgentKey)
+	existing, err := model.GetAgentByAppAndAgentKey(ctx, req.AppKey, req.AgentKey)
 	if err != nil {
 		return nil, err
 	}
 	if existing != nil {
-		return nil, components.ErrorAgentDuplicate.Sprintf(req.CallerKey, req.AgentKey)
+		return nil, components.ErrorAgentDuplicate.Sprintf(req.AppKey, req.AgentKey)
 	}
-	// uk_caller_agent 不含 deleted_at：软删行仍占用唯一键，同 key 重建走复活更新而非插入。
-	if deleted, err := model.GetAgentByCallerAndAgentKeyUnscoped(ctx, req.CallerKey, req.AgentKey); err != nil {
+	// uk_app_agent 不含 deleted_at：软删行仍占用唯一键，同 key 重建走复活更新而非插入。
+	if deleted, err := model.GetAgentByAppAndAgentKeyUnscoped(ctx, req.AppKey, req.AgentKey); err != nil {
 		return nil, err
 	} else if deleted != nil && deleted.DeletedAt != 0 {
 		return reviveDeletedAgent(ctx, deleted, req, routeValues, toolsJSON, skillsJSON, createdBy)
@@ -83,7 +83,7 @@ func CreateAgent(ctx *gin.Context, req *params.CreateAgentReq, createdBy string)
 		AgentKey:        req.AgentKey,
 		Name:            req.Name,
 		Description:     req.Description,
-		CallerKey:       req.CallerKey,
+		AppKey:       req.AppKey,
 		RouteValues:     string(routeValues),
 		SystemPrompt:    req.SystemPrompt,
 		ModelKey:        strings.TrimSpace(req.ModelKey),
@@ -105,7 +105,7 @@ func CreateAgent(ctx *gin.Context, req *params.CreateAgentReq, createdBy string)
 }
 
 // agentDefinitionUpdates 是「用文件定义覆盖 agent 行」的字段集（revive 与 bundle upsert 共用）；
-// 不含 agent_id/caller_key（键位不可变）与 created_by（保留创建审计）。
+// 不含 agent_id/app_key（键位不可变）与 created_by（保留创建审计）。
 func agentDefinitionUpdates(req *params.CreateAgentReq, routeValues, toolsJSON, skillsJSON []byte, updatedBy string) map[string]interface{} {
 	status, _ := resolveAgentStatus(req.Status)
 	readOnly, _ := resolveAgentReadOnly(req.ReadOnly)
@@ -165,12 +165,12 @@ func UpdateAgent(ctx *gin.Context, req *params.UpdateAgentReq) (*model.Agent, er
 		return nil, err
 	}
 	if req.AgentKey != existing.AgentKey {
-		duplicate, err := model.GetAgentByCallerAndAgentKey(ctx, existing.CallerKey, req.AgentKey)
+		duplicate, err := model.GetAgentByAppAndAgentKey(ctx, existing.AppKey, req.AgentKey)
 		if err != nil {
 			return nil, err
 		}
 		if duplicate != nil {
-			return nil, components.ErrorAgentDuplicate.Sprintf(existing.CallerKey, req.AgentKey)
+			return nil, components.ErrorAgentDuplicate.Sprintf(existing.AppKey, req.AgentKey)
 		}
 	}
 
@@ -273,18 +273,18 @@ func GetDetail(ctx *gin.Context, agentID string) (*model.Agent, error) {
 	return agent, nil
 }
 
-// ListByCallerAndRoute 管理列表：callerKey 为空跨 caller 全量；否则按路由前缀列出（含全部状态）。
+// ListByAppAndRoute 管理列表：appKey 为空跨 app 全量；否则按路由前缀列出（含全部状态）。
 // 两种视图都会合并未被同 agent_key DB 行遮蔽的内置 profile（source=builtin），
-// 供管理面板展示与 fork；fork（同 caller 新建同名行）后内置在该 caller 作用域自动让位。
-func ListByCallerAndRoute(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Agent, error) {
+// 供管理面板展示与 fork；fork（同 app 新建同名行）后内置在该 app 作用域自动让位。
+func ListByAppAndRoute(ctx *gin.Context, appKey string, routeValues []string) ([]model.Agent, error) {
 	var agents []model.Agent
 	var err error
-	if strings.TrimSpace(callerKey) == "" {
+	if strings.TrimSpace(appKey) == "" {
 		agents, err = model.ListAllAgents(ctx)
 	} else {
 		exact, parents := route.SplitRouteExactAndParents(routeValues)
 		prefixes := append([]string{exact}, parents...)
-		agents, err = model.ListAgentsByCallerAndRoutes(ctx, callerKey, prefixes)
+		agents, err = model.ListAgentsByAppAndRoutes(ctx, appKey, prefixes)
 	}
 	if err != nil {
 		return nil, err
@@ -299,7 +299,7 @@ type agentMarkdownFrontmatter struct {
 	AgentKey        string   `yaml:"agent_key"`
 	Name            string   `yaml:"name"`
 	Description     string   `yaml:"description"`
-	CallerKey       string   `yaml:"caller_key"`
+	AppKey       string   `yaml:"app_key"`
 	RouteValues     []string `yaml:"route_values"`
 	SystemPrompt    string   `yaml:"system_prompt"`
 	ModelKey        string   `yaml:"model_key"`
@@ -313,7 +313,7 @@ type agentMarkdownFrontmatter struct {
 
 // ImportFromMarkdown 解析「frontmatter + 正文」格式的 Agent 定义并入库：
 // frontmatter 字段对应 CreateAgentReq（yaml 风格命名），正文（第二个 --- 之后）即 system_prompt；
-// frontmatter 中的 caller_key / route_values 缺省时取请求体字段。
+// frontmatter 中的 app_key / route_values 缺省时取请求体字段。
 func ImportFromMarkdown(ctx *gin.Context, req *params.ImportAgentReq, createdBy string) (*model.Agent, error) {
 	createReq, err := buildAgentCreateReqFromMarkdown(req)
 	if err != nil {
@@ -323,7 +323,7 @@ func ImportFromMarkdown(ctx *gin.Context, req *params.ImportAgentReq, createdBy 
 }
 
 // UpsertFromMarkdownForBundle 是 Bundle 安装用的同名覆盖导入（P3）：
-// 活跃同 caller+agent_key 行 → 覆盖定义字段（沿用 agent_id 与创建审计字段）；
+// 活跃同 app+agent_key 行 → 覆盖定义字段（沿用 agent_id 与创建审计字段）；
 // 软删行 → 复活覆盖（CreateAgent 内建路径）；不存在 → 全量校验新建。
 // 返回覆盖前的整行快照 JSON（空串=本次新建），供 Bundle 卸载回滚。
 // 普通 /agent/import 语义不变（同名仍报 ErrorAgentDuplicate）。
@@ -332,7 +332,7 @@ func UpsertFromMarkdownForBundle(ctx *gin.Context, req *params.ImportAgentReq, u
 	if err != nil {
 		return nil, "", err
 	}
-	if existing, err := model.GetAgentByCallerAndAgentKey(ctx, createReq.CallerKey, createReq.AgentKey); err != nil {
+	if existing, err := model.GetAgentByAppAndAgentKey(ctx, createReq.AppKey, createReq.AgentKey); err != nil {
 		return nil, "", err
 	} else if existing != nil {
 		snapshot, _ := json.Marshal(existing)
@@ -356,7 +356,7 @@ func UpsertFromMarkdownForBundle(ctx *gin.Context, req *params.ImportAgentReq, u
 		return updated, string(snapshot), nil
 	}
 	// 软删行占唯一键：CreateAgent 走复活；快照取软删行原值（含 deleted_at），卸载可还原为软删态。
-	if deleted, err := model.GetAgentByCallerAndAgentKeyUnscoped(ctx, createReq.CallerKey, createReq.AgentKey); err != nil {
+	if deleted, err := model.GetAgentByAppAndAgentKeyUnscoped(ctx, createReq.AppKey, createReq.AgentKey); err != nil {
 		return nil, "", err
 	} else if deleted != nil && deleted.DeletedAt != 0 {
 		snapshot, _ := json.Marshal(deleted)
@@ -374,7 +374,7 @@ func UpsertFromMarkdownForBundle(ctx *gin.Context, req *params.ImportAgentReq, u
 }
 
 // buildAgentCreateReqFromMarkdown 解析「frontmatter + 正文」为 CreateAgentReq
-// （frontmatter 字段优先，caller_key/route_values/status 缺省回退请求体；正文即 system_prompt）。
+// （frontmatter 字段优先，app_key/route_values/status 缺省回退请求体；正文即 system_prompt）。
 func buildAgentCreateReqFromMarkdown(req *params.ImportAgentReq) (*params.CreateAgentReq, error) {
 	frontmatter, body := splitAgentMarkdown(req.Markdown)
 	if strings.TrimSpace(frontmatter) == "" {
@@ -388,9 +388,9 @@ func buildAgentCreateReqFromMarkdown(req *params.ImportAgentReq) (*params.Create
 		return nil, components.ErrorAgentImportInvalid.Sprintf("正文为空（第二个 --- 之后应为子 Agent 系统提示词）")
 	}
 
-	callerKey := firstNonEmpty(meta.CallerKey, req.CallerKey)
-	if callerKey == "" {
-		return nil, components.ErrorAgentImportInvalid.Sprintf("caller_key 不能为空（frontmatter 或请求体至少提供一处）")
+	appKey := firstNonEmpty(meta.AppKey, req.AppKey)
+	if appKey == "" {
+		return nil, components.ErrorAgentImportInvalid.Sprintf("app_key 不能为空（frontmatter 或请求体至少提供一处）")
 	}
 	routeValues := meta.RouteValues
 	if routeValues == nil {
@@ -406,7 +406,7 @@ func buildAgentCreateReqFromMarkdown(req *params.ImportAgentReq) (*params.Create
 		AgentKey:        meta.AgentKey,
 		Name:            meta.Name,
 		Description:     meta.Description,
-		CallerKey:       callerKey,
+		AppKey:       appKey,
 		RouteValues:     routeValues,
 		SystemPrompt:    strings.TrimSpace(body),
 		ModelKey:        meta.ModelKey,
@@ -571,7 +571,7 @@ func ToAgentResp(a *model.Agent) params.AgentResp {
 		AgentKey:       a.AgentKey,
 		Name:           a.Name,
 		Description:    a.Description,
-		CallerKey:      a.CallerKey,
+		AppKey:      a.AppKey,
 		RouteValues:    parseAgentRouteValues(a.RouteValues),
 		SystemPrompt:   a.SystemPrompt,
 		ModelKey:       a.ModelKey,

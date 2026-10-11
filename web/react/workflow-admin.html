@@ -122,7 +122,7 @@
       <div class="field"><label>名称（通知与会话标题展示）</label>
         <input id="f_name" placeholder="每日 bd-cron 巡检"></div>
       <div class="field full"><label>描述</label><input id="f_desc"></div>
-      <div class="field"><label>callerKey（触发的 run 用哪个 caller）</label><input id="f_caller"></div>
+      <div class="field"><label>appKey（触发的 run 用哪个 app）</label><input id="f_app"></div>
       <div class="field"><label>userName（以谁的身份跑，可空）</label><input id="f_user"></div>
       <div class="field full"><label>路由值 routeValues（逗号分隔，可空）</label><input id="f_routes" placeholder="route-a, route-b"></div>
       <div class="field full"><label>任务提示词 prompt（支持 {{date}} {{datetime}} {{workflow}} 占位符）</label>
@@ -241,7 +241,7 @@ async function loadList() {
     document.getElementById('listHint').textContent = '共 ' + workflows.length + ' 个定义（调度器随 llm.workflow.enabled 启动）';
     if (!workflows.length) { wrap.innerHTML = '<div class="card empty">暂无 workflow，点右上角「新建」创建第一个定时任务</div>'; return; }
     wrap.innerHTML = '<table><thead><tr>' +
-      '<th>名称 / Key</th><th>触发</th><th>Caller / 身份</th><th>状态</th><th>下次 / 最近触发</th><th>最近运行</th><th>操作</th>' +
+      '<th>名称 / Key</th><th>触发</th><th>App / 身份</th><th>状态</th><th>下次 / 最近触发</th><th>最近运行</th><th>操作</th>' +
       '</tr></thead><tbody>' + workflows.map(rowHtml).join('') + '</tbody></table>';
   } catch (e) {
     wrap.innerHTML = '<div class="card empty">' + esc(e.message) + '</div>';
@@ -256,7 +256,7 @@ function rowHtml(w) {
   return '<tr>' +
     '<td><b>' + esc(w.name) + '</b><br><span class="mono">' + esc(w.workflowKey) + '</span></td>' +
     '<td>' + trigger + '</td>' +
-    '<td>' + esc(w.callerKey) + (w.userName ? '<br><span class="mono">as ' + esc(w.userName) + '</span>' : '') + '</td>' +
+    '<td>' + esc(w.appKey) + (w.userName ? '<br><span class="mono">as ' + esc(w.userName) + '</span>' : '') + '</td>' +
     '<td><span class="badge ' + (enabled ? 'on' : 'off') + '">' + (enabled ? '启用' : '停用') + '</span></td>' +
     '<td><span class="mono">' + fmtTime(w.nextFireAt) + '</span><br><span class="mono">最近 ' + fmtTime(w.lastFireAt) + '</span></td>' +
     '<td>' + (w.recentStatus ? '<span class="badge s-' + esc(w.recentStatus) + '">' + esc(w.recentStatus) + '</span>' : '<span class="muted">未运行</span>') + '</td>' +
@@ -298,7 +298,7 @@ function openEdit(key) {
   document.getElementById('f_key').disabled = !!w;
   document.getElementById('f_name').value = w ? w.name : '';
   document.getElementById('f_desc').value = w ? (w.description || '') : '';
-  document.getElementById('f_caller').value = w ? w.callerKey : '';
+  document.getElementById('f_app').value = w ? w.appKey : '';
   document.getElementById('f_user').value = w ? (w.userName || '') : '';
   document.getElementById('f_routes').value = w ? joinRoutes(w.routeValues) : '';
   document.getElementById('f_prompt').value = w ? w.prompt : '';
@@ -327,7 +327,7 @@ function splitRoutes(text) {
 }
 async function saveEdit() {
   const body = {
-    name: val('f_name'), description: val('f_desc'), callerKey: val('f_caller'),
+    name: val('f_name'), description: val('f_desc'), appKey: val('f_app'),
     userName: val('f_user'), routeValues: splitRoutes(val('f_routes')),
     prompt: val('f_prompt'), triggerType: val('f_trigger'), cronExpr: cronExprValue,
     timezone: val('f_tz'), modelKey: val('f_model'), modelVersion: val('f_modelVer'),

@@ -22,7 +22,7 @@ const PROBLEM_FEEDBACK_MAX = 500;
 export interface TurnFeedbackBarProps {
   runId: string;
   sessionId?: string | null;
-  callerKey?: string;
+  appKey?: string;
   routeValues?: string[];
   state?: RunFeedbackState;
   copyContent?: string;
@@ -44,7 +44,7 @@ export function TurnFeedbackBar(props: TurnFeedbackBarProps): JSX.Element {
   createEffect(() => {
     void props.runId;
     void props.sessionId;
-    void props.callerKey;
+    void props.appKey;
     void props.routeValues;
     setContentCopied(false);
     setSessionIdCopied(false);
@@ -88,7 +88,7 @@ export function TurnFeedbackBar(props: TurnFeedbackBarProps): JSX.Element {
     if (!props.sessionId) return;
     const content = JSON.stringify({
       sessionId: props.sessionId,
-      callerKey: props.callerKey ?? "",
+      appKey: props.appKey ?? "",
       routeValues: props.routeValues ?? [],
     }, null, 2);
     if (!copy(content)) return;

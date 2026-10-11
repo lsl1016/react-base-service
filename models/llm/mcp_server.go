@@ -30,7 +30,7 @@ type McpServer struct {
 	LastCheckStatus  string                `json:"lastCheckStatus" gorm:"column:last_check_status;not null;default:unknown"`
 	LastCheckMessage string                `json:"lastCheckMessage" gorm:"column:last_check_message;not null;default:''"`
 	LastCheckAt      *time.Time            `json:"lastCheckAt" gorm:"column:last_check_at"`
-	CallerKey        string                `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey        string                `json:"appKey" gorm:"column:app_key;not null"`
 	CreatedBy        string                `json:"createdBy" gorm:"column:created_by;not null;default:''"`
 	UpdatedBy        string                `json:"updatedBy" gorm:"column:updated_by;not null;default:''"`
 	CreatedAt        time.Time             `json:"createdAt" gorm:"column:created_at"`
@@ -133,11 +133,11 @@ func SoftDeleteMcpServerByServerID(ctx *gin.Context, serverID string) error {
 	return nil
 }
 
-// ListMcpServersByCaller 返回指定 caller 下的全部 MCP 连接（含停用）。
-func ListMcpServersByCaller(ctx *gin.Context, callerKey string) ([]McpServer, error) {
+// ListMcpServersByApp 返回指定 app 下的全部 MCP 连接（含停用）。
+func ListMcpServersByApp(ctx *gin.Context, appKey string) ([]McpServer, error) {
 	var servers []McpServer
 	err := helpers.MysqlClientLLM.Model(&McpServer{}).WithContext(ctx).
-		Where("caller_key = ?", callerKey).
+		Where("app_key = ?", appKey).
 		Order("created_at DESC").
 		Find(&servers).Error
 	if err != nil {
@@ -146,7 +146,7 @@ func ListMcpServersByCaller(ctx *gin.Context, callerKey string) ([]McpServer, er
 	return servers, nil
 }
 
-// ListEnabledMcpServers 返回全部启用的 MCP 连接（跨 caller，启动拉起用）。
+// ListEnabledMcpServers 返回全部启用的 MCP 连接（跨 app，启动拉起用）。
 func ListEnabledMcpServers(ctx *gin.Context) ([]McpServer, error) {
 	var servers []McpServer
 	err := helpers.MysqlClientLLM.Model(&McpServer{}).WithContext(ctx).
@@ -158,13 +158,13 @@ func ListEnabledMcpServers(ctx *gin.Context) ([]McpServer, error) {
 	return servers, nil
 }
 
-// McpServerCaller 是 MCP 连接与 caller 的绑定（tblLlmMcpServerCaller）：
-// 一个连接可绑多个 caller，连接的工具会同步到每个绑定的 caller 名下；
-// 连接表自带的 caller_key 是属主 caller（登记方，恒定生效，不占绑定行）。
-type McpServerCaller struct {
+// McpServerApp 是 MCP 连接与 app 的绑定（tblLlmMcpServerApp）：
+// 一个连接可绑多个 app，连接的工具会同步到每个绑定的 app 名下；
+// 连接表自带的 app_key 是属主 app（登记方，恒定生效，不占绑定行）。
+type McpServerApp struct {
 	ID        uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
 	ServerID  string                `json:"serverId" gorm:"column:server_id;not null"`
-	CallerKey string                `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey string                `json:"appKey" gorm:"column:app_key;not null"`
 	Status    int                   `json:"status" gorm:"column:status;not null;default:1"`
 	CreatedBy string                `json:"createdBy" gorm:"column:created_by;not null;default:''"`
 	CreatedAt time.Time             `json:"createdAt" gorm:"column:created_at"`
@@ -172,49 +172,49 @@ type McpServerCaller struct {
 	DeletedAt soft_delete.DeletedAt `json:"deletedAt" gorm:"column:deleted_at;not null;default:0"`
 }
 
-func (b *McpServerCaller) TableName() string {
-	return "tblLlmMcpServerCaller"
+func (b *McpServerApp) TableName() string {
+	return "tblLlmMcpServerApp"
 }
 
-// ListMcpServerCallers 返回连接当前生效的绑定 caller（不含属主，属主恒定生效）。
-func ListMcpServerCallers(ctx *gin.Context, serverID string) ([]string, error) {
-	var rows []McpServerCaller
-	err := helpers.MysqlClientLLM.Model(&McpServerCaller{}).WithContext(ctx).
+// ListMcpServerApps 返回连接当前生效的绑定 app（不含属主，属主恒定生效）。
+func ListMcpServerApps(ctx *gin.Context, serverID string) ([]string, error) {
+	var rows []McpServerApp
+	err := helpers.MysqlClientLLM.Model(&McpServerApp{}).WithContext(ctx).
 		Where("server_id = ? AND status = 1", serverID).
 		Order("created_at ASC").
 		Find(&rows).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
-	callers := make([]string, 0, len(rows))
+	apps := make([]string, 0, len(rows))
 	for _, row := range rows {
-		callers = append(callers, row.CallerKey)
+		apps = append(apps, row.AppKey)
 	}
-	return callers, nil
+	return apps, nil
 }
 
-// ReplaceMcpServerCallers 全量替换连接的绑定 caller（软删除缺席行、复活/新增传入行）。
-func ReplaceMcpServerCallers(ctx *gin.Context, serverID string, callerKeys []string, updatedBy string) error {
+// ReplaceMcpServerApps 全量替换连接的绑定 app（软删除缺席行、复活/新增传入行）。
+func ReplaceMcpServerApps(ctx *gin.Context, serverID string, appKeys []string, updatedBy string) error {
 	return helpers.MysqlClientLLM.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing []McpServerCaller
-		if err := tx.Model(&McpServerCaller{}).Where("server_id = ?", serverID).Find(&existing).Error; err != nil {
+		var existing []McpServerApp
+		if err := tx.Model(&McpServerApp{}).Where("server_id = ?", serverID).Find(&existing).Error; err != nil {
 			return components.ErrorDbSelect.Wrap(err)
 		}
-		active := make(map[string]bool, len(callerKeys))
-		for _, key := range callerKeys {
+		active := make(map[string]bool, len(appKeys))
+		for _, key := range appKeys {
 			active[key] = true
 		}
-		for _, key := range callerKeys {
+		for _, key := range appKeys {
 			if active[key] {
-				// 先尝试复活（唯一键 uk_server_caller 可能仍被软删除行占用），未命中再新增。
-				result := tx.Unscoped().Model(&McpServerCaller{}).
-					Where("server_id = ? AND caller_key = ?", serverID, key).
+				// 先尝试复活（唯一键 uk_server_app 可能仍被软删除行占用），未命中再新增。
+				result := tx.Unscoped().Model(&McpServerApp{}).
+					Where("server_id = ? AND app_key = ?", serverID, key).
 					Updates(map[string]interface{}{"status": 1, "created_by": updatedBy, "deleted_at": 0})
 				if result.Error != nil {
 					return components.ErrorDbUpdate.Wrap(result.Error)
 				}
 				if result.RowsAffected == 0 {
-					if err := tx.Create(&McpServerCaller{ServerID: serverID, CallerKey: key, Status: 1, CreatedBy: updatedBy}).Error; err != nil {
+					if err := tx.Create(&McpServerApp{ServerID: serverID, AppKey: key, Status: 1, CreatedBy: updatedBy}).Error; err != nil {
 						return components.ErrorDbInsert.Wrap(err)
 					}
 				}
@@ -222,9 +222,9 @@ func ReplaceMcpServerCallers(ctx *gin.Context, serverID string, callerKeys []str
 			}
 		}
 		for _, row := range existing {
-			if row.DeletedAt == 0 && !containsString(callerKeys, row.CallerKey) {
-				if err := tx.Where("server_id = ? AND caller_key = ?", serverID, row.CallerKey).
-					Delete(&McpServerCaller{}).Error; err != nil {
+			if row.DeletedAt == 0 && !containsString(appKeys, row.AppKey) {
+				if err := tx.Where("server_id = ? AND app_key = ?", serverID, row.AppKey).
+					Delete(&McpServerApp{}).Error; err != nil {
 					return components.ErrorDbUpdate.Wrap(err)
 				}
 			}
@@ -242,9 +242,9 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-// SoftDeleteMcpServerCallersByCallerWithDB 删除 caller 时的级联：清理该 caller 的全部连接绑定。
-func SoftDeleteMcpServerCallersByCallerWithDB(tx *gorm.DB, callerKey string) (int64, error) {
-	result := tx.Where("caller_key = ?", callerKey).Delete(&McpServerCaller{})
+// SoftDeleteMcpServerAppsByAppWithDB 删除 app 时的级联：清理该 app 的全部连接绑定。
+func SoftDeleteMcpServerAppsByAppWithDB(tx *gorm.DB, appKey string) (int64, error) {
+	result := tx.Where("app_key = ?", appKey).Delete(&McpServerApp{})
 	if result.Error != nil {
 		return 0, components.ErrorDbUpdate.Wrap(result.Error)
 	}

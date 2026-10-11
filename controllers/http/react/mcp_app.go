@@ -15,7 +15,7 @@ import (
 
 // MCP 应用（网关接入凭证）管理接口 —— 创建/启停/重置密钥/删除、工具绑定与调用审计查询。
 //
-// 工具是全局基础集合（全部启用的 http 工具，不按 caller 划分）；应用通过
+// 工具是全局基础集合（全部启用的 http 工具，不按 app 划分）；应用通过
 // tblLlmMcpAppTool 白名单绑定工具子集——把不同 app 发给不同业务方，即控制
 // 各业务方 MCP 连接可见的工具范围。appSecret 仅创建与重置时完整返回一次，
 // 列表/详情一律打码。
@@ -24,8 +24,8 @@ type mcpAppListRequest struct{}
 
 type mcpAppCreateRequest struct {
 	AppName string `json:"appName"`
-	// CallerKey 兼容字段：应用不再绑定 caller，传入即忽略。
-	CallerKey string `json:"callerKey"`
+	// AppKey 兼容字段：应用不再绑定 app，传入即忽略。
+	AppKey string `json:"appKey"`
 	// Status 默认启用；显式传 0 创建即停用。
 	Status *int `json:"status"`
 }
@@ -33,8 +33,8 @@ type mcpAppCreateRequest struct {
 type mcpAppUpdateRequest struct {
 	AppID   string `json:"appId"`
 	AppName string `json:"appName"`
-	// CallerKey 兼容字段：应用不再绑定 caller，传入即忽略。
-	CallerKey string `json:"callerKey"`
+	// AppKey 兼容字段：应用不再绑定 app，传入即忽略。
+	AppKey string `json:"appKey"`
 	Status    *int   `json:"status"`
 }
 
@@ -171,7 +171,7 @@ func CreateMcpApp(ctx *gin.Context) {
 	components.RenderJsonSucc(ctx, gin.H{"app": view, "appSecret": secret})
 }
 
-// UpdateMcpApp 更新 MCP 应用（名称/启停）。工具可见范围走 grant_tools，不再绑定 caller。
+// UpdateMcpApp 更新 MCP 应用（名称/启停）。工具可见范围走 grant_tools，不再绑定 app。
 // @Summary      更新 MCP 应用
 // @Description  按 appId 更新应用名称或启停状态
 // @Tags         React
@@ -491,7 +491,7 @@ func ListMcpAppGrantableTools(ctx *gin.Context) {
 		ToolID      string `json:"toolId"`
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		CallerKey   string `json:"callerKey"`
+		AppKey   string `json:"appKey"`
 		Status      int    `json:"status"`
 		Granted     bool   `json:"granted"`
 	}
@@ -506,7 +506,7 @@ func ListMcpAppGrantableTools(ctx *gin.Context) {
 			ToolID:      tool.ToolID,
 			Name:        tool.Name,
 			Description: tool.Description,
-			CallerKey:   tool.CallerKey,
+			AppKey:   tool.AppKey,
 			Status:      tool.Status,
 			Granted:     granted[tool.ToolID],
 		})

@@ -63,7 +63,7 @@ func executeWorkflowRun(wf *model.Workflow, run *model.WorkflowRun) {
 
 	ginCtx := react.NewHeadlessGinContext(resolveWorkflowUserName(wf))
 	payload := params.ReactRunPayload{
-		CallerKey:    wf.CallerKey,
+		AppKey:    wf.AppKey,
 		RouteValues:  parseRouteValues(wf.RouteValues),
 		Type:         model.ReactSessionTypeScheduled,
 		UserPrompt:   renderWorkflowPrompt(wf),
@@ -313,7 +313,7 @@ func artifactNames(artifacts []struct {
 	return "产出文件 " + strings.Join(names, ", ")
 }
 
-// newJudgeInvoker 构造裁判的 LLM 调用器：凭证与主 run 同源（caller 连接/API Key），
+// newJudgeInvoker 构造裁判的 LLM 调用器：凭证与主 run 同源（app 连接/API Key），
 // 模型用 workflow 显式配置，未配置时回退全局默认 ReAct 模型（与 run 同口径，轻量判定不必独配）。
 func newJudgeInvoker(ctx *gin.Context, wf *model.Workflow) judge.Invoker {
 	modelKey := resolveWorkflowModelKey(wf)
@@ -358,21 +358,21 @@ func (i judgeLLMInvoker) ChatOnce(ctx context.Context, system, user string) (str
 	return sb.String(), nil
 }
 
-// resolveWorkflowCredential 按 run 同口径解析凭证：caller+route 连接优先，旧 API Key 兜底。
+// resolveWorkflowCredential 按 run 同口径解析凭证：app+route 连接优先，旧 API Key 兜底。
 func resolveWorkflowCredential(ctx *gin.Context, wf *model.Workflow) (string, error) {
 	routeValues := parseRouteValues(wf.RouteValues)
-	conn, err := llmmodelService.ResolveConnection(ctx, wf.CallerKey, routeValues)
+	conn, err := llmmodelService.ResolveConnection(ctx, wf.AppKey, routeValues)
 	if err != nil {
 		return "", err
 	}
 	if conn != nil {
 		return conn.ApiKeyValue, nil
 	}
-	return apikey.ResolveApiKey(ctx, wf.CallerKey, routeValues)
+	return apikey.ResolveApiKey(ctx, wf.AppKey, routeValues)
 }
 
 // resolveWorkflowModelKey 解析 run/裁判共用的模型 key：workflow 显式配置优先，
-// 空则回退全局默认 ReAct 模型（方案 §4：model_key 空 = caller 默认模型）。
+// 空则回退全局默认 ReAct 模型（方案 §4：model_key 空 = app 默认模型）。
 func resolveWorkflowModelKey(wf *model.Workflow) string {
 	if key := strings.TrimSpace(wf.ModelKey); key != "" {
 		return key
@@ -482,7 +482,7 @@ func resolveTerminalStatus(ctx *gin.Context, err error, result *react.RunResult)
 				switch runRow.State {
 				case model.ReactRunStateWaitingClientMessage, model.ReactRunStateWaitingPlan:
 					return model.WorkflowRunStatusFailed,
-						"run 进入等待人工输入状态（scheduled 档案应禁用交互类工具），请检查 caller 工具配置"
+						"run 进入等待人工输入状态（scheduled 档案应禁用交互类工具），请检查 app 工具配置"
 				}
 			}
 		}

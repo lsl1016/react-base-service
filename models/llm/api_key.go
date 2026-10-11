@@ -14,7 +14,7 @@ import (
 
 type ApiKey struct {
 	ID          uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
-	CallerKey   string                `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey   string                `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues string                `json:"routeValues" gorm:"column:route_values"`
 	Name        string                `json:"name" gorm:"column:name;not null"`
 	ApiKeyValue string                `json:"-" gorm:"column:api_key;not null"`
@@ -51,11 +51,11 @@ func GetApiKeyByID(ctx *gin.Context, id uint) (*ApiKey, error) {
 	return &ak, nil
 }
 
-// ExistApiKeyByCallerAndRoute 检查 caller+route 组合下是否已有有效记录
-func ExistApiKeyByCallerAndRoute(ctx *gin.Context, callerKey, routeValues string) (bool, error) {
+// ExistApiKeyByAppAndRoute 检查 app+route 组合下是否已有有效记录
+func ExistApiKeyByAppAndRoute(ctx *gin.Context, appKey, routeValues string) (bool, error) {
 	var count int64
 	err := helpers.MysqlClientLLM.Model(&ApiKey{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ?", callerKey, routeValues).
+		Where("app_key = ? AND route_values = ?", appKey, routeValues).
 		Count(&count).Error
 	if err != nil {
 		return false, components.ErrorDbSelect.Wrap(err)
@@ -81,10 +81,10 @@ func SoftDeleteApiKeyByID(ctx *gin.Context, id uint) error {
 	return nil
 }
 
-func ListApiKeysByCaller(ctx *gin.Context, callerKey string) ([]ApiKey, error) {
+func ListApiKeysByApp(ctx *gin.Context, appKey string) ([]ApiKey, error) {
 	var keys []ApiKey
 	err := helpers.MysqlClientLLM.Model(&ApiKey{}).WithContext(ctx).
-		Where("caller_key = ?", callerKey).
+		Where("app_key = ?", appKey).
 		Order("created_at DESC").
 		Find(&keys).Error
 	if err != nil {
@@ -93,11 +93,11 @@ func ListApiKeysByCaller(ctx *gin.Context, callerKey string) ([]ApiKey, error) {
 	return keys, nil
 }
 
-// ListApiKeysByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 API Key 列表（不过滤 status，管理后台用）
-func ListApiKeysByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]ApiKey, error) {
+// ListApiKeysByAppAndRoutes 按 appKey + 路由前缀匹配查询 API Key 列表（不过滤 status，管理后台用）
+func ListApiKeysByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]ApiKey, error) {
 	var keys []ApiKey
 	err := helpers.MysqlClientLLM.Model(&ApiKey{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values IN ?", callerKey, routePrefixes).
+		Where("app_key = ? AND route_values IN ?", appKey, routePrefixes).
 		Order("created_at DESC").
 		Find(&keys).Error
 	if err != nil {
@@ -106,11 +106,11 @@ func ListApiKeysByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefi
 	return keys, nil
 }
 
-// ListApiKeysByCallerAndExactRoute 按 callerKey + routeValues 精确匹配查询 API Key 列表
-func ListApiKeysByCallerAndExactRoute(ctx *gin.Context, callerKey string, routeValues string) ([]ApiKey, error) {
+// ListApiKeysByAppAndExactRoute 按 appKey + routeValues 精确匹配查询 API Key 列表
+func ListApiKeysByAppAndExactRoute(ctx *gin.Context, appKey string, routeValues string) ([]ApiKey, error) {
 	var keys []ApiKey
 	err := helpers.MysqlClientLLM.Model(&ApiKey{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ?", callerKey, routeValues).
+		Where("app_key = ? AND route_values = ?", appKey, routeValues).
 		Order("created_at DESC").
 		Find(&keys).Error
 	if err != nil {
@@ -119,11 +119,11 @@ func ListApiKeysByCallerAndExactRoute(ctx *gin.Context, callerKey string, routeV
 	return keys, nil
 }
 
-// FindApiKeysByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 API Key
-func FindApiKeysByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]ApiKey, error) {
+// FindApiKeysByAppAndRoutes 按 appKey + 路由前缀匹配查询 API Key
+func FindApiKeysByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]ApiKey, error) {
 	var keys []ApiKey
 	err := helpers.MysqlClientLLM.Model(&ApiKey{}).WithContext(ctx).
-		Where("caller_key = ? AND status = 1 AND route_values IN ?", callerKey, routePrefixes).
+		Where("app_key = ? AND status = 1 AND route_values IN ?", appKey, routePrefixes).
 		Find(&keys).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)

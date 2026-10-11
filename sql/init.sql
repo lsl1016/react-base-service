@@ -17,26 +17,26 @@ USE `llm`;
 -- 一、调用方与注册资源（系统提示词 / 工具 / Skill / API Key）
 -- ---------------------------------------------------------------------------
 
--- Caller 注册表
-CREATE TABLE IF NOT EXISTS `tblLlmCaller` (
+-- App 注册表
+CREATE TABLE IF NOT EXISTS `tblLlmApp` (
     `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `caller_key`  VARCHAR(32)  NOT NULL COMMENT 'caller唯一标识',
-    `name`        VARCHAR(128) NOT NULL COMMENT 'caller名称',
+    `app_key`  VARCHAR(32)  NOT NULL COMMENT 'app唯一标识',
+    `name`        VARCHAR(128) NOT NULL COMMENT 'app名称',
     `description` TEXT         NULL     COMMENT '描述',
     `platform`    VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '兼容现有业务的平台标识',
-    `allow_plan`  TINYINT      NULL DEFAULT NULL COMMENT 'create_plan/Plan模式能力: NULL=跟随全局llm.react.allow_plan 0=caller级强制关 1=caller级强制开',
+    `allow_plan`  TINYINT      NULL DEFAULT NULL COMMENT 'create_plan/Plan模式能力: NULL=跟随全局llm.react.allow_plan 0=app级强制关 1=app级强制开',
     `status`      TINYINT      NOT NULL DEFAULT 1 COMMENT '状态: 0=禁用 1=启用',
     `created_by`  VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted_at`  BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
-    UNIQUE KEY `uk_caller_key` (`caller_key`)
+    UNIQUE KEY `uk_app_key` (`app_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM调用方注册表';
 
--- 系统提示词表（按 callerKey+routeValues 前缀匹配，多条短路由→长路由拼接）
+-- 系统提示词表（按 appKey+routeValues 前缀匹配，多条短路由→长路由拼接）
 CREATE TABLE IF NOT EXISTS `tblLlmSystemPrompt` (
     `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `caller_key`   VARCHAR(32)  NOT NULL COMMENT '所属caller',
+    `app_key`   VARCHAR(32)  NOT NULL COMMENT '所属app',
     `route_values` TEXT         NULL COMMENT '路由路径(JSON数组)',
     `name`         VARCHAR(128) NOT NULL COMMENT '提示词名称',
     `content`      TEXT         NOT NULL COMMENT '提示词内容',
@@ -46,17 +46,17 @@ CREATE TABLE IF NOT EXISTS `tblLlmSystemPrompt` (
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted_at`   BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
-    INDEX `idx_caller_route` (`caller_key`, `route_values`(255))
+    INDEX `idx_app_route` (`app_key`, `route_values`(255))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM系统提示词表';
 
 -- Tool 表（Business Tool：http 类型由后端代理执行，client 类型由前端执行）
 CREATE TABLE IF NOT EXISTS `tblLlmTool` (
     `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `tool_id`      VARCHAR(128) NOT NULL COMMENT '工具唯一标识(UUID/MCP工具mcp_<server>_<tool>__<caller>)',
+    `tool_id`      VARCHAR(128) NOT NULL COMMENT '工具唯一标识(UUID/MCP工具mcp_<server>_<tool>__<app>)',
     `name`         VARCHAR(128) NOT NULL COMMENT '工具名称(英文标识)',
     `description`  TEXT         NULL COMMENT '工具描述',
     `tool_type`    VARCHAR(32)  NOT NULL COMMENT '工具类型: http/client',
-    `caller_key`   VARCHAR(32)  NOT NULL COMMENT '所属caller',
+    `app_key`   VARCHAR(32)  NOT NULL COMMENT '所属app',
     `route_values` TEXT         NULL COMMENT '路由路径(JSON数组)',
     `config`       TEXT         NULL COMMENT '工具配置(JSON: url/method/headers/inputSchema/outputSchema/async/asyncHint/frontendHint/riskPatterns等)',
     `permission_mode` VARCHAR(16) NOT NULL DEFAULT 'auto' COMMENT '权限模式: auto=自动执行/confirm=每次人工确认/confirm_risky=风险正则命中才确认',
@@ -67,15 +67,15 @@ CREATE TABLE IF NOT EXISTS `tblLlmTool` (
     `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted_at`   BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
     UNIQUE KEY `uk_tool_id` (`tool_id`),
-    INDEX `idx_caller_route` (`caller_key`, `route_values`(255)),
+    INDEX `idx_app_route` (`app_key`, `route_values`(255)),
     INDEX `idx_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM工具表';
 
 -- 存量环境增量：ALTER TABLE `tblLlmTool` ADD COLUMN `permission_mode` VARCHAR(16) NOT NULL DEFAULT 'auto' COMMENT '权限模式: auto/confirm/confirm_risky' AFTER `config`;
 
 -- 存量环境增量（代码工作区共享化，2026-10）：workspace 动态工具名带 commit 段
--- （mcp_ws_<service>_<commit8>_<tool>__<callerKey>，最长约 86 字符），tool_id 列 64 → 128：
--- ALTER TABLE `tblLlmTool`    MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL COMMENT '工具唯一标识(UUID/MCP工具mcp_<server>_<tool>__<caller>)';
+-- （mcp_ws_<service>_<commit8>_<tool>__<appKey>，最长约 86 字符），tool_id 列 64 → 128：
+-- ALTER TABLE `tblLlmTool`    MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL COMMENT '工具唯一标识(UUID/MCP工具mcp_<server>_<tool>__<app>)';
 -- ALTER TABLE `tblLlmToolUserPolicy` MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'tblLlmTool.tool_id';
 -- ALTER TABLE `tblLlmMcpAppTool`  MODIFY COLUMN `tool_id` VARCHAR(128) NOT NULL COMMENT 'tblLlmTool.tool_id';
 
@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmToolUserPolicy` (
     UNIQUE KEY `uk_tool_id` (`tool_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM工具用户访问策略表';
 
+
 -- Skill 表（按摘要索引注入 system 前缀，完整说明经 get_skill 按需加载）
 CREATE TABLE IF NOT EXISTS `tblLlmSkill` (
     `id`                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
@@ -106,7 +107,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmSkill` (
     `prompt_supplement`   TEXT         NULL COMMENT '提示词补充(含枚举映射、接口约束等)',
     `triggers_json`       TEXT         NULL COMMENT '关键词触发器(JSON数组,run装配期命中时把提示追加到该条用户消息)',
     `content`             MEDIUMTEXT   NULL COMMENT 'SKILL.md正文(文件导入形态)',
-    `caller_key`          VARCHAR(32)  NOT NULL COMMENT '所属caller',
+    `app_key`          VARCHAR(32)  NOT NULL COMMENT '所属app',
     `route_values`        TEXT         NULL COMMENT '路由路径(JSON数组)',
     `is_default`          TINYINT      NOT NULL DEFAULT 0 COMMENT '是否兜底skill: 0=否 1=是',
     `status`              TINYINT      NOT NULL DEFAULT 1 COMMENT '状态: 0=禁用 1=启用',
@@ -116,8 +117,8 @@ CREATE TABLE IF NOT EXISTS `tblLlmSkill` (
     `updated_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted_at`          BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
     UNIQUE KEY `uk_skill_id` (`skill_id`),
-    INDEX `idx_caller_route` (`caller_key`, `route_values`(255)),
-    INDEX `idx_caller_status` (`caller_key`, `status`)
+    INDEX `idx_app_route` (`app_key`, `route_values`(255)),
+    INDEX `idx_app_status` (`app_key`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM技能表';
 
 -- 存量环境增量迁移（新环境由上方建表语句直接包含；P2-2 Skill 文件标准）：
@@ -133,12 +134,12 @@ CREATE TABLE IF NOT EXISTS `tblLlmAgent` (
     `agent_key`       VARCHAR(64)  NOT NULL COMMENT '工具名级标识(如 dba-agent, delegate_agent 入参)',
     `name`            VARCHAR(128) NOT NULL COMMENT '展示名',
     `description`     TEXT         NOT NULL COMMENT '给主LLM看的委派说明(何时派给谁,对应 when_to_use)',
-    `caller_key`      VARCHAR(32)  NOT NULL COMMENT '所属caller(default=全caller可用)',
+    `app_key`      VARCHAR(32)  NOT NULL COMMENT '所属app(default=全app可用)',
     `route_values`    VARCHAR(256) NOT NULL DEFAULT '[]' COMMENT '路由路径(JSON数组)',
     `system_prompt`   MEDIUMTEXT   NOT NULL COMMENT '子Agent系统提示词(正文)',
     `model_key`       VARCHAR(64)  DEFAULT NULL COMMENT '模型种类(空=继承父run当前模型)',
     `model_version`   VARCHAR(128) DEFAULT NULL COMMENT '模型版本(空=按model_key解析默认)',
-    `tools_json`      VARCHAR(1024) NOT NULL DEFAULT '[]' COMMENT '业务工具名白名单(JSON数组,空=继承caller全部可见工具)',
+    `tools_json`      VARCHAR(1024) NOT NULL DEFAULT '[]' COMMENT '业务工具名白名单(JSON数组,空=继承app全部可见工具)',
     `skills_json`     VARCHAR(1024) NOT NULL DEFAULT '[]' COMMENT 'Skill名白名单(JSON数组,空=不注入skill索引)',
     `max_steps`       INT          NOT NULL DEFAULT 8 COMMENT '子run步数上限(默认小于主run)',
     `max_tokens_per_run` INT      NOT NULL DEFAULT 0 COMMENT '子run递归token预算上限(0=不限,含委派孙代理)',
@@ -151,8 +152,8 @@ CREATE TABLE IF NOT EXISTS `tblLlmAgent` (
     `updated_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted_at`      BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
     UNIQUE KEY `uk_agent_id` (`agent_id`),
-    UNIQUE KEY `uk_caller_agent` (`caller_key`, `agent_key`),
-    INDEX `idx_caller_route` (`caller_key`, `route_values`(255))
+    UNIQUE KEY `uk_app_agent` (`app_key`, `agent_key`),
+    INDEX `idx_app_route` (`app_key`, `route_values`(255))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM子Agent定义表';
 
 -- 存量环境增量迁移（新环境由上方建表语句直接包含；P3 子代理预算）：
@@ -207,7 +208,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmMcpServer` (
     `last_check_status`  VARCHAR(16)  NOT NULL DEFAULT 'unknown' COMMENT '最近连接检测: connected/disconnected/unknown',
     `last_check_message` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '最近连接检测信息',
     `last_check_at`      DATETIME     NULL COMMENT '最近连接检测时间',
-    `caller_key`         VARCHAR(32)  NOT NULL COMMENT '所属caller',
+    `app_key`         VARCHAR(32)  NOT NULL COMMENT '所属app',
     `created_by`         VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
     `updated_by`         VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '更新人',
     `created_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -215,27 +216,27 @@ CREATE TABLE IF NOT EXISTS `tblLlmMcpServer` (
     `deleted_at`         BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
     UNIQUE KEY `uk_server_id` (`server_id`),
     UNIQUE KEY `uk_name` (`name`),
-    INDEX `idx_caller` (`caller_key`)
+    INDEX `idx_app` (`app_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP连接注册表';
 
--- MCP 连接与 caller 的绑定（一个连接的工具同步到每个绑定的 caller；连接表 caller_key 为属主，恒定生效）
-CREATE TABLE IF NOT EXISTS `tblLlmMcpServerCaller` (
+-- MCP 连接与 app 的绑定（一个连接的工具同步到每个绑定的 app；连接表 app_key 为属主，恒定生效）
+CREATE TABLE IF NOT EXISTS `tblLlmMcpServerApp` (
     `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
     `server_id`  VARCHAR(64) NOT NULL COMMENT 'tblLlmMcpServer.server_id',
-    `caller_key` VARCHAR(32) NOT NULL COMMENT '绑定的caller（工具同步到该caller名下）',
+    `app_key` VARCHAR(32) NOT NULL COMMENT '绑定的app（工具同步到该app名下）',
     `status`     TINYINT     NOT NULL DEFAULT 1 COMMENT '状态: 0=停用 1=启用',
     `created_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '创建人',
     `created_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
-    UNIQUE KEY `uk_server_caller` (`server_id`, `caller_key`),
-    INDEX `idx_caller` (`caller_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP连接caller绑定表';
+    UNIQUE KEY `uk_server_app` (`server_id`, `app_key`),
+    INDEX `idx_app` (`app_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP连接app绑定表';
 
--- API Key 表（caller 级模型调用凭证，按 callerKey+routeValues 解析）
+-- API Key 表（app 级模型调用凭证，按 appKey+routeValues 解析）
 CREATE TABLE IF NOT EXISTS `tblLlmApiKey` (
     `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `caller_key`   VARCHAR(32)  NOT NULL COMMENT '所属caller',
+    `app_key`   VARCHAR(32)  NOT NULL COMMENT '所属app',
     `route_values` TEXT         NULL COMMENT '路由路径(JSON数组)',
     `name`         VARCHAR(128) NOT NULL COMMENT 'key名称',
     `api_key`      VARCHAR(512) NOT NULL COMMENT '密钥值',
@@ -245,7 +246,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmApiKey` (
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted_at`   BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
-    INDEX `idx_caller_route` (`caller_key`, `route_values`(255))
+    INDEX `idx_app_route` (`app_key`, `route_values`(255))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM API Key表';
 
 -- ---------------------------------------------------------------------------
@@ -279,7 +280,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmUserModel` (
 -- LLM 连接表（协议+接入地址+Key 的自包含连接，模型配置的主体形态；见 docs/模型配置优化方案.md）
 CREATE TABLE IF NOT EXISTS `tblLlmConnection` (
     `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `caller_key`   VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '所属caller(空=不限)',
+    `app_key`   VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '所属app(空=不限)',
     `route_values` TEXT         NULL COMMENT '路由路径(JSON数组,[]=通用)',
     `name`         VARCHAR(128) NOT NULL COMMENT '连接名称',
     `protocol`     VARCHAR(16)  NOT NULL DEFAULT 'openai' COMMENT '协议: openai=OpenAI兼容 anthropic=Anthropic兼容',
@@ -291,7 +292,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmConnection` (
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted_at`   BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
-    INDEX `idx_caller_route` (`caller_key`, `route_values`(255))
+    INDEX `idx_app_route` (`app_key`, `route_values`(255))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM连接表';
 
 -- 存量库升级：用户模型表补连接引用列（8.x ALTER 不支持 IF NOT EXISTS，由部署脚本幂等处理）
@@ -329,7 +330,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmReactSession` (
     `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
     `session_id`   VARCHAR(64)  NOT NULL COMMENT '会话唯一标识(session_前缀UUID)',
     `user_name`    VARCHAR(64)  NOT NULL COMMENT '归属用户',
-    `caller_key`   VARCHAR(32)  NOT NULL COMMENT '调用方标识',
+    `app_key`   VARCHAR(32)  NOT NULL COMMENT '调用方标识',
     `route_values` VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '路由路径(JSON数组序列化)',
     `session_type` VARCHAR(20)  NOT NULL DEFAULT 'chat' COMMENT '会话类型: chat',
     `title`        VARCHAR(255) NOT NULL DEFAULT '' COMMENT '会话标题(按首条输入生成)',
@@ -339,7 +340,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmReactSession` (
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     UNIQUE KEY `uk_session_id` (`session_id`),
-    INDEX `idx_caller_route_user_state` (`caller_key`, `user_name`, `state`, `updated_at`),
+    INDEX `idx_app_route_user_state` (`app_key`, `user_name`, `state`, `updated_at`),
     INDEX `idx_session_state` (`session_id`, `state`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='ReAct会话表';
 
@@ -349,7 +350,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmReactRun` (
     `run_id`                    VARCHAR(64)  NOT NULL COMMENT 'run唯一标识(run_前缀UUID)',
     `session_id`                VARCHAR(64)  NOT NULL COMMENT '所属会话ID',
     `user_name`                 VARCHAR(64)  NOT NULL COMMENT '发起用户',
-    `caller_key`                VARCHAR(32)  NOT NULL COMMENT '调用方标识',
+    `app_key`                VARCHAR(32)  NOT NULL COMMENT '调用方标识',
     `route_values`              VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '路由路径(JSON数组序列化)',
     `state`                     VARCHAR(32)  NOT NULL DEFAULT 'running' COMMENT '状态: running/waiting_client_message/waiting_plan/cancelling/finished/error/cancelled/expired',
     `step_index`                INT          NOT NULL DEFAULT 0 COMMENT '当前推理轮次',
@@ -402,7 +403,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmReactMessage` (
     `run_id`        VARCHAR(64)  NOT NULL COMMENT '所属run ID',
     `session_id`    VARCHAR(64)  NOT NULL COMMENT '所属会话ID',
     `user_name`     VARCHAR(64)  NOT NULL COMMENT '归属用户',
-    `caller_key`    VARCHAR(32)  NOT NULL COMMENT '调用方标识',
+    `app_key`    VARCHAR(32)  NOT NULL COMMENT '调用方标识',
     `seq`           INT          NOT NULL COMMENT 'run内递增序号',
     `step_index`    INT          NOT NULL DEFAULT 0 COMMENT '推理轮次',
     `role`          VARCHAR(16)  NOT NULL COMMENT 'system/user/assistant',
@@ -472,7 +473,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmReactArtifact` (
     `run_id`      VARCHAR(128) NOT NULL COMMENT 'ReAct运行ID',
     `tool_use_id` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '工具调用ID',
     `user_name`   VARCHAR(128) NOT NULL DEFAULT '' COMMENT '产物归属用户',
-    `caller_key`  VARCHAR(128) NOT NULL DEFAULT '' COMMENT '调用方标识',
+    `app_key`  VARCHAR(128) NOT NULL DEFAULT '' COMMENT '调用方标识',
     `file_name`   VARCHAR(255) NOT NULL DEFAULT '' COMMENT '文件名',
     `mime_type`   VARCHAR(128) NOT NULL DEFAULT '' COMMENT '文件MIME类型',
     `cos_key`     VARCHAR(512) NOT NULL COMMENT 'COS对象Key',
@@ -568,7 +569,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmPlanExecution` (
     `plan_execution_id`  VARCHAR(64)  NOT NULL COMMENT 'Plan执行实例ID(plan_exec_前缀)',
     `session_id`         VARCHAR(64)  NOT NULL COMMENT '所属React会话ID',
     `outer_run_id`       VARCHAR(64)  NOT NULL COMMENT '发起Plan的外层Run ID',
-    `caller_key`         VARCHAR(32)  NOT NULL COMMENT '调用方标识',
+    `app_key`         VARCHAR(32)  NOT NULL COMMENT '调用方标识',
     `user_name`          VARCHAR(64)  NOT NULL COMMENT '发起用户',
     `status`             VARCHAR(32)  NOT NULL COMMENT 'CREATED/PLANNING/RUNNING/WAIT_*/SUCCEEDED/FAILED/CANCELLED',
     `current_version_id` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '当前生效Plan版本ID',
@@ -699,8 +700,8 @@ CREATE TABLE IF NOT EXISTS `tblLlmPlanWait` (
 -- 长期记忆条目表（一条原子事实；逻辑唯一键 owner_type+owner_key+item_key，item_key 为内容语义指纹）
 CREATE TABLE IF NOT EXISTS `tblLlmMemoryItem` (
     `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `owner_type`   VARCHAR(32)  NOT NULL COMMENT '记忆归属维度: caller/caller_user',
-    `owner_key`    VARCHAR(128) NOT NULL COMMENT '记忆空间键: callerKey 或 callerKey|userName',
+    `owner_type`   VARCHAR(32)  NOT NULL COMMENT '记忆归属维度: app/app_user(存量行为caller/caller_user,经app_rename_v1迁移)',
+    `owner_key`    VARCHAR(128) NOT NULL COMMENT '记忆空间键: appKey 或 appKey|userName',
     `layer`        VARCHAR(16)  NOT NULL DEFAULT 'detached' COMMENT '层级: resident=常驻(全文注入)/detached=按需(目录索引)',
     `memory_type`  VARCHAR(16)  NOT NULL DEFAULT 'fact' COMMENT '记忆类型: preference=用户偏好(优先注入)/fact=事实/event=事件/procedure=经验方法',
     `confidence`   DECIMAL(4,3) NOT NULL DEFAULT 0.800 COMMENT '可信度0-1: 模型/管理面写入默认0.80, extractor按抽取置信度写入',
@@ -742,20 +743,21 @@ CREATE TABLE IF NOT EXISTS `tblLlmMemoryRevision` (
 -- 运行时设置表（setting_key 单行 JSON，当前仅 subagent 委派策略）
 CREATE TABLE IF NOT EXISTS `tblLlmRuntimeSetting` (
     `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
-    `setting_key` VARCHAR(64)  NOT NULL COMMENT '设置键(当前仅subagent,预留扩展)',
+    `setting_key` VARCHAR(64)  NOT NULL COMMENT '设置键(subagent/context/memory/webaccess)',
+    `app_key`     VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '应用维度(空=全局行;非空=该app专属覆盖,优先于全局)',
     `value_json`  MEDIUMTEXT   NOT NULL COMMENT '设置值JSON(可空字段=未覆盖,回落yaml)',
     `updated_by`  VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '最近更新人',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_setting_key` (`setting_key`)
+    UNIQUE KEY `uk_setting_app` (`setting_key`, `app_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM运行时设置表(管理面板在线覆盖yaml策略)';
 
 -- ---------------------------------------------------------------------------
 -- MCP 服务端网关（工具暴露走既有 tblLlmTool 的 http 工具行；工具是全局基础集合，
--- 不按 caller 划分。此处为凭证、应用工具绑定白名单与审计）
+-- 不按 app 划分。此处为凭证、应用工具绑定白名单与审计）
 -- ---------------------------------------------------------------------------
 
--- MCP 网关应用凭证表（应用不再绑定 caller；可见工具=tblLlmMcpAppTool 白名单子集）
+-- MCP 网关应用凭证表（应用不再绑定 app；可见工具=tblLlmMcpAppTool 白名单子集）
 CREATE TABLE IF NOT EXISTS `tblLlmMcpApp` (
     `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
     `app_id`     VARCHAR(64)  NOT NULL COMMENT '应用唯一标识(mcpapp_前缀)',
@@ -814,14 +816,14 @@ CREATE TABLE IF NOT EXISTS `tblLlmWorkflow` (
     `workflow_key`       VARCHAR(64)  NOT NULL COMMENT '业务标识(如 daily-bd-cron-inspection)',
     `name`               VARCHAR(128) NOT NULL COMMENT '名称(通知/会话标题展示)',
     `description`        TEXT         NULL COMMENT '描述',
-    `caller_key`         VARCHAR(64)  NOT NULL COMMENT '触发的 run 用的 caller(解析提示词/工具/Skill/ApiKey)',
+    `app_key`         VARCHAR(64)  NOT NULL COMMENT '触发的 run 用的 app(解析提示词/工具/Skill/ApiKey)',
     `route_values`       VARCHAR(256) NOT NULL DEFAULT '[]' COMMENT '路由值 JSON 数组',
     `user_name`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '以谁的身份跑(工具白名单/积分归属/审计)；空则匿名',
     `prompt`             MEDIUMTEXT   NOT NULL COMMENT '任务提示词，支持 {{date}}/{{datetime}}/{{workflow}} 占位符',
     `trigger_type`       VARCHAR(16)  NOT NULL DEFAULT 'cron' COMMENT '触发类型: cron | manual(webhook/event 三期预留)',
     `cron_expr`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '标准 5 段 cron 表达式',
     `timezone`           VARCHAR(64)  NOT NULL DEFAULT 'Asia/Shanghai' COMMENT 'IANA 时区',
-    `model_key`          VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '模型 key(空=caller 默认模型)',
+    `model_key`          VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '模型 key(空=app 默认模型)',
     `model_version`      VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '模型版本(空=默认版本)',
     `max_steps`          INT          NOT NULL DEFAULT 0 COMMENT '最大推理轮次(0=配置默认)',
     `timeout_sec`        INT          NOT NULL DEFAULT 0 COMMENT '运行超时秒(0=配置默认)',

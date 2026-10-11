@@ -29,7 +29,7 @@ export interface MessageListProps {
   /** 当前会话 ID，用于反馈区域的 Copy ID */
   sessionId?: string | null;
   /** 当前调用方标识，与 sessionId 一起用于反馈区域的 Copy ID */
-  callerKey?: string;
+  appKey?: string;
   /** 当前会话路由参数，与 sessionId 一起用于反馈区域的 Copy ID */
   routeValues?: string[];
   /** 当前是否正在运行 */
@@ -398,7 +398,7 @@ export function MessageList(props: MessageListProps) {
                   <TurnFeedbackBar
                     runId={section().runId}
                     sessionId={props.sessionId}
-                    callerKey={props.callerKey}
+                    appKey={props.appKey}
                     routeValues={props.routeValues}
                     state={props.feedbackByRunId?.[section().runId]}
                     copyContent={getSectionAssistantContent(section())}

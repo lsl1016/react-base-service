@@ -56,12 +56,12 @@ export type LlmContext = string | Record<string, unknown>;
 /**
  * run 消息的 payload
  *
- * 发起一次 ReAct 推理循环。服务端根据 callerKey + routeValues 定位/创建 Session，
+ * 发起一次 ReAct 推理循环。服务端根据 appKey + routeValues 定位/创建 Session，
  * 然后进入 ReAct 主循环（模型生成 → 工具调用 → 回填 → 继续），直到模型给出最终回答或超过 maxSteps。
  *
  * @example
  * {
- *   callerKey: 'report-editor',
+ *   appKey: 'report-editor',
  *   routeValues: ['report_abc123'],
  *   type: 'chat',
  *   userPrompt: '帮我创建一个柱状图',
@@ -73,8 +73,8 @@ export type ExecutionMode = 'react' | 'plan';
 
 export interface RunPayload {
   /** 业务标识，用于后端区分不同调用方（如 'report-editor'） */
-  callerKey: string;
-  /** 路由参数，后端根据 callerKey + routeValues 定位或创建 Session */
+  appKey: string;
+  /** 路由参数，后端根据 appKey + routeValues 定位或创建 Session */
   routeValues?: string[];
   /** 会话类型，当前仅支持 'chat' */
   type: string;
@@ -356,7 +356,7 @@ export interface ConnectionItem {
   protocol: ConnectionProtocol | string;
   baseUrl: string;
   apiKey: string;
-  callerKey: string;
+  appKey: string;
   routeValues: string[];
   status: number;
   createdAt: string;
@@ -369,7 +369,7 @@ export interface CreateConnectionReq {
   protocol: ConnectionProtocol | string;
   baseUrl: string;
   apiKey: string;
-  callerKey?: string;
+  appKey?: string;
   routeValues?: string[];
 }
 
@@ -380,7 +380,7 @@ export interface UpdateConnectionReq {
   baseUrl?: string;
   /** 留空 = 保持原值 */
   apiKey?: string;
-  callerKey?: string;
+  appKey?: string;
   routeValues?: string[];
   status?: number;
 }

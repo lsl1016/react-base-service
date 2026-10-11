@@ -8,8 +8,8 @@ type BundleInstallReq struct {
 	Ref string `json:"ref"`
 	// RepoPath 是包内相对子目录（monorepo 场景），禁止绝对路径与 ..。
 	RepoPath string `json:"repoPath"`
-	// CallerKey 是包内 agent/skill 未在 frontmatter 声明 caller_key 时的兜底归属。
-	CallerKey string `json:"callerKey" binding:"required"`
+	// AppKey 是包内 agent/skill 未在 frontmatter 声明 app_key 时的兜底归属。
+	AppKey string `json:"appKey" binding:"required"`
 	// RouteValues 是 agent/skill 的兜底路由。
 	RouteValues []string `json:"routeValues"`
 }

@@ -23,7 +23,6 @@ import (
 
 	llm "react-base-service/api/llm"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 	model "react-base-service/models/llm"
 	toolService "react-base-service/service/tool"
 
@@ -144,7 +143,7 @@ func (s *reactEngineState) confirmServerToolIfNeeded(call llm.ToolCall, tool mod
 	if waitErr != nil {
 		if IsErrInteractionTimeout(waitErr) {
 			// 交互等待超时按未授权处理：拒绝结果回灌模型继续循环，不终止 run。
-			seconds := conf.GetReactRuntimeConfig().Loop.InteractionTimeoutSec
+			seconds := s.req.runtimeConfig().Loop.InteractionTimeoutSec
 			return false, fmt.Sprintf("确认等待超时（%d 秒），用户未响应", seconds), nil
 		}
 		if IsReactRunCancelled(waitErr) || IsReactClientDisconnected(waitErr) {

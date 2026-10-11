@@ -31,9 +31,9 @@ func Install(ctx *gin.Context, req *params.BundleInstallReq, installedBy string)
 	if err := validateBundleSource(cfg, req.Source); err != nil {
 		return nil, err
 	}
-	callerKey := strings.TrimSpace(req.CallerKey)
-	if callerKey == "" {
-		return nil, components.ErrorParamInvalid.Sprintf("callerKey 不能为空（bundle 内 agent/skill 的默认归属）")
+	appKey := strings.TrimSpace(req.AppKey)
+	if appKey == "" {
+		return nil, components.ErrorParamInvalid.Sprintf("appKey 不能为空（bundle 内 agent/skill 的默认归属）")
 	}
 
 	content, err := fetchBundle(cfg, req.Source, req.Ref, req.RepoPath)
@@ -83,7 +83,7 @@ func Install(ctx *gin.Context, req *params.BundleInstallReq, installedBy string)
 	}
 
 	// 逐资源应用；任一失败 → 自动卸载本次安装（不留半装状态）。
-	if err := applyBundleResources(ctx, bundleRow.BundleID, content, callerKey, req, installedBy); err != nil {
+	if err := applyBundleResources(ctx, bundleRow.BundleID, content, appKey, req, installedBy); err != nil {
 		if uninstallErr := uninstallByBundleID(ctx, bundleRow.BundleID); uninstallErr != nil {
 			zlog.Errorf(ctx, "[Bundle] 安装失败后的自动清理也失败: bundle=%s err=%v（原错误: %v）", bundleRow.BundleID, uninstallErr, err)
 		}
@@ -100,7 +100,7 @@ func Install(ctx *gin.Context, req *params.BundleInstallReq, installedBy string)
 }
 
 // applyBundleResources 按序应用资源并即时落资源清单行（失败清理依赖这些行）。
-func applyBundleResources(ctx *gin.Context, bundleID string, content *bundleContent, callerKey string, req *params.BundleInstallReq, installedBy string) error {
+func applyBundleResources(ctx *gin.Context, bundleID string, content *bundleContent, appKey string, req *params.BundleInstallReq, installedBy string) error {
 	record := func(resourceType, resourceKey, resourceID, previousJSON string) error {
 		return model.CreateBundleResources(ctx, []model.BundleResource{{
 			BundleID: bundleID, ResourceType: resourceType, ResourceKey: resourceKey,
@@ -110,7 +110,7 @@ func applyBundleResources(ctx *gin.Context, bundleID string, content *bundleCont
 
 	for _, file := range content.Agents {
 		agent, previous, err := agentService.UpsertFromMarkdownForBundle(ctx, &params.ImportAgentReq{
-			CallerKey:   callerKey,
+			AppKey:   appKey,
 			RouteValues: req.RouteValues,
 			Markdown:    file.Markdown,
 		}, installedBy)
@@ -124,7 +124,7 @@ func applyBundleResources(ctx *gin.Context, bundleID string, content *bundleCont
 
 	for _, file := range content.Skills {
 		skill, previous, err := skillService.UpsertFromMarkdownForBundle(ctx, &params.ImportSkillReq{
-			CallerKey:   callerKey,
+			AppKey:   appKey,
 			RouteValues: req.RouteValues,
 			Markdown:    file.Markdown,
 		}, installedBy)
@@ -142,7 +142,7 @@ func applyBundleResources(ctx *gin.Context, bundleID string, content *bundleCont
 			return err
 		}
 		for _, server := range servers {
-			registered, previous, err := registerBundleMcpServer(ctx, server, callerKey, installedBy)
+			registered, previous, err := registerBundleMcpServer(ctx, server, appKey, installedBy)
 			if err != nil {
 				return components.ErrorBundleImportInvalid.Sprintf(".mcp.json 服务器 %s 注册失败: %v", server.Name, err)
 			}
@@ -211,7 +211,7 @@ func rollbackAgentResource(ctx *gin.Context, resource model.BundleResource) erro
 		"agent_key":         restored.AgentKey,
 		"name":              restored.Name,
 		"description":       restored.Description,
-		"caller_key":        restored.CallerKey,
+		"app_key":        restored.AppKey,
 		"route_values":      restored.RouteValues,
 		"system_prompt":     restored.SystemPrompt,
 		"model_key":         restored.ModelKey,
@@ -247,7 +247,7 @@ func rollbackSkillResource(ctx *gin.Context, resource model.BundleResource) erro
 		"prompt_supplement":  restored.PromptSupplement,
 		"triggers_json":      restored.TriggersJSON,
 		"content":            restored.Content,
-		"caller_key":         restored.CallerKey,
+		"app_key":         restored.AppKey,
 		"route_values":       restored.RouteValues,
 		"is_default":         restored.IsDefault,
 		"status":             restored.Status,
@@ -282,7 +282,7 @@ func rollbackMcpServerResource(ctx *gin.Context, resource model.BundleResource) 
 		"status":             restored.Status,
 		"last_check_status":  restored.LastCheckStatus,
 		"last_check_message": restored.LastCheckMessage,
-		"caller_key":         restored.CallerKey,
+		"app_key":         restored.AppKey,
 		"created_by":         restored.CreatedBy,
 		"updated_by":         restored.UpdatedBy,
 		"deleted_at":         restored.DeletedAt,
@@ -364,8 +364,8 @@ func parseBundleMcpServers(raw string) ([]bundleMcpDraft, error) {
 }
 
 // registerBundleMcpServer 注册/覆盖一个 MCP 服务器（同名覆盖沿用 server_id），
-// 返回覆盖前整行快照（空=新建）。仅同步属主 caller 的工具副本，不建额外绑定。
-func registerBundleMcpServer(ctx *gin.Context, draft bundleMcpDraft, callerKey, installedBy string) (*model.McpServer, string, error) {
+// 返回覆盖前整行快照（空=新建）。仅同步属主 app 的工具副本，不建额外绑定。
+func registerBundleMcpServer(ctx *gin.Context, draft bundleMcpDraft, appKey, installedBy string) (*model.McpServer, string, error) {
 	updates := map[string]interface{}{
 		"kind":        "http",
 		"endpoint":    draft.URL,
@@ -400,7 +400,7 @@ func registerBundleMcpServer(ctx *gin.Context, draft bundleMcpDraft, callerKey, 
 		TimeoutMs:   30000,
 		Description: "installed by agent bundle",
 		Status:      1,
-		CallerKey:   callerKey,
+		AppKey:   appKey,
 		CreatedBy:   installedBy,
 		UpdatedBy:   installedBy,
 	}
@@ -412,7 +412,7 @@ func registerBundleMcpServer(ctx *gin.Context, draft bundleMcpDraft, callerKey, 
 		revive := map[string]interface{}{
 			"server_id": server.ServerID, "kind": server.Kind, "endpoint": server.Endpoint,
 			"headers": server.Headers, "env": server.Env, "timeout_ms": server.TimeoutMs,
-			"description": server.Description, "status": server.Status, "caller_key": server.CallerKey,
+			"description": server.Description, "status": server.Status, "app_key": server.AppKey,
 			"created_by": server.CreatedBy, "updated_by": server.UpdatedBy,
 			"last_check_status": "unknown", "last_check_message": "", "deleted_at": 0,
 		}
@@ -437,7 +437,7 @@ func registerBundleMcpServer(ctx *gin.Context, draft bundleMcpDraft, callerKey, 
 	return server, "", nil
 }
 
-// reconnectMcpServer 拉起客户端并把工具同步到属主 caller 名下（失败返回 error，调用方决定是否阻断）。
+// reconnectMcpServer 拉起客户端并把工具同步到属主 app 名下（失败返回 error，调用方决定是否阻断）。
 func reconnectMcpServer(ctx *gin.Context, server *model.McpServer) error {
 	cfg, err := mcpclient.McpServerConfig(*server)
 	if err != nil {
@@ -446,7 +446,7 @@ func reconnectMcpServer(ctx *gin.Context, server *model.McpServer) error {
 	if _, err := mcpclient.EnsureServer(*cfg); err != nil {
 		return err
 	}
-	_, err = mcpclient.SyncServerRegistryScoped(server.CallerKey, server.Name, true)
+	_, err = mcpclient.SyncServerRegistryScoped(server.AppKey, server.Name, true)
 	return err
 }
 

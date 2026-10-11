@@ -1,5 +1,5 @@
 // Package mcpgateway 是 MCP 服务端网关：把 tblLlmTool 中启用的 http 类型工具（全局
-// 基础集合，不按 caller 划分）按应用绑定白名单（tblLlmMcpAppTool）通过 MCP Streamable
+// 基础集合，不按 app 划分）按应用绑定白名单（tblLlmMcpAppTool）通过 MCP Streamable
 // HTTP 协议对外暴露给外部 MCP 客户端（Claude/Cursor 等），核心行为（鉴权、通用 HTTP 分派、
 // 输出投影+字段描述渲染、调用审计）自 mcp-server 项目移植。与 service/mcpclient（MCP 客户端）相对。
 package mcpgateway

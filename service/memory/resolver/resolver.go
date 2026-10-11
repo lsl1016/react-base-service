@@ -33,7 +33,7 @@ type ApplyFunc func(ctx *gin.Context, input memory.MutationInput) (map[string]in
 type ResolveInput struct {
 	// Owners 是候选召回的记忆空间集合（与触发 run 的可见作用域一致）。
 	Owners []model.MemoryOwner
-	// WriteOwner 是新增条目的写入目标（caller_user 优先语义由 scope 解析决定）。
+	// WriteOwner 是新增条目的写入目标（app_user 优先语义由 scope 解析决定）。
 	WriteOwner model.MemoryOwner
 	// AllowedKeys 透传给写核心的作用域校验。
 	AllowedKeys map[string]struct{}

@@ -74,16 +74,16 @@ func TestResolveAddsCandidateWithoutSimilarWithoutLLM(t *testing.T) {
 	require.Equal(t, model.MemorySourceExtractor, input.Source)
 	require.Equal(t, model.MemoryTypePreference, input.MemoryType)
 	require.True(t, input.RespectLocked)
-	require.Equal(t, "caller_user|zhangsan", input.Owner.OwnerKey)
+	require.Equal(t, "app_user|zhangsan", input.Owner.OwnerKey)
 	require.Contains(t, input.Reason, "用户明确表述")
 }
 
 func TestResolveUpdateSupersedeAndSkip(t *testing.T) {
 	stubLikeRecall(t)
 	items := []model.MemoryItem{
-		{ID: 12, OwnerType: model.MemoryOwnerTypeCallerUser, OwnerKey: "caller_user|zhangsan", Layer: model.MemoryLayerDetached,
+		{ID: 12, OwnerType: model.MemoryOwnerTypeAppUser, OwnerKey: "app_user|zhangsan", Layer: model.MemoryLayerDetached,
 			MemoryType: model.MemoryTypePreference, Title: "回答风格", Content: "用户喜欢简短回答", Confidence: 0.8, Importance: 3, Version: 4},
-		{ID: 13, OwnerType: model.MemoryOwnerTypeCallerUser, OwnerKey: "caller_user|zhangsan", Layer: model.MemoryLayerDetached,
+		{ID: 13, OwnerType: model.MemoryOwnerTypeAppUser, OwnerKey: "app_user|zhangsan", Layer: model.MemoryLayerDetached,
 			MemoryType: model.MemoryTypeFact, Title: "技术栈", Content: "项目使用 Go", Confidence: 0.8, Importance: 3, Version: 2},
 	}
 	input := testResolveInput()
@@ -124,7 +124,7 @@ func TestResolveUpdateSupersedeAndSkip(t *testing.T) {
 func TestResolveGuardsLockedTargetAndHallucinatedID(t *testing.T) {
 	stubLikeRecall(t)
 	items := []model.MemoryItem{
-		{ID: 21, OwnerType: model.MemoryOwnerTypeCallerUser, OwnerKey: "caller_user|zhangsan",
+		{ID: 21, OwnerType: model.MemoryOwnerTypeAppUser, OwnerKey: "app_user|zhangsan",
 			MemoryType: model.MemoryTypeFact, Title: "锁定条目", Content: "内容A", Tags: "locked", Version: 1},
 	}
 	input := testResolveInput()
@@ -175,7 +175,7 @@ func TestResolveWriteLimitAndAddFailure(t *testing.T) {
 func TestResolveLLMFailureReturnsError(t *testing.T) {
 	stubLikeRecall(t)
 	items := []model.MemoryItem{
-		{ID: 31, OwnerType: model.MemoryOwnerTypeCallerUser, OwnerKey: "caller_user|zhangsan",
+		{ID: 31, OwnerType: model.MemoryOwnerTypeAppUser, OwnerKey: "app_user|zhangsan",
 			MemoryType: model.MemoryTypeFact, Title: "相关", Content: "相关存量内容", Version: 1},
 	}
 	input := testResolveInput()
@@ -190,12 +190,12 @@ func TestResolveLLMFailureReturnsError(t *testing.T) {
 func TestResolveKeywordRecallMergesWithSimilarIDs(t *testing.T) {
 	stubLikeRecall(t)
 	items := []model.MemoryItem{
-		{ID: 41, OwnerType: model.MemoryOwnerTypeCallerUser, OwnerKey: "caller_user|zhangsan",
+		{ID: 41, OwnerType: model.MemoryOwnerTypeAppUser, OwnerKey: "app_user|zhangsan",
 			MemoryType: model.MemoryTypeFact, Title: "自报条目", Content: "自报内容", Version: 1},
 	}
 	input := testResolveInput()
 	input.Items = items
-	input.Owners = []model.MemoryOwner{{OwnerType: model.MemoryOwnerTypeCallerUser, OwnerKey: "caller_user|zhangsan"}}
+	input.Owners = []model.MemoryOwner{{OwnerType: model.MemoryOwnerTypeAppUser, OwnerKey: "app_user|zhangsan"}}
 	candidates := []extractor.Candidate{{Type: model.MemoryTypeFact, Title: "候选", Content: "自报内容 相关候选", Confidence: 0.9, SimilarIDs: []uint64{41}}}
 	llm := &mockLLM{responses: []string{`{"decisions": [{"candidate": "C1", "decision": "add"}]}`}}
 	decisions, err := Resolve(nil, llm, (&recordingApply{}).apply, input, candidates)
@@ -219,8 +219,8 @@ func TestParseNumberedRef(t *testing.T) {
 
 func testResolveInput() ResolveInput {
 	return ResolveInput{
-		Owners:      []model.MemoryOwner{{OwnerType: model.MemoryOwnerTypeCallerUser, OwnerKey: "caller_user|zhangsan"}},
-		WriteOwner:  model.MemoryOwner{OwnerType: model.MemoryOwnerTypeCallerUser, OwnerKey: "caller_user|zhangsan"},
+		Owners:      []model.MemoryOwner{{OwnerType: model.MemoryOwnerTypeAppUser, OwnerKey: "app_user|zhangsan"}},
+		WriteOwner:  model.MemoryOwner{OwnerType: model.MemoryOwnerTypeAppUser, OwnerKey: "app_user|zhangsan"},
 		Items:       nil,
 		SimilarTopK: 5,
 		MaxWrites:   10,

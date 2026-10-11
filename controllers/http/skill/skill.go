@@ -15,7 +15,7 @@ import (
 
 // CreateSkill 创建 Skill
 // @Summary      创建 Skill
-// @Description  创建指定 caller 下的 Skill 配置。
+// @Description  创建指定 app 下的 Skill 配置。
 // @Tags         skill
 // @Accept       json
 // @Produce      json
@@ -100,7 +100,7 @@ func DeleteSkill(ctx *gin.Context) {
 
 // ListSkills 查询 Skill 列表
 // @Summary      查询 Skill 列表
-// @Description  根据 callerKey 查询该调用方下的 Skill 列表；传入 routeValues 时按 routeValues 层级前缀返回对应列表，未传时兼容旧逻辑返回 callerKey 下全部列表。
+// @Description  根据 appKey 查询该调用方下的 Skill 列表；传入 routeValues 时按 routeValues 层级前缀返回对应列表，未传时兼容旧逻辑返回 appKey 下全部列表。
 // @Tags         skill
 // @Accept       json
 // @Produce      json
@@ -116,7 +116,7 @@ func ListSkills(ctx *gin.Context) {
 		return
 	}
 
-	skills, err := skillService.ListByCallerAndRoute(ctx, req.CallerKey, req.RouteValues)
+	skills, err := skillService.ListByAppAndRoute(ctx, req.AppKey, req.RouteValues)
 	if err != nil {
 		zlog.Errorf(ctx, "[Skill.List] 查询失败: %v", err)
 		components.RenderJsonFail(ctx, err)
@@ -160,7 +160,7 @@ func GetSkillDetail(ctx *gin.Context) {
 
 // ImportSkill 导入 SKILL.md 定义（粘贴）
 // @Summary      导入 SKILL.md 定义（粘贴）
-// @Description  解析「frontmatter + 正文」格式的 SKILL.md 并入库；正文入 content，triggers 关键词命中时在 run 装配期注入提示。同 caller+name 同名覆盖。
+// @Description  解析「frontmatter + 正文」格式的 SKILL.md 并入库；正文入 content，triggers 关键词命中时在 run 装配期注入提示。同 app+name 同名覆盖。
 // @Tags         skill
 // @Accept       json
 // @Produce      json
@@ -187,12 +187,12 @@ func ImportSkill(ctx *gin.Context) {
 
 // ImportSkillZip 批量导入 zip 包内的 SKILL.md
 // @Summary      批量导入 zip 包内的 SKILL.md
-// @Description  multipart 上传 zip（表单字段 file；可选 callerKey/routeValues/status 作为各 SKILL.md frontmatter 缺省兜底），遍历包内所有 SKILL.md 逐个导入，返回逐条结果（best-effort，单项失败不影响其余）。
+// @Description  multipart 上传 zip（表单字段 file；可选 appKey/routeValues/status 作为各 SKILL.md frontmatter 缺省兜底），遍历包内所有 SKILL.md 逐个导入，返回逐条结果（best-effort，单项失败不影响其余）。
 // @Tags         skill
 // @Accept       multipart/form-data
 // @Produce      json
 // @Param        file        formData file   true  "zip 包（内含若干 <skill目录>/SKILL.md）"
-// @Param        callerKey   formData string false "兜底 callerKey"
+// @Param        appKey   formData string false "兜底 appKey"
 // @Param        routeValues formData string false "兜底 routeValues（逗号分隔）"
 // @Success      200  {object} components.DefaultRenderWithTrace{data=[]params.SkillImportItemResp}  "逐条导入结果"
 // @Failure      400  {object} components.DefaultRenderWithTrace  "上传文件缺失或 zip 非法"
@@ -205,7 +205,7 @@ func ImportSkillZip(ctx *gin.Context) {
 	}
 
 	base := params.ImportSkillReq{
-		CallerKey: ctx.PostForm("callerKey"),
+		AppKey: ctx.PostForm("appKey"),
 	}
 	if routeValuesText := strings.TrimSpace(ctx.PostForm("routeValues")); routeValuesText != "" {
 		for _, value := range strings.Split(routeValuesText, ",") {

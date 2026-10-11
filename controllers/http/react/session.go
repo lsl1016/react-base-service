@@ -12,7 +12,7 @@ import (
 
 // ListSessions 获取 ReAct 历史会话列表
 // @Summary ReAct 历史会话列表
-// @Description 返回当前用户在 callerKey+routeValues 下的 ReAct 会话列表
+// @Description 返回当前用户在 appKey+routeValues 下的 ReAct 会话列表
 // @Tags React
 // @Accept json
 // @Produce json

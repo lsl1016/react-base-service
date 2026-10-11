@@ -52,16 +52,16 @@ func TestSanitizeGroupID(t *testing.T) {
 }
 
 func TestResolveScope(t *testing.T) {
-	callerGroup := CallerGroupID("demo_app")
-	userGroup := CallerUserGroupID("demo_app", "alice")
+	appGroup := AppGroupID("demo_app")
+	userGroup := AppUserGroupID("demo_app", "alice")
 
-	callerOnly := ResolveScope("demo_app", "alice", false)
-	if len(callerOnly.Groups) != 1 || callerOnly.Groups[0] != callerGroup || callerOnly.WriteGroup != callerGroup {
-		t.Fatalf("caller scope mismatch: %+v", callerOnly)
+	appOnly := ResolveScope("demo_app", "alice", false)
+	if len(appOnly.Groups) != 1 || appOnly.Groups[0] != appGroup || appOnly.WriteGroup != appGroup {
+		t.Fatalf("app scope mismatch: %+v", appOnly)
 	}
 
 	userScope := ResolveScope("demo_app", "alice", true)
-	if len(userScope.Groups) != 2 || userScope.Groups[0] != callerGroup || userScope.Groups[1] != userGroup {
+	if len(userScope.Groups) != 2 || userScope.Groups[0] != appGroup || userScope.Groups[1] != userGroup {
 		t.Fatalf("user scope groups mismatch: %+v", userScope.Groups)
 	}
 	if userScope.WriteGroup != userGroup {

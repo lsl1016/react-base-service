@@ -41,7 +41,7 @@ func main() {
 	defer conn.Close()
 
 	runPayload, _ := json.Marshal(map[string]any{
-		"callerKey":    "demo-app",
+		"appKey":    "demo-app",
 		"userPrompt":   "请调用 ask_question 工具问我一个问题（一个问题即可），然后等待我的回答再继续。",
 		"modelKey":     "deepseek",
 		"modelVersion": "deepseek-flash",
@@ -94,7 +94,7 @@ func main() {
 					queuedA = true
 					// 排队第二条，验证 FIFO。
 					steerB, _ := json.Marshal(map[string]any{
-						"callerKey":  "demo-app",
+						"appKey":  "demo-app",
 						"userPrompt": "排队消息B：请在最终回答中以【队列B】开头，用一句话回应。",
 					})
 					_ = websocket.JSON.Send(conn, wsMsg{Type: "run", SessionID: sessionID, RunID: runID, Payload: steerB})
@@ -126,7 +126,7 @@ func main() {
 					time.Sleep(2 * time.Second)
 					askToolUseID = p.ToolUseID
 					steerA, _ := json.Marshal(map[string]any{
-						"callerKey":  "demo-app",
+						"appKey":  "demo-app",
 						"userPrompt": "排队消息A：请在最终回答中以【队列A】开头，用一句话回应。",
 					})
 					_ = websocket.JSON.Send(conn, wsMsg{Type: "run", SessionID: sessionID, RunID: runID, Payload: steerA})

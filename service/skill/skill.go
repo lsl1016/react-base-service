@@ -20,14 +20,14 @@ import (
 )
 
 func CreateSkill(ctx *gin.Context, req *params.CreateSkillReq, createdBy string) (*model.Skill, error) {
-	// caller_key=default 是默认作用域伪 caller（全 caller 可用），不要求真实 caller 存在。
-	if !model.IsReservedCallerKey(req.CallerKey) {
-		caller, err := model.GetActiveCallerByKey(ctx, req.CallerKey)
+	// app_key=default 是默认作用域伪 app（全 app 可用），不要求真实 app 存在。
+	if !model.IsReservedAppKey(req.AppKey) {
+		app, err := model.GetActiveAppByKey(ctx, req.AppKey)
 		if err != nil {
 			return nil, err
 		}
-		if caller == nil {
-			return nil, components.ErrorCallerNotFound.Sprintf(req.CallerKey)
+		if app == nil {
+			return nil, components.ErrorAppNotFound.Sprintf(req.AppKey)
 		}
 	}
 
@@ -48,12 +48,12 @@ func CreateSkill(ctx *gin.Context, req *params.CreateSkillReq, createdBy string)
 	triggersJSON, _ := json.Marshal(triggers)
 
 	if isDefault == 1 {
-		existing, err := model.GetDefaultSkillByCallerAndRoute(ctx, req.CallerKey, string(routeValues))
+		existing, err := model.GetDefaultSkillByAppAndRoute(ctx, req.AppKey, string(routeValues))
 		if err != nil {
 			return nil, err
 		}
 		if existing != nil {
-			return nil, components.ErrorSkillDefaultExists.Sprintf(req.CallerKey, string(routeValues))
+			return nil, components.ErrorSkillDefaultExists.Sprintf(req.AppKey, string(routeValues))
 		}
 	}
 
@@ -74,7 +74,7 @@ func CreateSkill(ctx *gin.Context, req *params.CreateSkillReq, createdBy string)
 		PromptSupplement:   req.PromptSupplement,
 		TriggersJSON:       string(triggersJSON),
 		Content:            req.Content,
-		CallerKey:          req.CallerKey,
+		AppKey:          req.AppKey,
 		RouteValues:        string(routeValues),
 		IsDefault:          isDefault,
 		Status:             status,
@@ -207,13 +207,13 @@ func GetDetail(ctx *gin.Context, skillID string) (*model.Skill, error) {
 	return s, nil
 }
 
-func ListByCallerAndRoute(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Skill, error) {
-	// callerKey 为空：管理控制台「全部」视图，跨 caller 列出，忽略路由过滤。
-	if strings.TrimSpace(callerKey) == "" {
+func ListByAppAndRoute(ctx *gin.Context, appKey string, routeValues []string) ([]model.Skill, error) {
+	// appKey 为空：管理控制台「全部」视图，跨 app 列出，忽略路由过滤。
+	if strings.TrimSpace(appKey) == "" {
 		return model.ListAllSkills(ctx)
 	}
 	exact, parents := route.SplitRouteExactAndParents(routeValues)
-	return model.ListSkillsByRouteWithFallback(ctx, callerKey, exact, parents)
+	return model.ListSkillsByRouteWithFallback(ctx, appKey, exact, parents)
 }
 
 // ToSkillResp 将 model.Skill 转换为 params.SkillResp
@@ -242,7 +242,7 @@ func ToSkillResp(s *model.Skill) params.SkillResp {
 		PromptSupplement:   s.PromptSupplement,
 		Triggers:           parseSkillTriggers(s.TriggersJSON),
 		Content:            s.Content,
-		CallerKey:          s.CallerKey,
+		AppKey:          s.AppKey,
 		RouteValues:        routeValues,
 		IsDefault:          s.IsDefault,
 		Status:             s.Status,
@@ -275,7 +275,7 @@ type skillMarkdownFrontmatter struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
 	Triggers    []string `yaml:"triggers"`
-	CallerKey   string   `yaml:"caller_key"`
+	AppKey   string   `yaml:"app_key"`
 	RouteValues []string `yaml:"route_values"`
 }
 
@@ -287,9 +287,9 @@ const (
 
 // ImportFromMarkdown 解析「frontmatter + 正文」格式的 SKILL.md 并入库（P2-2）：
 // frontmatter 的 name/description/triggers 对应注册表字段，正文（第二个 --- 之后）入 content 列；
-// frontmatter 中的 caller_key / route_values 缺省时取请求体字段。
+// frontmatter 中的 app_key / route_values 缺省时取请求体字段。
 //
-// 冲突语义是「同名覆盖」：同 caller_key + name 存在未软删行时，只更新文件形态拥有的字段
+// 冲突语义是「同名覆盖」：同 app_key + name 存在未软删行时，只更新文件形态拥有的字段
 // （description/triggers_json/content/status/updated_by，沿用 skill_id，不动 is_default 与
 // 面板维护的 trigger_condition 等注册表字段），为 P3 Bundle 同名覆盖铺路；不存在则走 CreateSkill 全量校验新建。
 func ImportFromMarkdown(ctx *gin.Context, req *params.ImportSkillReq, createdBy string) (*model.Skill, error) {
@@ -320,9 +320,9 @@ func importFromMarkdown(ctx *gin.Context, req *params.ImportSkillReq, createdBy 
 		return nil, "", components.ErrorSkillImportInvalid.Sprintf("正文为空（第二个 --- 之后应为 Skill 正文）")
 	}
 
-	callerKey := firstNonEmptyString(meta.CallerKey, req.CallerKey)
-	if callerKey == "" {
-		return nil, "", components.ErrorSkillImportInvalid.Sprintf("caller_key 不能为空（frontmatter 或请求体至少提供一处）")
+	appKey := firstNonEmptyString(meta.AppKey, req.AppKey)
+	if appKey == "" {
+		return nil, "", components.ErrorSkillImportInvalid.Sprintf("app_key 不能为空（frontmatter 或请求体至少提供一处）")
 	}
 	routeValues := meta.RouteValues
 	if routeValues == nil {
@@ -344,7 +344,7 @@ func importFromMarkdown(ctx *gin.Context, req *params.ImportSkillReq, createdBy 
 		description = deriveSkillDescription(body)
 	}
 
-	existing, err := model.FindActiveSkillByCallerAndName(ctx, callerKey, strings.TrimSpace(meta.Name))
+	existing, err := model.FindActiveSkillByAppAndName(ctx, appKey, strings.TrimSpace(meta.Name))
 	if err != nil {
 		return nil, "", err
 	}
@@ -372,7 +372,7 @@ func importFromMarkdown(ctx *gin.Context, req *params.ImportSkillReq, createdBy 
 		Description:  description,
 		Triggers:     triggers,
 		Content:      body,
-		CallerKey:    callerKey,
+		AppKey:    appKey,
 		RouteValues:  routeValues,
 		Status:       status,
 	}, createdBy)
@@ -468,7 +468,7 @@ const (
 )
 
 // ImportFromZip 遍历 zip 包内所有 SKILL.md 逐个导入（best-effort：单项失败记录错误继续）。
-// base 的 callerKey/routeValues/status 作为各文件 frontmatter 缺省兜底；条目纯内存读取，不落盘。
+// base 的 appKey/routeValues/status 作为各文件 frontmatter 缺省兜底；条目纯内存读取，不落盘。
 func ImportFromZip(ctx *gin.Context, zipBytes []byte, base *params.ImportSkillReq, createdBy string) ([]params.SkillImportItemResp, error) {
 	reader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
 	if err != nil {
@@ -496,7 +496,7 @@ func ImportFromZip(ctx *gin.Context, zipBytes []byte, base *params.ImportSkillRe
 
 		item := params.SkillImportItemResp{Name: entry.Name}
 		skill, previousJSON, err := importFromMarkdown(ctx, &params.ImportSkillReq{
-			CallerKey:   base.CallerKey,
+			AppKey:   base.AppKey,
 			RouteValues: base.RouteValues,
 			Status:      base.Status,
 			Markdown:    string(content),

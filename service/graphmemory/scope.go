@@ -44,31 +44,31 @@ func SanitizeGroupID(part string) string {
 	return sanitized
 }
 
-// CallerGroupID 构造 caller 级组：该 caller 全部会话共享的图谱分区。
-func CallerGroupID(callerKey string) string {
-	return SanitizeGroupID(callerKey)
+// AppGroupID 构造 app 级组：该 app 全部会话共享的图谱分区。
+func AppGroupID(appKey string) string {
+	return SanitizeGroupID(appKey)
 }
 
-// CallerUserGroupID 构造 caller+user 级组：仅该 caller 下该用户的图谱分区。
-// 与记忆模块 owner 两级作用域同构（caller 做公共底座、user 级为写入目标）。
-func CallerUserGroupID(callerKey, userName string) string {
-	return SanitizeGroupID(callerKey + groupIDSeparator + userName)
+// AppUserGroupID 构造 app+user 级组：仅该 app 下该用户的图谱分区。
+// 与记忆模块 owner 两级作用域同构（app 做公共底座、user 级为写入目标）。
+func AppUserGroupID(appKey, userName string) string {
+	return SanitizeGroupID(appKey + groupIDSeparator + userName)
 }
 
 // Scope 描述一次 run 的图谱可见组与写入目标组。
 type Scope struct {
-	// Groups 是检索可见组（caller 组在前；userScope 开启时追加 user 组）。
+	// Groups 是检索可见组（app 组在前；userScope 开启时追加 user 组）。
 	Groups []string
 	// WriteGroup 是 AddEpisode 的写入目标组。
 	WriteGroup string
 }
 
-// ResolveScope 解析当前 run 的图谱作用域：caller 级做公共底座，user 级（启用时）为写入目标。
-func ResolveScope(callerKey, userName string, userScope bool) Scope {
-	callerGroup := CallerGroupID(callerKey)
-	scope := Scope{Groups: []string{callerGroup}, WriteGroup: callerGroup}
+// ResolveScope 解析当前 run 的图谱作用域：app 级做公共底座，user 级（启用时）为写入目标。
+func ResolveScope(appKey, userName string, userScope bool) Scope {
+	appGroup := AppGroupID(appKey)
+	scope := Scope{Groups: []string{appGroup}, WriteGroup: appGroup}
 	if userScope {
-		userGroup := CallerUserGroupID(callerKey, userName)
+		userGroup := AppUserGroupID(appKey, userName)
 		scope.Groups = append(scope.Groups, userGroup)
 		scope.WriteGroup = userGroup
 	}

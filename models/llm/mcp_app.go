@@ -14,7 +14,7 @@ import (
 
 // McpApp 是 MCP 服务端网关的应用凭证（tblLlmMcpApp）：
 // 外部 MCP 客户端（Claude/Cursor 等）以 Bearer <app_key>:<app_secret> 接入。
-// 工具是全局基础集合（全部启用的 http 工具，不按 caller 划分），应用可见的工具
+// 工具是全局基础集合（全部启用的 http 工具，不按 app 划分），应用可见的工具
 // 由 tblLlmMcpAppTool 白名单决定——把不同 app 发给不同业务方，即实现按业务方
 // 收窄工具可见范围。
 type McpApp struct {
@@ -101,7 +101,7 @@ func SoftDeleteMcpAppByAppID(ctx *gin.Context, appID string) error {
 // McpAppTool 是应用与工具的绑定关系（tblLlmMcpAppTool）：应用可见工具是显式白名单——
 // 只给应用绑定工具基础集合的一个子集，该 app 的 MCP 连接就只看得到、调得了这个子集；
 // 未绑定任何工具时 tools/list 为空。绑定对象是全局基础集合（全部启用 http 工具），
-// 不再经过 caller 作用域。
+// 不再经过 app 作用域。
 type McpAppTool struct {
 	ID        uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
 	AppID     string                `json:"appId" gorm:"column:app_id;not null"`

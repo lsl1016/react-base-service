@@ -82,7 +82,7 @@ describe('message UI events', () => {
           createStep({ index: 1, content: '工具调用后的最终结论' }),
         ],
         sessionId: 'session-228872646',
-        callerKey: 'demo-app',
+        appKey: 'demo-app',
         routeValues: ['database-1', 'worksheet-2'],
         isRunning: false,
         onFeedback: vi.fn(),
@@ -106,7 +106,7 @@ describe('message UI events', () => {
 
     expect(copy).toHaveBeenLastCalledWith(JSON.stringify({
       sessionId: 'session-228872646',
-      callerKey: 'demo-app',
+      appKey: 'demo-app',
       routeValues: ['database-1', 'worksheet-2'],
     }, null, 2));
     expect(copyIdButton?.textContent).toContain('已复制');

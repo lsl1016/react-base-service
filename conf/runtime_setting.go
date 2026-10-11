@@ -1,6 +1,9 @@
 package conf
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // 运行时设置覆盖（管理面板「运行时配置」）：
 //
@@ -11,12 +14,31 @@ import "sync/atomic"
 // 覆盖粒度是「字段级」：指针为 nil = 该字段未覆盖，回落 custom.yaml（未配置再回落内置默认）；
 // 非 nil = 以 DB 值为准。写侧（service/setting）已做范围校验，此处不做重复校验。
 
-// RuntimeSettingOverride 是全部运行时设置的覆盖快照（subagent / context / memory / web 四组）。
+// RuntimeSettingOverride 是全部运行时设置的覆盖快照
+//（subagent / context / memory / web / workspace 五组）。
 type RuntimeSettingOverride struct {
 	SubAgent       *SubAgentSettingOverride       `json:"subagent,omitempty"`
 	ContextCompact *ContextCompactSettingOverride `json:"context,omitempty"`
 	Memory         *MemorySettingOverride         `json:"memory,omitempty"`
 	Web            *WebAccessSettingOverride      `json:"web,omitempty"`
+	Workspace      *WorkspaceSettingOverride      `json:"workspace,omitempty"`
+}
+
+// WorkspaceSettingOverride 是「检索代码和工作区」开关的 DB 覆盖字段。
+// 该设置全局生效（内置工具不按 app 隔离），仅 Enabled 一个开关。
+type WorkspaceSettingOverride struct {
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// applyWorkspaceOverride 把 DB 覆盖合并进 yaml 基线（仅 Enabled 开关）。
+func applyWorkspaceOverride(base ReactWorkspaceConfig, override *WorkspaceSettingOverride) ReactWorkspaceConfig {
+	if override == nil {
+		return base
+	}
+	if override.Enabled != nil {
+		base.Enabled = override.Enabled
+	}
+	return base
 }
 
 // SubAgentSettingOverride 是 subagent 委派策略的 DB 覆盖字段（与 ReactSubAgentConfig 一一对应）。
@@ -61,6 +83,154 @@ type WebAccessSettingOverride struct {
 
 // runtimeSettingOverrideHolder 存 RuntimeSettingOverride 值；零值快照（nil 各字段）= 无覆盖。
 var runtimeSettingOverrideHolder atomic.Value
+
+// appRuntimeSettingOverrides 存「app 级」覆盖快照（tblLlmRuntimeSetting.app_key != '' 的行），
+// 由 service/setting 与全局快照同一时机刷新。app 覆盖在合并链中优先于全局覆盖：
+// 生效优先级 = app 覆盖 > 全局覆盖 > custom.yaml > 内置默认。
+var appRuntimeSettingOverrides sync.Map
+
+// SetAppRuntimeSettingOverrides 整体替换 app 级覆盖快照集合（service/setting 刷新时调用）。
+func SetAppRuntimeSettingOverrides(overrides map[string]RuntimeSettingOverride) {
+	appRuntimeSettingOverrides.Range(func(key, _ any) bool {
+		appRuntimeSettingOverrides.Delete(key)
+		return true
+	})
+	for appKey, override := range overrides {
+		appRuntimeSettingOverrides.Store(appKey, override)
+	}
+}
+
+// GetAppRuntimeSettingOverride 返回指定 app 的覆盖快照；无行时返回零值（= 只用全局覆盖）。
+func GetAppRuntimeSettingOverride(appKey string) RuntimeSettingOverride {
+	if stored, ok := appRuntimeSettingOverrides.Load(appKey); ok {
+		if override, ok := stored.(RuntimeSettingOverride); ok {
+			return override
+		}
+	}
+	return RuntimeSettingOverride{}
+}
+
+// mergeRuntimeSettingOverride 把上层覆盖（top）逐字段合并到下层（base）：
+// 仅覆盖非 nil 字段，nil = 该层未覆盖、继续用下层值。app 覆盖叠加全局覆盖时使用。
+func mergeRuntimeSettingOverride(base, top RuntimeSettingOverride) RuntimeSettingOverride {
+	merged := base
+	if top.SubAgent != nil {
+		merged.SubAgent = mergeSubAgentOverride(base.SubAgent, top.SubAgent)
+	}
+	if top.ContextCompact != nil {
+		merged.ContextCompact = mergeContextCompactOverride(base.ContextCompact, top.ContextCompact)
+	}
+	if top.Memory != nil {
+		merged.Memory = mergeMemoryOverride(base.Memory, top.Memory)
+	}
+	if top.Web != nil {
+		merged.Web = mergeWebAccessOverride(base.Web, top.Web)
+	}
+	if top.Workspace != nil {
+		merged.Workspace = mergeWorkspaceOverride(base.Workspace, top.Workspace)
+	}
+	return merged
+}
+
+func mergeWorkspaceOverride(base, top *WorkspaceSettingOverride) *WorkspaceSettingOverride {
+	merged := &WorkspaceSettingOverride{}
+	if base != nil {
+		*merged = *base
+	}
+	if top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	return merged
+}
+
+func mergeSubAgentOverride(base, top *SubAgentSettingOverride) *SubAgentSettingOverride {
+	merged := &SubAgentSettingOverride{}
+	if base != nil {
+		*merged = *base
+	}
+	if top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	if top.MaxParallel != nil {
+		merged.MaxParallel = top.MaxParallel
+	}
+	if top.DefaultMaxSteps != nil {
+		merged.DefaultMaxSteps = top.DefaultMaxSteps
+	}
+	if top.MaxDepth != nil {
+		merged.MaxDepth = top.MaxDepth
+	}
+	return merged
+}
+
+func mergeContextCompactOverride(base, top *ContextCompactSettingOverride) *ContextCompactSettingOverride {
+	merged := &ContextCompactSettingOverride{}
+	if base != nil {
+		*merged = *base
+	}
+	if top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	if top.TokenTrigger != nil {
+		merged.TokenTrigger = top.TokenTrigger
+	}
+	if top.TokenTarget != nil {
+		merged.TokenTarget = top.TokenTarget
+	}
+	if top.SummaryLimit != nil {
+		merged.SummaryLimit = top.SummaryLimit
+	}
+	if top.OutputReserveTokens != nil {
+		merged.OutputReserveTokens = top.OutputReserveTokens
+	}
+	if top.BufferTokens != nil {
+		merged.BufferTokens = top.BufferTokens
+	}
+	if top.MicrocompactEnabled != nil {
+		merged.MicrocompactEnabled = top.MicrocompactEnabled
+	}
+	if top.MicrocompactKeepRecent != nil {
+		merged.MicrocompactKeepRecent = top.MicrocompactKeepRecent
+	}
+	return merged
+}
+
+func mergeMemoryOverride(base, top *MemorySettingOverride) *MemorySettingOverride {
+	merged := &MemorySettingOverride{}
+	if base != nil {
+		*merged = *base
+	}
+	if top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	if top.ResidentMaxItems != nil {
+		merged.ResidentMaxItems = top.ResidentMaxItems
+	}
+	if top.ResidentBudgetChars != nil {
+		merged.ResidentBudgetChars = top.ResidentBudgetChars
+	}
+	if top.IndexMaxItems != nil {
+		merged.IndexMaxItems = top.IndexMaxItems
+	}
+	if top.DetachedMaxItems != nil {
+		merged.DetachedMaxItems = top.DetachedMaxItems
+	}
+	if top.AllowUserScope != nil {
+		merged.AllowUserScope = top.AllowUserScope
+	}
+	return merged
+}
+
+func mergeWebAccessOverride(base, top *WebAccessSettingOverride) *WebAccessSettingOverride {
+	merged := &WebAccessSettingOverride{}
+	if base != nil {
+		*merged = *base
+	}
+	if top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	return merged
+}
 
 // SetRuntimeSettingOverride 整体替换覆盖快照（service/setting 在启动加载与管理面板写入后调用）。
 func SetRuntimeSettingOverride(override RuntimeSettingOverride) {

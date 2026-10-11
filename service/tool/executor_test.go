@@ -84,16 +84,16 @@ func TestExecuteHTTPToolPOST(t *testing.T) {
 	}
 }
 
-func TestExecuteHTTPToolUsesConfiguredKnowledgeBaseCallerHeader(t *testing.T) {
+func TestExecuteHTTPToolUsesConfiguredKnowledgeBaseAppHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("X-Knowledge-Base-Caller-Key"); got != "pinned_caller" {
-			t.Fatalf("got caller header %q, want pinned_caller", got)
+		if got := r.Header.Get("X-Knowledge-Base-App-Key"); got != "pinned_app" {
+			t.Fatalf("got app header %q, want pinned_app", got)
 		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("read body failed: %v", err)
 		}
-		if string(body) != `{"callerKey":"model_caller"}` {
+		if string(body) != `{"appKey":"model_app"}` {
 			t.Fatalf("unexpected body: %s", string(body))
 		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -105,12 +105,12 @@ func TestExecuteHTTPToolUsesConfiguredKnowledgeBaseCallerHeader(t *testing.T) {
 		Method:    http.MethodPost,
 		TimeoutMs: 1000,
 		Headers: map[string]string{
-			"X-Knowledge-Base-Caller-Key": "pinned_caller",
+			"X-Knowledge-Base-App-Key": "pinned_app",
 		},
 	})
 
 	output, err := ExecuteHTTPTool(context.Background(), string(configBytes), map[string]interface{}{
-		"callerKey": "model_caller",
+		"appKey": "model_app",
 	}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

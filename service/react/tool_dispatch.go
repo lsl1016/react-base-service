@@ -12,7 +12,6 @@ import (
 	llm "react-base-service/api/llm"
 	"react-base-service/components/metrics"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 	model "react-base-service/models/llm"
 	toolService "react-base-service/service/tool"
 )
@@ -114,7 +113,7 @@ func (s *reactEngineState) isParallelizableCall(call llm.ToolCall, duplicate boo
 		if s.req == nil || !s.profile.AllowSubagent {
 			return false
 		}
-		cfg := conf.GetReactRuntimeConfig().SubAgent
+		cfg := s.req.runtimeConfig().SubAgent
 		return cfg.SubAgentEnabled() && cfg.MaxParallel > 1
 	}
 	return s.isConcurrentSafeTool(call)
@@ -137,7 +136,7 @@ func (s *reactEngineState) roundParallelism(calls []llm.ToolCall, duplicates map
 	}
 	limit := concurrentSafeParallelLimit
 	if delegateAllowed {
-		if mp := conf.GetReactRuntimeConfig().SubAgent.MaxParallel; mp > limit {
+		if mp := s.req.runtimeConfig().SubAgent.MaxParallel; mp > limit {
 			limit = mp
 		}
 	}

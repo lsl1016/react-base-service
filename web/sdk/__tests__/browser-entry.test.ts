@@ -68,7 +68,7 @@ describe('browser entry', () => {
 
     const handle = mount(container, {
       baseUrl: '/react-base-service/react',
-      callerKey: 'bw-report',
+      appKey: 'bw-report',
     });
 
     expect(mocks.connect).toHaveBeenCalledTimes(1);

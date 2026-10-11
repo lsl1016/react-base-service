@@ -36,11 +36,11 @@ type runtimeRequestIdentity struct {
 	inputSessionID       string
 	userName             string
 	routeValuesJSON      string
-	callerRuntimeContext components.CallerRuntimeContext
-	// callerAllowPlan 是 caller 级 allow_plan 覆盖快照（tblLlmCaller.allow_plan 三态）：
-	// nil=未覆盖（跟随全局配置），false=caller 级强制关，true=caller 级强制开。
+	appRuntimeContext components.AppRuntimeContext
+	// appAllowPlan 是 app 级 allow_plan 覆盖快照（tblLlmApp.allow_plan 三态）：
+	// nil=未覆盖（跟随全局配置），false=app 级强制关，true=app 级强制开。
 	// 在 prepareRuntimeRequest 解析一次，执行档案与 Plan 入口闸门共用同一口径。
-	callerAllowPlan *bool
+	appAllowPlan *bool
 }
 
 // runtimeRequestModel 是模型路由与凭证快照。
@@ -75,6 +75,10 @@ type runtimeRequestCapabilities struct {
 	memoryContext           string
 	graphMemoryContext      string
 	agents                  []model.Agent
+	// capabilityScopeKeys 是工具/Skill 的解析作用域（AppCapabilityScopeKeys 预计算）：
+	// 绑定默认能力的 app 含 default 伪 app；关闭绑定的 app 只含自身。run 内
+	// get_tool/get_skill/execute_tool 复核可见性时复用同一份口径，避免装配与执行不一致。
+	capabilityScopeKeys []string
 	// visibleTools 是 run 装配时的全量可见业务工具（WP2）：agent 工具白名单的 @readonly
 	// token 需要按工具 config 判定只读，快照索引里没有 config，故随 request 传递。
 	visibleTools []model.Tool

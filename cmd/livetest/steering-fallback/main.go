@@ -43,7 +43,7 @@ func main() {
 	defer conn.Close()
 
 	runPayload, _ := json.Marshal(map[string]any{
-		"callerKey":    "demo-app",
+		"appKey":    "demo-app",
 		"userPrompt":   "请从 1 逐个数到 60，每个数字占一行，不要输出其他内容，不要调用任何工具。",
 		"modelKey":     "deepseek",
 		"modelVersion": "deepseek-flash",
@@ -74,7 +74,7 @@ func main() {
 				if !steered {
 					steered = true
 					steer, _ := json.Marshal(map[string]any{
-						"callerKey":  "demo-app",
+						"appKey":  "demo-app",
 						"userPrompt": "取消前发送的引导消息：数完后请说明你数到了多少。",
 					})
 					_ = websocket.JSON.Send(conn, wsMsg{Type: "run", SessionID: sessionID, RunID: runID, Payload: steer})

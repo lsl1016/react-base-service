@@ -147,7 +147,7 @@ func importE2EAgent(t *testing.T, ctx *gin.Context, markdown string) {
 	if agentKey == "" {
 		t.Fatal("markdown 缺少 agent_key")
 	}
-	if existing, err := model.GetAgentByCallerAndAgentKey(ctx, "demo-app", agentKey); err != nil {
+	if existing, err := model.GetAgentByAppAndAgentKey(ctx, "demo-app", agentKey); err != nil {
 		t.Fatalf("查询已有 agent 失败: %v", err)
 	} else if existing != nil {
 		if _, err := agentService.DeleteAgent(ctx, existing.AgentID); err != nil {
@@ -156,7 +156,7 @@ func importE2EAgent(t *testing.T, ctx *gin.Context, markdown string) {
 	}
 	enabled := 1
 	if _, err := agentService.ImportFromMarkdown(ctx, &params.ImportAgentReq{
-		CallerKey:   "demo-app",
+		AppKey:   "demo-app",
 		RouteValues: []string{},
 		Status:      &enabled,
 		Markdown:    markdown,
@@ -169,7 +169,7 @@ func importE2EAgent(t *testing.T, ctx *gin.Context, markdown string) {
 func runE2EConversation(t *testing.T, ctx *gin.Context, prompt string, maxSteps int, writer func(params.ReactEvent) error, readClient react.ClientMessageReader) (*react.RunResult, []params.ReactEvent) {
 	t.Helper()
 	payload := params.ReactRunPayload{
-		CallerKey:   "demo-app",
+		AppKey:   "demo-app",
 		RouteValues: []string{},
 		Type:        model.ReactSessionTypeChat,
 		UserPrompt:  prompt,

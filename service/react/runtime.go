@@ -44,6 +44,7 @@ type RunResult struct {
 // delegationAllowed 判定当前 run 是否装配 delegate_agent：
 // subagent 开启、可见 agent 非空、且当前深度还允许再委派一层（depth < max_depth）。
 func (r *runtimeRequest) delegationAllowed() bool {
+	// subagent 属能力族开关：全局口径（内置工具不按 app 隔离）。
 	cfg := conf.GetReactRuntimeConfig().SubAgent
 	if !cfg.SubAgentEnabled() || len(r.agents) == 0 {
 		return false
@@ -222,13 +223,13 @@ func runSingle(ctx *gin.Context, parent context.Context, payload params.ReactRun
 		return nil, err, nil
 	}
 
-	if req.callerRuntimeContext.SessionID == "" {
-		req.callerRuntimeContext.SessionID = sessionID
+	if req.appRuntimeContext.SessionID == "" {
+		req.appRuntimeContext.SessionID = sessionID
 	}
 	// 外层 run 创建上行消息分发器：并行委派时多个等待者（父/子 run 的 ask_question、
 	// client tool 回填）按 toolUseId 认领消息；单等待者行为与历史直读一致。
 	req.clientHub = newClientMessageHub(readClient)
-	runCtx, cancel := context.WithCancelCause(components.ContextWithCallerRuntime(parent, req.callerRuntimeContext))
+	runCtx, cancel := context.WithCancelCause(components.ContextWithAppRuntime(parent, req.appRuntimeContext))
 	registerReactRunCancel(runID, cancel)
 	// Steering：注册软着陆标记（准入决策据此在收尾窗口拒绝 guide），run 结束时注销。
 	registerReactRunSoftLanding(runID)
@@ -262,7 +263,7 @@ func runSingle(ctx *gin.Context, parent context.Context, payload params.ReactRun
 			metrics.RunsTotal.WithLabelValues("timeout").Inc()
 			_ = model.UpdateReactRunByRunID(ctx, runID, map[string]any{
 				"state":         model.ReactRunStateTimeout,
-				"error_message": fmt.Sprintf("run timeout: %ds", conf.GetReactRuntimeConfig().Loop.RunTimeoutSec),
+				"error_message": fmt.Sprintf("run timeout: %ds", req.runtimeConfig().Loop.RunTimeoutSec),
 			})
 			timedOutRun, _ := model.GetReactRunByRunID(ctx, runID)
 			usedTokens, maxTokens := reactContextWindowFields(timedOutRun)
@@ -296,7 +297,7 @@ func runSingle(ctx *gin.Context, parent context.Context, payload params.ReactRun
 
 	// Steering S2：run 正常结束（含 finishExhausted）后自动续跑队首排队输入；
 	// 读取失败只降级为"本轮不续跑"，队列留给下一次 run 结束后消费。
-	if shouldAutoDrainQueue(conf.GetReactRuntimeConfig().Steering.QueueEnabled(), conf.GetReactRuntimeConfig().Steering.QueueAutoDrainEnabled(), true) {
+	if shouldAutoDrainQueue(req.runtimeConfig().Steering.QueueEnabled(), req.runtimeConfig().Steering.QueueAutoDrainEnabled(), true) {
 		nextPayload, pendingID, drainErr := dequeueQueuedHeadForAutoDrain(ctx, sessionID)
 		if drainErr != nil {
 			zlog.Warnf(ctx, "[React.Steer] 读取自动续跑队首失败(本轮不续跑): sessionId=%s, err=%v", sessionID, drainErr)
@@ -351,7 +352,7 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 			return err
 		}
 		if active {
-			if conf.GetReactRuntimeConfig().Steering.SteeringEnabled() {
+			if req.runtimeConfig().Steering.SteeringEnabled() {
 				activeRun, err := model.GetActiveOuterReactRunBySessionIDWithDB(ctx, tx, sessionID)
 				if err != nil {
 					return err
@@ -399,7 +400,7 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 			RunID:                   runID,
 			SessionID:               sessionID,
 			UserName:                req.userName,
-			CallerKey:               req.payload.CallerKey,
+			AppKey:               req.payload.AppKey,
 			RouteValues:             req.routeValuesJSON,
 			State:                   model.ReactRunStateRunning,
 			StepIndex:               0,
@@ -448,7 +449,7 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 //
 // 它不会启动模型调用，也不会创建 ReactRun；只负责把外部 payload 解析为 Runtime 真正需要的
 // identity / model / capabilities / execution / conversation 信息。这样 executeReactLoop 不再关心
-// Caller 路由、API Key 查找、Tool/Skill 可见性、Memory 查询等装配细节。
+// App 路由、API Key 查找、Tool/Skill 可见性、Memory 查询等装配细节。
 func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, sessionID string) (*runtimeRequest, error) {
 	return prepareRuntimeRequestWithServices(ctx, payload, sessionID, defaultRuntimeServices())
 }
@@ -461,27 +462,31 @@ func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, ses
 //
 // 这里采用依赖注入，是后续扩展 Plan Runtime / Durable Runtime 时保持核心循环稳定的重要边界。
 func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRunPayload, sessionID string, services runtimeServices) (*runtimeRequest, error) {
-	payload.CallerKey = strings.TrimSpace(payload.CallerKey)
+	payload.AppKey = strings.TrimSpace(payload.AppKey)
+	if payload.AppKey == "" {
+		// caller→app 改名兼容：存量客户端仍发 callerKey 时回填为 appKey（仅此一处收口）。
+		payload.AppKey = strings.TrimSpace(payload.LegacyCallerKey)
+	}
 	payload.Type = normalizeSessionType(payload.Type)
 	payload.ModelKey = strings.TrimSpace(payload.ModelKey)
 	payload.ModelVersion = strings.TrimSpace(payload.ModelVersion)
 	payload.ModelHash = strings.TrimSpace(payload.ModelHash)
 	payload.UserPrompt = strings.TrimSpace(payload.UserPrompt)
 
-	if payload.CallerKey == "" || payload.UserPrompt == "" {
-		return nil, components.ErrorParamInvalid.Sprintf("callerKey、userPrompt 不能为空")
+	if payload.AppKey == "" || payload.UserPrompt == "" {
+		return nil, components.ErrorParamInvalid.Sprintf("appKey、userPrompt 不能为空")
 	}
 
-	caller, err := model.GetActiveCallerByKey(ctx, payload.CallerKey)
+	app, err := model.GetActiveAppByKey(ctx, payload.AppKey)
 	if err != nil {
 		return nil, err
 	}
-	if caller == nil {
-		return nil, components.ErrorCallerNotFound.Sprintf(payload.CallerKey)
+	if app == nil {
+		return nil, components.ErrorAppNotFound.Sprintf(payload.AppKey)
 	}
-	// caller 级 allow_plan 覆盖快照：执行档案（create_plan 可见性/执行门控）与
+	// app 级 allow_plan 覆盖快照：执行档案（create_plan 可见性/执行门控）与
 	// Plan 入口闸门共用同一口径（effectiveAllowPlan，见 execution_profile.go）。
-	callerAllowPlan := caller.AllowPlanOverride()
+	appAllowPlan := app.AllowPlanOverride()
 
 	requestSource, err := parseControlContextRequestSource(payload.ControlContext)
 	if err != nil {
@@ -491,7 +496,7 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	if err != nil {
 		return nil, err
 	}
-	callerRuntimeCtx, err := components.NormalizeCallerRuntimeContext(ctx, payload.CallerKey, requestSource, userName, strings.TrimSpace(sessionID), "")
+	appRuntimeCtx, err := components.NormalizeAppRuntimeContext(ctx, payload.AppKey, requestSource, userName, strings.TrimSpace(sessionID), "")
 	if err != nil {
 		return nil, err
 	}
@@ -546,10 +551,10 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 		if payload.ModelKey == "" {
 			return nil, components.ErrorParamInvalid.Sprintf("modelKey 不能为空")
 		}
-		// 凭证解析顺序：LLM 连接（caller+route 前缀匹配）→ 旧 caller 级 API Key 兜底。
+		// 凭证解析顺序：LLM 连接（app+route 前缀匹配）→ 旧 app 级 API Key 兜底。
 		// 连接命中时端点与协议改由连接提供（无 ModelHash 契约路径的平台连接形态）。
 		var err error
-		conn, err := llmmodelService.ResolveConnection(ctx, payload.CallerKey, routeValues)
+		conn, err := llmmodelService.ResolveConnection(ctx, payload.AppKey, routeValues)
 		if err != nil {
 			return nil, err
 		}
@@ -558,13 +563,13 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 			userModelApiURL = conn.BaseURL
 			connProtocol = conn.Protocol
 		} else {
-			apiKey, err = apikeyService.ResolveApiKey(ctx, payload.CallerKey, routeValues)
+			apiKey, err = apikeyService.ResolveApiKey(ctx, payload.AppKey, routeValues)
 			if err != nil {
 				return nil, err
 			}
 		}
 		if apiKey == "" {
-			return nil, components.ErrorApiKeyNotFound.Sprintf(payload.CallerKey)
+			return nil, components.ErrorApiKeyNotFound.Sprintf(payload.AppKey)
 		}
 		modelKey = payload.ModelKey
 		modelVersion = llm.ResolveModelVersion(modelKey, payload.ModelVersion)
@@ -573,18 +578,22 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 		return nil, components.ErrorModelNotSupported.Sprintf(modelKey)
 	}
 
-	systemPrompt, err := systempromptService.ResolveSystemPrompt(ctx, payload.CallerKey, routeValues)
+	// 工具/Skill 能力解析作用域：app 关闭默认能力绑定时只解析自身名下资源，
+	// 绑定时并入 default 伪 app 的公共能力池（存量行为）。装配与执行期复核共用同一口径。
+	capabilityScopeKeys := model.AppCapabilityScopeKeys(app)
+
+	systemPrompt, err := systempromptService.ResolveSystemPrompt(ctx, payload.AppKey, routeValues)
 	if err != nil {
-		zlog.Warnf(ctx, "[react.prepareRuntimeRequest] 解析系统提示词失败: callerKey=%s, err=%v", payload.CallerKey, err)
+		zlog.Warnf(ctx, "[react.prepareRuntimeRequest] 解析系统提示词失败: appKey=%s, err=%v", payload.AppKey, err)
 	}
 
-	skills, err := model.FindSkillsByCallerAndRoutes(ctx, payload.CallerKey, route.BuildRoutePrefixes(routeValues))
+	skills, err := model.FindSkillsByAppAndRoutes(ctx, capabilityScopeKeys, route.BuildRoutePrefixes(routeValues))
 	if err != nil {
 		return nil, err
 	}
 	skillsIndexSnapshotJSON := buildSkillIndexSnapshotJSON(skills)
 
-	tools, err := toolService.FindVisibleToolsByCallerAndRoutes(ctx, payload.CallerKey, route.BuildRoutePrefixes(routeValues), userName)
+	tools, err := toolService.FindVisibleToolsByAppAndRoutes(ctx, capabilityScopeKeys, route.BuildRoutePrefixes(routeValues), userName)
 	if err != nil {
 		return nil, err
 	}
@@ -593,19 +602,20 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	// 经 GetReactRuntimeConfig 取值以合并管理面板「运行时配置」的 DB 覆盖（与 delegate/profile 同口径）。
 	var agents []model.Agent
 	if conf.GetReactRuntimeConfig().SubAgent.SubAgentEnabled() {
-		agents, err = services.agentResolver().FindVisible(ctx, payload.CallerKey, routeValues)
+		agents, err = services.agentResolver().FindVisible(ctx, payload.AppKey, routeValues)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// 长期记忆注入块：memory.enabled 时解析 caller(+user) 作用域并渲染常驻层与目录索引；
+	// 长期记忆注入块：memory.enabled 时解析 app(+user) 作用域并渲染常驻层与目录索引；
 	// 记忆为空返回空串（不注入，token 零增量）。经 GetReactRuntimeConfig 合并管理面板
 	//「运行时配置」的 DB 覆盖，与 AllowMemory 执行档案同口径。
+	// memory 属能力族开关：全局口径（工具注册、上下文注入、抽取同源）。
 	memoryCfg := conf.GetReactRuntimeConfig().Memory
 	var memoryContext string
 	if memoryCfg.MemoryEnabled() {
-		memoryContext, err = services.memoryExecutor().BuildContext(ctx, payload.CallerKey, userName, memoryCfg)
+		memoryContext, err = services.memoryExecutor().BuildContext(ctx, payload.AppKey, userName, memoryCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -615,7 +625,7 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	// 检索失败/超时/空结果静默跳过（注入是增强不是依赖），失败绝不阻断 run 启动。
 	var graphMemoryContext string
 	if graphCfg := conf.CustomConf.LLM.React.GraphMemory; graphCfg.GraphMemoryEnabled() && graphCfg.Inject.InjectEnabled() {
-		graphMemoryContext = buildGraphMemoryContextForRun(ctx, payload.CallerKey, userName, payload.UserPrompt)
+		graphMemoryContext = buildGraphMemoryContextForRun(ctx, payload.AppKey, userName, payload.UserPrompt)
 	}
 
 	payload.RouteValues = routeValues
@@ -643,8 +653,8 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 			inputSessionID:       strings.TrimSpace(sessionID),
 			userName:             userName,
 			routeValuesJSON:      string(routeValuesBytes),
-			callerRuntimeContext: callerRuntimeCtx,
-			callerAllowPlan:      callerAllowPlan,
+			appRuntimeContext: appRuntimeCtx,
+			appAllowPlan:      appAllowPlan,
 		},
 		runtimeRequestModel: runtimeRequestModel{
 			apiKey:                   apiKey,
@@ -667,6 +677,7 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 			memoryContext:           memoryContext,
 			graphMemoryContext:      graphMemoryContext,
 			agents:                  agents,
+			capabilityScopeKeys:     capabilityScopeKeys,
 			visibleTools:            tools,
 		},
 		runtimeRequestConversation: runtimeRequestConversation{
@@ -744,20 +755,20 @@ func getOrCreateReactSession(ctx *gin.Context, tx *gorm.DB, req *runtimeRequest)
 	return createReactSession(ctx, tx, generateSessionID(), req)
 }
 
-// validateReactSessionOwnership 校验显式 sessionId 的业务归属，避免跨用户、Caller 或路由复用上下文。
+// validateReactSessionOwnership 校验显式 sessionId 的业务归属，避免跨用户、App 或路由复用上下文。
 func validateReactSessionOwnership(session *model.ReactSession, req *runtimeRequest) error {
-	return validateReactSessionContext(session, req.userName, req.payload.CallerKey, req.routeValuesJSON, req.payload.Type)
+	return validateReactSessionContext(session, req.userName, req.payload.AppKey, req.routeValuesJSON, req.payload.Type)
 }
 
 // validateReactSessionContext 按「会话归属五元组」校验访问合法性；
 // run 启动（validateReactSessionOwnership）与 Steering 准入（SteerSession）共用同一口径。
-func validateReactSessionContext(session *model.ReactSession, userName, callerKey, routeValuesJSON, sessionType string) error {
+func validateReactSessionContext(session *model.ReactSession, userName, appKey, routeValuesJSON, sessionType string) error {
 	if session == nil {
 		return components.ErrorParamInvalid.Sprintf("session 不存在")
 	}
 	if session.State != model.ReactSessionStateActive ||
 		session.UserName != userName ||
-		session.CallerKey != callerKey ||
+		session.AppKey != appKey ||
 		session.RouteValues != routeValuesJSON ||
 		session.SessionType != sessionType {
 		return components.ErrorParamInvalid.Sprintf("sessionId 无权访问或上下文不匹配")
@@ -775,7 +786,7 @@ func createReactSession(ctx *gin.Context, tx *gorm.DB, sessionID string, req *ru
 	session := &model.ReactSession{
 		SessionID:   sessionID,
 		UserName:    req.userName,
-		CallerKey:   req.payload.CallerKey,
+		AppKey:   req.payload.AppKey,
 		RouteValues: req.routeValuesJSON,
 		SessionType: req.payload.Type,
 		Title:       title,
@@ -803,7 +814,7 @@ func persistUserInput(ctx *gin.Context, tx *gorm.DB, req *runtimeRequest, runID,
 		RunID:       runID,
 		SessionID:   sessionID,
 		UserName:    req.userName,
-		CallerKey:   req.payload.CallerKey,
+		AppKey:   req.payload.AppKey,
 		Seq:         1,
 		StepIndex:   0,
 		Role:        model.ReactMessageRoleUser,

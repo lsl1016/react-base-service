@@ -7,10 +7,10 @@
 //	   全部 worktree 共享对象库，避免每次完整 clone；同一 mirror 的 clone/fetch 按
 //	   fetchMu 串行化，防止并发 fetch 抢 git .lock 报错；
 //	C. WorkspaceAllocator：(service, commit) 粒度共享分配——同一 commit 的 worktree 与
-//	   repo MCP 子进程全局仅一份，多 run / 多 caller 引用计数复用（检索只读无写，共享安全）；
-//	   run 终态减计数，caller 归零清其工具副本、总归零才回收 worktree 与 MCP 子进程；
+//	   repo MCP 子进程全局仅一份，多 run / 多 app 引用计数复用（检索只读无写，共享安全）；
+//	   run 终态减计数，app 归零清其工具副本、总归零才回收 worktree 与 MCP 子进程；
 //	D. 挂载：共享实例动态挂载只读 repo MCP（复用 mcpclient stdio 适配器，REPO_ROOT=worktree，
-//	   工具同步为 caller 名下副本，工具名前缀 = ws_<service>_<commit8>_——名字带 commit 天然
+//	   工具同步为 app 名下副本，工具名前缀 = ws_<service>_<commit8>_——名字带 commit 天然
 //	   唯一，不再触达 EnsureServer 的同名替换语义，多 run 并发加载互不顶替）。
 //
 // 安全面：service/env 仅允许字母数字下划线中划线（防路径穿越）；ref 来自配置白名单并经
@@ -57,8 +57,8 @@ var (
 // 生产路径就是直连 mcpclient 包函数。
 var (
 	ensureRepoServer  = mcpclient.EnsureServer
-	syncCallerTools   = mcpclient.SyncServerRegistryScoped
-	removeCallerTools = mcpclient.RemoveRegistryToolsForCaller
+	syncAppTools   = mcpclient.SyncServerRegistryScoped
+	removeAppTools = mcpclient.RemoveRegistryToolsForApp
 	removeRepoServer  = mcpclient.RemoveServer
 )
 
@@ -72,14 +72,14 @@ type Allocation struct {
 	Path    string `json:"path"`
 	// MCPServerName 是共享实例挂载的 repo MCP 名（工具名前缀 = <name>_）。
 	MCPServerName string `json:"mcpServerName"`
-	// CallerKey 是本次分配的归属 caller（caller 计数归零时清理其工具副本）。
-	CallerKey string `json:"callerKey"`
+	// AppKey 是本次分配的归属 app（app 计数归零时清理其工具副本）。
+	AppKey string `json:"appKey"`
 	// LoadedAt 是共享实例冷启动完成时间（管理面运行视图展示）。
 	LoadedAt *time.Time `json:"loadedAt"`
 }
 
 // wsEntry 是一个 (service, commit) 粒度的共享工作区实例：worktree 与 repo MCP 子进程
-// 全局仅此一份，holders 记录 callerKey → 引用它的活跃 run 数。检索只读，多 run 共享安全。
+// 全局仅此一份，holders 记录 appKey → 引用它的活跃 run 数。检索只读，多 run 共享安全。
 type wsEntry struct {
 	key        string
 	service    string
@@ -115,7 +115,7 @@ func (e *wsEntry) allocation() *Allocation {
 // runRef 是 runID 名下的一次引用登记。
 type runRef struct {
 	entry     *wsEntry
-	callerKey string
+	appKey string
 }
 
 // Manager 管理共享工作区实例与引用计数；进程内单例（Default()）。
@@ -159,9 +159,11 @@ func Default() *Manager {
 
 // Load 解析服务代码并接入 (service, commit) 共享工作区。同一 run 内同一 service 幂等；
 // 热路径（实例已就绪）零 git 操作、零 MCP 拉起，冷路径仅首个加载方创建 worktree 与 repo MCP。
-func (m *Manager) Load(ctx *gin.Context, runID, callerKey, service, env string) (*Allocation, error) {
-	if !conf.GetReactRuntimeConfig().Workspace.WorkspaceEnabled() {
-		return nil, components.ErrorParamInvalid.Sprintf("workspace 未启用（llm.react.workspace.enabled）")
+func (m *Manager) Load(ctx *gin.Context, runID, appKey, service, env string) (*Allocation, error) {
+	// 工具注册门控是「检索代码和工作区」运行时设置（全局生效，默认启用）；
+	// 此处只校验基础设施：静态解析表为空 = 未配置任何可加载服务，明确报错。
+	if !conf.CustomConf.LLM.React.Workspace.WorkspaceResolversConfigured() {
+		return nil, components.ErrorParamInvalid.Sprintf("workspace 未配置解析表（llm.react.workspace.resolvers），无可加载服务")
 	}
 	service = strings.TrimSpace(service)
 	env = strings.TrimSpace(env)
@@ -176,7 +178,7 @@ func (m *Manager) Load(ctx *gin.Context, runID, callerKey, service, env string) 
 	if ref, ok := m.runRefs[runID][service]; ok { // 同 run 同 service：幂等复用，不重复计数
 		m.mu.Unlock()
 		alloc := ref.entry.allocation()
-		alloc.CallerKey = callerKey
+		alloc.AppKey = appKey
 		return alloc, nil
 	}
 	m.mu.Unlock()
@@ -210,7 +212,7 @@ func (m *Manager) Load(ctx *gin.Context, runID, callerKey, service, env string) 
 	if ref, ok := m.runRefs[runID][service]; ok { // 解析期间同 run 已加载：复用，避免双计数
 		m.mu.Unlock()
 		alloc := ref.entry.allocation()
-		alloc.CallerKey = callerKey
+		alloc.AppKey = appKey
 		return alloc, nil
 	}
 	e, ok := m.entries[key]
@@ -233,44 +235,44 @@ func (m *Manager) Load(ctx *gin.Context, runID, callerKey, service, env string) 
 	if m.runRefs[runID] == nil {
 		m.runRefs[runID] = map[string]*runRef{}
 	}
-	m.runRefs[runID][service] = &runRef{entry: e, callerKey: callerKey}
-	e.holders[callerKey]++
+	m.runRefs[runID][service] = &runRef{entry: e, appKey: appKey}
+	e.holders[appKey]++
 	m.mu.Unlock()
 
 	if err := e.ensureStarted(m); err != nil {
-		m.rollbackRegistration(runID, callerKey, service, e)
+		m.rollbackRegistration(runID, appKey, service, e)
 		return nil, err
 	}
-	// 每个 caller 一份工具副本（名字 ws_<service>_<commit8>_<tool>）。
-	if _, err := syncCallerTools(callerKey, e.serverName, false); err != nil {
+	// 每个 app 一份工具副本（名字 ws_<service>_<commit8>_<tool>）。
+	if _, err := syncAppTools(appKey, e.serverName, false); err != nil {
 		zlog.Warnf(ctx, "[Workspace] 工具同步失败(尝试继续): server=%s, err=%v", e.serverName, err)
 	}
 
 	zlog.Infof(ctx, "[Workspace] 工作区就绪: runId=%s, service=%s@%s(ref=%s), path=%s, tools=%s_*", runID, service, commit, ref, worktree, e.serverName)
 	alloc := e.allocation()
-	alloc.CallerKey = callerKey
+	alloc.AppKey = appKey
 	return alloc, nil
 }
 
 // ReleaseRun 释放一个 run 的全部工作区引用（幂等，run 终态统一调用）：
-// caller 计数归零时清理该 caller 的工具副本；总引用归零时回收 worktree 与 repo MCP。
+// app 计数归零时清理该 app 的工具副本；总引用归零时回收 worktree 与 repo MCP。
 // IO（DB/进程/目录）在锁外执行，不阻塞其它 Load/Release。
 func (m *Manager) ReleaseRun(ctx *gin.Context, runID string) {
 	m.mu.Lock()
 	refs := m.runRefs[runID]
 	delete(m.runRefs, runID)
 
-	type toolCleanup struct{ server, caller string }
+	type toolCleanup struct{ server, app string }
 	var toolCleanups []toolCleanup
 	var teardowns []*wsEntry
 	for _, ref := range refs {
 		e := ref.entry
-		if n, ok := e.holders[ref.callerKey]; ok {
+		if n, ok := e.holders[ref.appKey]; ok {
 			if n <= 1 {
-				delete(e.holders, ref.callerKey)
-				toolCleanups = append(toolCleanups, toolCleanup{server: e.serverName, caller: ref.callerKey})
+				delete(e.holders, ref.appKey)
+				toolCleanups = append(toolCleanups, toolCleanup{server: e.serverName, app: ref.appKey})
 			} else {
-				e.holders[ref.callerKey] = n - 1
+				e.holders[ref.appKey] = n - 1
 			}
 		}
 		if len(e.holders) == 0 {
@@ -284,7 +286,7 @@ func (m *Manager) ReleaseRun(ctx *gin.Context, runID string) {
 
 	for _, c := range toolCleanups {
 		// 先摘工具副本（模型侧 get_tool 不再命中），再由 teardown 回收 server 与 worktree。
-		if _, err := removeCallerTools(ctx, c.server, c.caller); err != nil {
+		if _, err := removeAppTools(ctx, c.server, c.app); err != nil {
 			zlog.Warnf(ctx, "[Workspace] 清理工具副本失败(忽略): server=%s, err=%v", c.server, err)
 		}
 	}
@@ -293,9 +295,9 @@ func (m *Manager) ReleaseRun(ctx *gin.Context, runID string) {
 	}
 }
 
-// rollbackRegistration 撤销 Load 的登记（冷启动失败路径）：减 run/caller 引用；
+// rollbackRegistration 撤销 Load 的登记（冷启动失败路径）：减 run/app 引用；
 // 总引用归零时把 entry 从索引摘除（未 started，无 worktree/MCP 需要回收）。
-func (m *Manager) rollbackRegistration(runID, callerKey, service string, e *wsEntry) {
+func (m *Manager) rollbackRegistration(runID, appKey, service string, e *wsEntry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if refs, ok := m.runRefs[runID]; ok && refs[service] != nil && refs[service].entry == e {
@@ -304,11 +306,11 @@ func (m *Manager) rollbackRegistration(runID, callerKey, service string, e *wsEn
 			delete(m.runRefs, runID)
 		}
 	}
-	if n, ok := e.holders[callerKey]; ok {
+	if n, ok := e.holders[appKey]; ok {
 		if n <= 1 {
-			delete(e.holders, callerKey)
+			delete(e.holders, appKey)
 		} else {
-			e.holders[callerKey] = n - 1
+			e.holders[appKey] = n - 1
 		}
 	}
 	if len(e.holders) == 0 {
@@ -326,11 +328,11 @@ type ActiveEntry struct {
 	Server  string         `json:"server"`
 	Tools   string         `json:"tools"`
 	Runs    []string       `json:"runs"`
-	Callers map[string]int `json:"callers"`
+	Apps map[string]int `json:"apps"`
 	Loaded  *time.Time     `json:"loadedAt"`
 }
 
-// ActiveSnapshot 返回当前活跃共享实例清单（值拷贝，含引用 run、caller 计数与挂载时间）。
+// ActiveSnapshot 返回当前活跃共享实例清单（值拷贝，含引用 run、app 计数与挂载时间）。
 func (m *Manager) ActiveSnapshot() []ActiveEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -342,9 +344,9 @@ func (m *Manager) ActiveSnapshot() []ActiveEntry {
 	}
 	snapshot := make([]ActiveEntry, 0, len(m.entries))
 	for _, e := range m.entries {
-		callers := make(map[string]int, len(e.holders))
+		apps := make(map[string]int, len(e.holders))
 		for k, v := range e.holders {
-			callers[k] = v
+			apps[k] = v
 		}
 		loaded := e.loadedAt
 		snapshot = append(snapshot, ActiveEntry{
@@ -355,7 +357,7 @@ func (m *Manager) ActiveSnapshot() []ActiveEntry {
 			Server:  e.serverName,
 			Tools:   e.serverName + "_*",
 			Runs:    runsByKey[e.key],
-			Callers: callers,
+			Apps: apps,
 			Loaded:  &loaded,
 		})
 	}

@@ -29,7 +29,7 @@ type Agent struct {
 	AgentKey       string                `json:"agentKey" gorm:"column:agent_key;not null"`
 	Name           string                `json:"name" gorm:"column:name;not null"`
 	Description    string                `json:"description" gorm:"column:description;not null"`
-	CallerKey      string                `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey      string                `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues    string                `json:"routeValues" gorm:"column:route_values;not null;default:'[]'"`
 	SystemPrompt   string                `json:"systemPrompt" gorm:"column:system_prompt;type:mediumtext;not null"`
 	ModelKey       string                `json:"modelKey" gorm:"column:model_key"`
@@ -91,11 +91,11 @@ func GetAgentByAgentIDUnscoped(ctx *gin.Context, agentID string) (*Agent, error)
 	return &agent, nil
 }
 
-// GetAgentByCallerAndAgentKey 按 caller + agent_key 精确定位（不含默认作用域合并）。
-func GetAgentByCallerAndAgentKey(ctx *gin.Context, callerKey, agentKey string) (*Agent, error) {
+// GetAgentByAppAndAgentKey 按 app + agent_key 精确定位（不含默认作用域合并）。
+func GetAgentByAppAndAgentKey(ctx *gin.Context, appKey, agentKey string) (*Agent, error) {
 	var agent Agent
 	err := helpers.MysqlClientLLM.Model(&Agent{}).WithContext(ctx).
-		Where("caller_key = ? AND agent_key = ?", callerKey, agentKey).First(&agent).Error
+		Where("app_key = ? AND agent_key = ?", appKey, agentKey).First(&agent).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -105,12 +105,12 @@ func GetAgentByCallerAndAgentKey(ctx *gin.Context, callerKey, agentKey string) (
 	return &agent, nil
 }
 
-// GetAgentByCallerAndAgentKeyUnscoped 含软删行按 caller + agent_key 定位：
-// uk_caller_agent 不含 deleted_at，重建同 key agent 时需查软删行做复活更新。
-func GetAgentByCallerAndAgentKeyUnscoped(ctx *gin.Context, callerKey, agentKey string) (*Agent, error) {
+// GetAgentByAppAndAgentKeyUnscoped 含软删行按 app + agent_key 定位：
+// uk_app_agent 不含 deleted_at，重建同 key agent 时需查软删行做复活更新。
+func GetAgentByAppAndAgentKeyUnscoped(ctx *gin.Context, appKey, agentKey string) (*Agent, error) {
 	var agent Agent
 	err := helpers.MysqlClientLLM.Unscoped().Model(&Agent{}).WithContext(ctx).
-		Where("caller_key = ? AND agent_key = ?", callerKey, agentKey).First(&agent).Error
+		Where("app_key = ? AND agent_key = ?", appKey, agentKey).First(&agent).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -151,7 +151,7 @@ func SoftDeleteAgentByAgentID(ctx *gin.Context, agentID string) error {
 func ListAllAgents(ctx *gin.Context) ([]Agent, error) {
 	var agents []Agent
 	err := helpers.MysqlClientLLM.Model(&Agent{}).WithContext(ctx).
-		Order("caller_key ASC, agent_key ASC").
+		Order("app_key ASC, agent_key ASC").
 		Find(&agents).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
@@ -159,11 +159,11 @@ func ListAllAgents(ctx *gin.Context) ([]Agent, error) {
 	return agents, nil
 }
 
-// ListAgentsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 agent 列表（管理列表语义，不过滤 status）。
-func ListAgentsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Agent, error) {
+// ListAgentsByAppAndRoutes 按 appKey + 路由前缀匹配查询 agent 列表（管理列表语义，不过滤 status）。
+func ListAgentsByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]Agent, error) {
 	var agents []Agent
 	db := helpers.MysqlClientLLM.Model(&Agent{}).WithContext(ctx).
-		Where("caller_key = ?", callerKey)
+		Where("app_key = ?", appKey)
 	if len(routePrefixes) > 0 {
 		db = db.Where("route_values IN ?", routePrefixes)
 	}
@@ -174,12 +174,12 @@ func ListAgentsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefix
 	return agents, nil
 }
 
-// FindAgentsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询启用的 agent；
-// 同时并入「默认作用域」（caller_key=default）下命中的 agent，对全部 caller 生效。
-func FindAgentsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Agent, error) {
+// FindAgentsByAppAndRoutes 按 appKey + 路由前缀匹配查询启用的 agent；
+// 同时并入「默认作用域」（app_key=default）下命中的 agent，对全部 app 生效。
+func FindAgentsByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]Agent, error) {
 	var agents []Agent
 	err := helpers.MysqlClientLLM.Model(&Agent{}).WithContext(ctx).
-		Where("caller_key IN ? AND status = 1 AND route_values IN ?", CallerScopeKeys(callerKey), routePrefixes).
+		Where("app_key IN ? AND status = 1 AND route_values IN ?", AppScopeKeys(appKey), routePrefixes).
 		Order("agent_key ASC").
 		Find(&agents).Error
 	if err != nil {

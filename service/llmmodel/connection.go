@@ -26,7 +26,7 @@ import (
 
 const connectionFetchTimeout = 15 * time.Second
 
-// CreateConnection 创建连接；同一 caller+routeValues 组合不允许重复。
+// CreateConnection 创建连接；同一 app+routeValues 组合不允许重复。
 func CreateConnection(ctx *gin.Context, req params.CreateConnectionReq, userName string) (*model.Connection, error) {
 	protocol := strings.TrimSpace(req.Protocol)
 	if !llm.IsValidProtocol(protocol) {
@@ -35,18 +35,18 @@ func CreateConnection(ctx *gin.Context, req params.CreateConnectionReq, userName
 
 	routeValues, _ := json.Marshal(req.RouteValues)
 	routeValuesStr := string(routeValues)
-	callerKey := strings.TrimSpace(req.CallerKey)
+	appKey := strings.TrimSpace(req.AppKey)
 
-	exists, err := model.ExistConnectionByCallerAndRoute(ctx, callerKey, routeValuesStr)
+	exists, err := model.ExistConnectionByAppAndRoute(ctx, appKey, routeValuesStr)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, components.ErrorConnectionDuplicate.Sprintf(fmt.Sprintf("%s %s", callerKey, routeValuesStr))
+		return nil, components.ErrorConnectionDuplicate.Sprintf(fmt.Sprintf("%s %s", appKey, routeValuesStr))
 	}
 
 	conn := &model.Connection{
-		CallerKey:   callerKey,
+		AppKey:   appKey,
 		RouteValues: routeValuesStr,
 		Name:        strings.TrimSpace(req.Name),
 		Protocol:    protocol,
@@ -89,19 +89,19 @@ func UpdateConnectionByID(ctx *gin.Context, req params.UpdateConnectionReq, user
 	if strings.TrimSpace(req.ApiKey) != "" {
 		updates["api_key"] = model.EncryptAPIKey(strings.TrimSpace(req.ApiKey))
 	}
-	if strings.TrimSpace(req.CallerKey) != "" {
-		updates["caller_key"] = strings.TrimSpace(req.CallerKey)
+	if strings.TrimSpace(req.AppKey) != "" {
+		updates["app_key"] = strings.TrimSpace(req.AppKey)
 	}
 	if req.RouteValues != nil {
 		routeValues, _ := json.Marshal(req.RouteValues)
 		newRouteValues := string(routeValues)
-		if newRouteValues != existing.RouteValues || strings.TrimSpace(req.CallerKey) != existing.CallerKey {
-			exists, err := model.ExistConnectionByCallerAndRoute(ctx, strings.TrimSpace(req.CallerKey), newRouteValues)
+		if newRouteValues != existing.RouteValues || strings.TrimSpace(req.AppKey) != existing.AppKey {
+			exists, err := model.ExistConnectionByAppAndRoute(ctx, strings.TrimSpace(req.AppKey), newRouteValues)
 			if err != nil {
 				return err
 			}
 			if exists {
-				return components.ErrorConnectionDuplicate.Sprintf(fmt.Sprintf("%s %s", req.CallerKey, newRouteValues))
+				return components.ErrorConnectionDuplicate.Sprintf(fmt.Sprintf("%s %s", req.AppKey, newRouteValues))
 			}
 		}
 		updates["route_values"] = newRouteValues
@@ -162,7 +162,7 @@ func toConnectionItem(conn *model.Connection, modelCount int64) params.Connectio
 		Protocol:    conn.Protocol,
 		BaseURL:     conn.BaseURL,
 		ApiKey:      "******",
-		CallerKey:   conn.CallerKey,
+		AppKey:   conn.AppKey,
 		RouteValues: routeValues,
 		Status:      conn.Status,
 		CreatedAt:   conn.CreatedAt.Format("2006-01-02 15:04:05"),
@@ -171,13 +171,13 @@ func toConnectionItem(conn *model.Connection, modelCount int64) params.Connectio
 	}
 }
 
-// ResolveConnection 按 callerKey + 路由前缀匹配解析最佳连接：
-// 先在 caller 精确命中的连接里取 route_values 最长者，没有再取空 caller（全局）兜底。
+// ResolveConnection 按 appKey + 路由前缀匹配解析最佳连接：
+// 先在 app 精确命中的连接里取 route_values 最长者，没有再取空 app（全局）兜底。
 // 返回 nil 表示未配置连接（调用方回退旧 tblLlmApiKey 口径）。
-func ResolveConnection(ctx *gin.Context, callerKey string, routeValues []string) (*model.Connection, error) {
-	conns, err := model.FindConnectionsByCallerAndRoutes(ctx, callerKey, route.BuildRoutePrefixes(routeValues))
+func ResolveConnection(ctx *gin.Context, appKey string, routeValues []string) (*model.Connection, error) {
+	conns, err := model.FindConnectionsByAppAndRoutes(ctx, appKey, route.BuildRoutePrefixes(routeValues))
 	if err != nil {
-		zlog.Warnf(ctx, "[Connection.Resolve] 查询失败: callerKey=%s, err=%v", callerKey, err)
+		zlog.Warnf(ctx, "[Connection.Resolve] 查询失败: appKey=%s, err=%v", appKey, err)
 		return nil, err
 	}
 	bestExact, bestGlobal := (*model.Connection)(nil), (*model.Connection)(nil)
@@ -186,7 +186,7 @@ func ResolveConnection(ctx *gin.Context, callerKey string, routeValues []string)
 		if conn.Status != 1 {
 			continue
 		}
-		if conn.CallerKey == callerKey {
+		if conn.AppKey == appKey {
 			if bestExact == nil || len(conn.RouteValues) > len(bestExact.RouteValues) {
 				bestExact = conn
 			}

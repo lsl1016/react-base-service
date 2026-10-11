@@ -16,12 +16,12 @@ import (
 )
 
 func RegisterApiKey(ctx *gin.Context, req *params.RegisterApiKeyReq, createdBy string) (*model.ApiKey, error) {
-	caller, err := model.GetActiveCallerByKey(ctx, req.CallerKey)
+	app, err := model.GetActiveAppByKey(ctx, req.AppKey)
 	if err != nil {
 		return nil, err
 	}
-	if caller == nil {
-		return nil, components.ErrorCallerNotFound.Sprintf(req.CallerKey)
+	if app == nil {
+		return nil, components.ErrorAppNotFound.Sprintf(req.AppKey)
 	}
 
 	rv := req.RouteValues
@@ -31,16 +31,16 @@ func RegisterApiKey(ctx *gin.Context, req *params.RegisterApiKeyReq, createdBy s
 	routeValues, _ := json.Marshal(rv)
 	routeValuesStr := string(routeValues)
 
-	exists, err := model.ExistApiKeyByCallerAndRoute(ctx, req.CallerKey, routeValuesStr)
+	exists, err := model.ExistApiKeyByAppAndRoute(ctx, req.AppKey, routeValuesStr)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, components.ErrorApiKeyDuplicate.Sprintf(req.CallerKey, routeValuesStr)
+		return nil, components.ErrorApiKeyDuplicate.Sprintf(req.AppKey, routeValuesStr)
 	}
 
 	ak := &model.ApiKey{
-		CallerKey:   req.CallerKey,
+		AppKey:   req.AppKey,
 		RouteValues: routeValuesStr,
 		Name:        req.Name,
 		ApiKeyValue: req.ApiKey,
@@ -83,12 +83,12 @@ func UpdateApiKey(ctx *gin.Context, req *params.UpdateApiKeyReq) (*model.ApiKey,
 
 		// 路由变更时检查新路由是否已被占用
 		if newRouteValues != existing.RouteValues {
-			exists, err := model.ExistApiKeyByCallerAndRoute(ctx, existing.CallerKey, newRouteValues)
+			exists, err := model.ExistApiKeyByAppAndRoute(ctx, existing.AppKey, newRouteValues)
 			if err != nil {
 				return nil, err
 			}
 			if exists {
-				return nil, components.ErrorApiKeyDuplicate.Sprintf(existing.CallerKey, newRouteValues)
+				return nil, components.ErrorApiKeyDuplicate.Sprintf(existing.AppKey, newRouteValues)
 			}
 		}
 		updates["route_values"] = newRouteValues
@@ -142,17 +142,17 @@ func GetDetail(ctx *gin.Context, id uint) (*model.ApiKey, error) {
 	return ak, nil
 }
 
-func ListByCallerAndRoute(ctx *gin.Context, callerKey string, routeValues []string) ([]model.ApiKey, error) {
-	return model.ListApiKeysByCallerAndExactRoute(ctx, callerKey, route.SerializeRouteValues(routeValues))
+func ListByAppAndRoute(ctx *gin.Context, appKey string, routeValues []string) ([]model.ApiKey, error) {
+	return model.ListApiKeysByAppAndExactRoute(ctx, appKey, route.SerializeRouteValues(routeValues))
 }
 
-// ResolveApiKey 根据 callerKey + routeValues 解析最佳匹配的 API Key
+// ResolveApiKey 根据 appKey + routeValues 解析最佳匹配的 API Key
 // 策略：前缀匹配 → 取 route_values 最长的记录
-func ResolveApiKey(ctx *gin.Context, callerKey string, routeValues []string) (string, error) {
+func ResolveApiKey(ctx *gin.Context, appKey string, routeValues []string) (string, error) {
 	prefixes := route.BuildRoutePrefixes(routeValues)
-	keys, err := model.FindApiKeysByCallerAndRoutes(ctx, callerKey, prefixes)
+	keys, err := model.FindApiKeysByAppAndRoutes(ctx, appKey, prefixes)
 	if err != nil {
-		zlog.Warnf(ctx, "[ResolveApiKey] 查询失败: callerKey=%s, err=%v", callerKey, err)
+		zlog.Warnf(ctx, "[ResolveApiKey] 查询失败: appKey=%s, err=%v", appKey, err)
 		return "", err
 	}
 	if len(keys) == 0 {
@@ -175,7 +175,7 @@ func ToApiKeyResp(ak *model.ApiKey) params.ApiKeyResp {
 
 	return params.ApiKeyResp{
 		ID:          ak.ID,
-		CallerKey:   ak.CallerKey,
+		AppKey:   ak.AppKey,
 		RouteValues: routeValues,
 		Name:        ak.Name,
 		ApiKey:      "",

@@ -43,7 +43,7 @@ type PlanExecution struct {
 	PlanExecutionID  string     `json:"planExecutionId" gorm:"column:plan_execution_id;not null"`
 	SessionID        string     `json:"sessionId" gorm:"column:session_id;not null"`
 	OuterRunID       string     `json:"outerRunId" gorm:"column:outer_run_id;not null"`
-	CallerKey        string     `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey        string     `json:"appKey" gorm:"column:app_key;not null"`
 	UserName         string     `json:"userName" gorm:"column:user_name;not null"`
 	Status           string     `json:"status" gorm:"column:status;not null"`
 	CurrentVersionID string     `json:"currentVersionId" gorm:"column:current_version_id;not null;default:''"`

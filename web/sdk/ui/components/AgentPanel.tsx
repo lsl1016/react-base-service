@@ -158,7 +158,7 @@ function buildAsyncTaskNotice(tasks: readonly AsyncTaskItem[]): AsyncTaskNotice 
 
 export function AgentPanel(props: AgentPanelProps) {
   const store = createAgentStore(props.client);
-  const sessionScope = props.client.getSessionScope?.() ?? { callerKey: "", routeValues: [] };
+  const sessionScope = props.client.getSessionScope?.() ?? { appKey: "", routeValues: [] };
   const [sessions, setSessions] = createSignal<SessionMeta[]>([]);
   const [panelMessage, setPanelMessage] = createSignal<string>();
   const [showSessionHistory, setShowSessionHistory] = createSignal(false);
@@ -175,13 +175,13 @@ export function AgentPanel(props: AgentPanelProps) {
 
   // ─── 模型选择的浏览器持久化 ───────────────────────────────
   // 记住用户在输入框下拉里主动选择的模型，刷新/重开页面后恢复。
-  // 按 callerKey + routeValues 分键，不同宿主/场景互不干扰；恢复值必须在当前
+  // 按 appKey + routeValues 分键，不同宿主/场景互不干扰；恢复值必须在当前
   // 可用列表中（模型被停用/删除时不恢复，由校正 effect 回退并覆盖存储）。
   /** 用户主动选择后置位：后续列表加载/合并不再用存储值覆盖用户的选择。 */
   let userPickedModel = false;
   const modelStorageKey = (): string => {
     const scope = props.client.getSessionScope?.();
-    return `agent-ui:selected-model:${scope?.callerKey ?? 'default'}:${(scope?.routeValues ?? []).join(',')}`;
+    return `agent-ui:selected-model:${scope?.appKey ?? 'default'}:${(scope?.routeValues ?? []).join(',')}`;
   };
   const readStoredModel = (): StoredModelRef | null => {
     try {
@@ -1028,7 +1028,7 @@ export function AgentPanel(props: AgentPanelProps) {
           <MessageList
             steps={store.state.steps}
             sessionId={store.state.sessionId}
-            callerKey={sessionScope.callerKey}
+            appKey={sessionScope.appKey}
             routeValues={sessionScope.routeValues}
             isRunning={isRunning()}
             isCompacting={store.state.status === "compacting"}

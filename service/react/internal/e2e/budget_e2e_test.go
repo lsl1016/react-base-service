@@ -47,7 +47,7 @@ func TestSubAgentBudgetE2E(t *testing.T) {
 	helpers.InitMysql()
 
 	ctx := newHeadlessGinContext("e2e-budget")
-	if existing, err := model.GetAgentByCallerAndAgentKey(ctx, "demo-app", "e2e-budget-probe"); err != nil {
+	if existing, err := model.GetAgentByAppAndAgentKey(ctx, "demo-app", "e2e-budget-probe"); err != nil {
 		t.Fatalf("查询已有 agent 失败: %v", err)
 	} else if existing != nil {
 		if _, err := agentService.DeleteAgent(ctx, existing.AgentID); err != nil {
@@ -56,7 +56,7 @@ func TestSubAgentBudgetE2E(t *testing.T) {
 	}
 	enabled := 1
 	imported, err := agentService.ImportFromMarkdown(ctx, &params.ImportAgentReq{
-		CallerKey:   "demo-app",
+		AppKey:   "demo-app",
 		RouteValues: []string{},
 		Status:      &enabled,
 		Markdown:    e2eBudgetAgentMarkdown,
@@ -68,13 +68,13 @@ func TestSubAgentBudgetE2E(t *testing.T) {
 		t.Fatalf("frontmatter max_tokens_per_run 应导入为 1: %d", imported.MaxTokensPerRun)
 	}
 	t.Cleanup(func() {
-		if existing, err := model.GetAgentByCallerAndAgentKey(ctx, "demo-app", "e2e-budget-probe"); err == nil && existing != nil {
+		if existing, err := model.GetAgentByAppAndAgentKey(ctx, "demo-app", "e2e-budget-probe"); err == nil && existing != nil {
 			_, _ = agentService.DeleteAgent(ctx, existing.AgentID)
 		}
 	})
 
 	payload := params.ReactRunPayload{
-		CallerKey:   "demo-app",
+		AppKey:   "demo-app",
 		RouteValues: []string{},
 		Type:        model.ReactSessionTypeChat,
 		UserPrompt:  "请立即调用 delegate_agent 工具，把任务「回答 ok」委派给子代理 e2e-budget-probe（agent_key: e2e-budget-probe），拿到结论或失败原因后向用户转述。",

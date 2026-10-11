@@ -58,7 +58,7 @@ function createMockFetch() {
       return jsonOk({
         sessions: [{
           sessionId: 'session_server',
-          callerKey: body.callerKey,
+          appKey: body.appKey,
           routeValues: body.routeValues ?? [],
           type: 'chat',
           title: '服务端会话',
@@ -84,7 +84,7 @@ function createMockFetch() {
             seq: 1,
             runId: 'run_server',
             sessionId: body.sessionId,
-            payload: { callerKey: 'report-editor', routeValues: ['report_abc'], type: 'chat', userPrompt: '历史问题' },
+            payload: { appKey: 'report-editor', routeValues: ['report_abc'], type: 'chat', userPrompt: '历史问题' },
             createdAt: '2026-09-25 10:00:00',
           },
           {
@@ -153,7 +153,7 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
   });
 
   it('listQueue/updateQueueItem/reorderQueue/deleteQueueItem 走对应 REST 端点并携带会话五元组', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor', routeValues: ['report_abc'] });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor', routeValues: ['report_abc'] });
     await client.switchSession('session_server');
 
     const list = await client.listQueue();
@@ -177,14 +177,14 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
   });
 
   it('无会话时 listQueue 返回空队列而不发请求', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     // 构造后立即调用：初始同步尚未回填 sessionId
     const list = await client.listQueue();
     expect(list).toEqual({ items: [], queueEnabled: false, autoDrain: false });
   });
 
   it('空闲时 sendQueuedMessage 发送 queue_send（带 sessionId、pendingInputId 与 run 模式）', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_server');
@@ -199,7 +199,7 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
   });
 
   it('run 活跃时 sendQueuedMessage 默认模式不发送（后端同样会拒绝）', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_server');
@@ -212,7 +212,7 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
   });
 
   it('run 活跃时 sendQueuedMessage inject 模式发送 queue_send mode=inject（立即注入当前对话）', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_server');
@@ -227,7 +227,7 @@ describe('AgentClient 队列管理（S3）与 mid-run steer 发送', () => {
   });
 
   it('run 活跃时再次 run() 走 steer 分支：不重置运行态、不插乐观气泡、照发 WS run 消息', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_server');

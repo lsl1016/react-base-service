@@ -19,7 +19,7 @@ type Tool struct {
 	Name        string `json:"name" gorm:"column:name;not null"`
 	Description string `json:"description" gorm:"column:description"`
 	ToolType    string `json:"toolType" gorm:"column:tool_type;not null"`
-	CallerKey   string `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey   string `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues string `json:"routeValues" gorm:"column:route_values"`
 	Config      string `json:"config" gorm:"column:config"`
 	// PermissionMode 是工具级危险操作确认模式：auto=自动执行（默认）、confirm=每次人工确认、
@@ -45,11 +45,11 @@ func CreateTool(ctx *gin.Context, tool *Tool) error {
 	return nil
 }
 
-// ExistToolByCallerAndName 检查同一 caller 下是否存在同名 tool
-func ExistToolByCallerAndName(ctx *gin.Context, callerKey, name string) (bool, error) {
+// ExistToolByAppAndName 检查同一 app 下是否存在同名 tool
+func ExistToolByAppAndName(ctx *gin.Context, appKey, name string) (bool, error) {
 	var count int64
 	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
-		Where("caller_key = ? AND name = ?", callerKey, name).
+		Where("app_key = ? AND name = ?", appKey, name).
 		Count(&count).Error
 	if err != nil {
 		return false, components.ErrorDbSelect.Wrap(err)
@@ -114,10 +114,10 @@ func SoftDeleteToolByToolID(ctx *gin.Context, toolID string) error {
 	return nil
 }
 
-func ListToolsByCaller(ctx *gin.Context, callerKey string) ([]Tool, error) {
+func ListToolsByApp(ctx *gin.Context, appKey string) ([]Tool, error) {
 	var tools []Tool
 	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
-		Where("caller_key = ?", callerKey).
+		Where("app_key = ?", appKey).
 		Order("created_at DESC").
 		Find(&tools).Error
 	if err != nil {
@@ -126,11 +126,11 @@ func ListToolsByCaller(ctx *gin.Context, callerKey string) ([]Tool, error) {
 	return tools, nil
 }
 
-// ListToolsByCallerAndExactRoute 按 callerKey + routeValues 精确匹配查询 tool 列表
-func ListToolsByCallerAndExactRoute(ctx *gin.Context, callerKey string, routeValues string) ([]Tool, error) {
+// ListToolsByAppAndExactRoute 按 appKey + routeValues 精确匹配查询 tool 列表
+func ListToolsByAppAndExactRoute(ctx *gin.Context, appKey string, routeValues string) ([]Tool, error) {
 	var tools []Tool
 	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ?", callerKey, routeValues).
+		Where("app_key = ? AND route_values = ?", appKey, routeValues).
 		Order("created_at DESC").
 		Find(&tools).Error
 	if err != nil {
@@ -172,12 +172,12 @@ func ListMCPServerTools(ctx *gin.Context, serverName string) ([]Tool, error) {
 
 // OfflineMCPServerTools 把一个 MCP 服务器同步进注册表的工具标记停用（status=0，不软删：
 // 重新连接成功后下次同步会自动恢复启用，行保留供管理面审计）。
-//   - callerKey 为空 = 全部 caller 名下的副本（连接检测失败，整台服务器失联下线）；
-//     非空 = 仅该 caller 名下（同步时清理该作用域内服务器端已下架的工具）。
+//   - appKey 为空 = 全部 app 名下的副本（连接检测失败，整台服务器失联下线）；
+//     非空 = 仅该 app 名下（同步时清理该作用域内服务器端已下架的工具）。
 //   - activeNames 非空时只停用名单外的工具（工具名 <server>_<tool>，刷新同步用）；
 //     为空 = 匹配到的全部停用。
 //   - 已停用行与软删除行不受影响。返回本次停用的行数。
-func OfflineMCPServerTools(ctx *gin.Context, serverName, callerKey string, activeNames []string) (int64, error) {
+func OfflineMCPServerTools(ctx *gin.Context, serverName, appKey string, activeNames []string) (int64, error) {
 	tools, err := ListToolsByType(ctx, "mcp")
 	if err != nil {
 		return 0, err
@@ -191,7 +191,7 @@ func OfflineMCPServerTools(ctx *gin.Context, serverName, callerKey string, activ
 		if tool.Status == 0 {
 			continue
 		}
-		if callerKey != "" && tool.CallerKey != callerKey {
+		if appKey != "" && tool.AppKey != appKey {
 			continue
 		}
 		var cfg struct {
@@ -215,8 +215,8 @@ func OfflineMCPServerTools(ctx *gin.Context, serverName, callerKey string, activ
 }
 
 // ListGatewayHTTPTools 返回 MCP 网关的工具基础集合：全部启用的 http 工具行
-//（跨 caller，caller_key 仅作归属标记，不参与 MCP 可见性；route_values 同样不参与）。
-// 工具对哪个应用可见由 tblLlmMcpAppTool 白名单决定。同名工具可能存在于多个 caller
+//（跨 app，app_key 仅作归属标记，不参与 MCP 可见性；route_values 同样不参与）。
+// 工具对哪个应用可见由 tblLlmMcpAppTool 白名单决定。同名工具可能存在于多个 app
 // 名下，排序按 name/id 固定，由调用方（网关注册表）按名去重。
 func ListGatewayHTTPTools(ctx *gin.Context) ([]Tool, error) {
 	var tools []Tool
@@ -244,12 +244,13 @@ func GetHTTPToolsByIDs(ctx *gin.Context, ids []uint) ([]Tool, error) {
 	return tools, nil
 }
 
-// FindToolsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询 tool；
-// 同时并入「默认作用域」（caller_key=default）下命中的工具，对全部 caller 生效。
-func FindToolsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Tool, error) {
+// FindToolsByAppAndRoutes 按解析作用域 + 路由前缀匹配查询 tool。
+// scopeKeys 由调用方预计算（AppCapabilityScopeKeys）：继承默认能力的 app 含 default 伪 app，
+// 关闭默认能力绑定的 app 只含自身；default 作用域下命中的工具对合并解析的 app 生效。
+func FindToolsByAppAndRoutes(ctx *gin.Context, scopeKeys []string, routePrefixes []string) ([]Tool, error) {
 	var tools []Tool
 	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
-		Where("caller_key IN ? AND status = 1 AND route_values IN ?", CallerScopeKeys(callerKey), routePrefixes).
+		Where("app_key IN ? AND status = 1 AND route_values IN ?", scopeKeys, routePrefixes).
 		Find(&tools).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
@@ -257,11 +258,11 @@ func FindToolsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixe
 	return tools, nil
 }
 
-// ListAllTools 列出全部 caller 的工具（管理控制台「全部」视图用）。
+// ListAllTools 列出全部 app 的工具（管理控制台「全部」视图用）。
 func ListAllTools(ctx *gin.Context) ([]Tool, error) {
 	var tools []Tool
 	err := helpers.MysqlClientLLM.Model(&Tool{}).WithContext(ctx).
-		Order("caller_key ASC, created_at DESC").
+		Order("app_key ASC, created_at DESC").
 		Find(&tools).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)

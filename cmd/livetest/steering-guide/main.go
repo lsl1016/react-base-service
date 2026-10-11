@@ -1,7 +1,7 @@
 // livetest/steering-guide：Steering S1 guide 注入全链路实测客户端。
 //
 // 前置：依赖容器已就绪（docker compose up -d mysql redis sandbox）、服务已启动
-// （go run main.go，监听 :8180）、llm.react.steering.enabled: true、demo-app caller 可用。
+// （go run main.go，监听 :8180）、llm.react.steering.enabled: true、demo-app app 可用。
 // 流程：发起长输出 run（数数），首条正文增量到达（模型流进行中）时发送第二条 run 消息
 // 触发 guide 准入，预期依次收到 steer_guided → steer_drained → done；
 // 消息表顺序应为 原始user → assistant → guide user → 新 assistant（guide 不插入 tool_use/tool_result 之间）。
@@ -56,7 +56,7 @@ func main() {
 	defer conn.Close()
 
 	runPayload, _ := json.Marshal(map[string]any{
-		"callerKey":    "demo-app",
+		"appKey":    "demo-app",
 		"userPrompt":   "请从 1 逐个数到 100，每个数字占一行，除数字外不要输出任何其他内容，不要调用任何工具。",
 		"modelKey":     "deepseek",
 		"modelVersion": "deepseek-flash",
@@ -93,7 +93,7 @@ func main() {
 				if !firstDeltaSeen {
 					firstDeltaSeen = true
 					steerPayload, _ := json.Marshal(map[string]any{
-						"callerKey":  "demo-app",
+						"appKey":  "demo-app",
 						"userPrompt": steerText,
 					})
 					_ = websocket.JSON.Send(conn, wsMsg{Type: "run", SessionID: sessionID, RunID: runID, Payload: steerPayload})

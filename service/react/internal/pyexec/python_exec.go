@@ -116,7 +116,7 @@ type pythonExecArtifactUpload struct {
 	RunID     string
 	ToolUseID string
 	UserName  string
-	CallerKey string
+	AppKey string
 	Artifact  pythonExecArtifact
 	Data      []byte
 }
@@ -306,7 +306,7 @@ func processPythonExecArtifacts(rc RunContext, toolUseID string, artifacts []pyt
 			RunID:     rc.RunID,
 			ToolUseID: toolUseID,
 			UserName:  rc.UserName,
-			CallerKey: rc.CallerKey,
+			AppKey: rc.AppKey,
 			Artifact:  a,
 			Data:      data,
 		})
@@ -370,7 +370,7 @@ func uploadPythonExecArtifactToCOS(u pythonExecArtifactUpload) (string, error) {
 		RunID:      u.RunID,
 		ToolUseID:  u.ToolUseID,
 		UserName:   u.UserName,
-		CallerKey:  u.CallerKey,
+		AppKey:  u.AppKey,
 		FileName:   u.Artifact.Name,
 		MimeType:   mimeType,
 		CosKey:     cosKey,

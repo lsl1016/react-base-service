@@ -38,9 +38,9 @@ func graphMemorySharedClient() *graphmemory.Client {
 }
 
 // resolveGraphMemoryScope 解析当前 run 的图谱作用域（组即分区，服务端强制注入，不进模型入参）。
-func resolveGraphMemoryScope(callerKey, userName string) graphmemory.Scope {
+func resolveGraphMemoryScope(appKey, userName string) graphmemory.Scope {
 	cfg := graphMemoryConfig()
-	return graphmemory.ResolveScope(callerKey, userName, cfg.GraphMemoryUserScope())
+	return graphmemory.ResolveScope(appKey, userName, cfg.GraphMemoryUserScope())
 }
 
 // graphMemoryToolDefinitions 声明图谱记忆工具；仅在 graph_memory.enabled 时注册，
@@ -114,7 +114,7 @@ func (s *reactEngineState) executeGraphMemorySearch(input json.RawMessage) (stri
 	if client == nil {
 		return "", true, fmt.Errorf("graph memory endpoint is not configured")
 	}
-	scope := resolveGraphMemoryScope(s.req.payload.CallerKey, s.req.userName)
+	scope := resolveGraphMemoryScope(s.req.payload.AppKey, s.req.userName)
 	facts, err := client.Search(s.runCtx, scope.Groups, query, limit)
 	if err != nil {
 		metrics.GraphMemorySearchTotal.WithLabelValues("error").Inc()
@@ -160,7 +160,7 @@ func (s *reactEngineState) executeGraphMemoryWrite(input json.RawMessage) (strin
 	if client == nil {
 		return "", true, fmt.Errorf("graph memory endpoint is not configured")
 	}
-	scope := resolveGraphMemoryScope(s.req.payload.CallerKey, s.req.userName)
+	scope := resolveGraphMemoryScope(s.req.payload.AppKey, s.req.userName)
 	err := client.AddEpisode(s.runCtx, scope.WriteGroup, graphmemory.EpisodeMessage{
 		Content:           content,
 		Name:              name,
@@ -196,7 +196,7 @@ func graphMemoryFactDate(iso string) string {
 // buildGraphMemoryContextForRun 在 run 初始化阶段装配 <graph_memory> 注入块：
 // 按本次用户输入检索相关事实。注入是增强不是依赖——检索失败/超时/空结果一律返回空串
 // （token 零增量，绝不影响 run 启动）。
-func buildGraphMemoryContextForRun(ctx *gin.Context, callerKey, userName, query string) string {
+func buildGraphMemoryContextForRun(ctx *gin.Context, appKey, userName, query string) string {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return ""
@@ -209,7 +209,7 @@ func buildGraphMemoryContextForRun(ctx *gin.Context, callerKey, userName, query 
 	injectCtx, cancel := context.WithTimeout(ctx.Request.Context(), time.Duration(cfg.Inject.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
-	scope := graphmemory.ResolveScope(callerKey, userName, cfg.GraphMemoryUserScope())
+	scope := graphmemory.ResolveScope(appKey, userName, cfg.GraphMemoryUserScope())
 	facts, err := client.Search(injectCtx, scope.Groups, query, cfg.Inject.MaxFacts)
 	if err != nil {
 		metrics.GraphMemorySearchTotal.WithLabelValues("inject_error").Inc()

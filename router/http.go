@@ -10,7 +10,7 @@ import (
 	"react-base-service/controllers/http/agent"
 	"react-base-service/controllers/http/apikey"
 	"react-base-service/controllers/http/attachment"
-	"react-base-service/controllers/http/caller"
+	"react-base-service/controllers/http/app"
 	"react-base-service/controllers/http/llmmodel"
 	"react-base-service/controllers/http/mcpadmin"
 	"react-base-service/controllers/http/react"
@@ -63,7 +63,7 @@ func Http(engine *gin.Engine) {
 
 	router.Use(middleware.AnonymousAuth())
 
-	// MCP 服务端网关（/mcp）：把 tblLlmTool 的 http 工具按 caller 作用域对外暴露，
+	// MCP 服务端网关（/mcp）：把 tblLlmTool 的 http 工具按 app 作用域对外暴露，
 	// 自带 Bearer appKey:appSecret 鉴权，不依赖 AnonymousAuth；mcp_server.enabled 控制。
 	if conf.CustomConf.MCPServer.Enabled {
 		gateway := router.Group("/mcp")
@@ -185,14 +185,25 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		}
 	}
 
-	// Caller 管理接口
-	callerGroup := router.Group("/caller")
+	// App 管理接口
+	appGroup := router.Group("/app")
 	{
-		callerGroup.POST("/register", caller.RegisterCaller)
-		callerGroup.POST("/update", caller.UpdateCaller)
-		callerGroup.POST("/list", caller.ListCallers)
-		callerGroup.POST("/copy_config", caller.CopyConfig)
-		callerGroup.POST("/batch_delete", caller.BatchDelete)
+		appGroup.POST("/register", app.RegisterApp)
+		appGroup.POST("/update", app.UpdateApp)
+		appGroup.POST("/list", app.ListApps)
+		appGroup.POST("/copy_config", app.CopyConfig)
+		appGroup.POST("/batch_delete", app.BatchDelete)
+	}
+
+	// caller→app 改名兼容：旧 /caller/* 路由别名指向同一组 handler，
+	// 供迁移期存量管理客户端继续调用，新接入方请使用 /app/*。
+	legacyAppGroup := router.Group("/caller")
+	{
+		legacyAppGroup.POST("/register", app.RegisterApp)
+		legacyAppGroup.POST("/update", app.UpdateApp)
+		legacyAppGroup.POST("/list", app.ListApps)
+		legacyAppGroup.POST("/copy_config", app.CopyConfig)
+		legacyAppGroup.POST("/batch_delete", app.BatchDelete)
 	}
 
 	// Skill 管理接口（SKILL.md 文件导入见 /skill/import 与 /skill/import_zip）
@@ -229,6 +240,9 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		settingGroup.POST("/memory/update", setting.UpdateMemorySetting)
 		settingGroup.POST("/web/get", setting.GetWebSetting)
 		settingGroup.POST("/web/update", setting.UpdateWebSetting)
+		// 检索代码和工作区开关（全局设置，无 app 维度——内置工具不按 app 隔离）
+		settingGroup.POST("/workspace/get", setting.GetWorkspaceSetting)
+		settingGroup.POST("/workspace/update", setting.UpdateWorkspaceSetting)
 	}
 
 	// Tool 管理接口

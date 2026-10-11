@@ -13,34 +13,34 @@ import (
 func TestResolveMemoryScopeWriteOwnerAndVisibility(t *testing.T) {
 	withUser := ResolveMemoryScope("demo-app", "zhangsan", true)
 	if len(withUser.owners) != 2 {
-		t.Fatalf("expected caller+caller_user owners, got %d", len(withUser.owners))
+		t.Fatalf("expected app+app_user owners, got %d", len(withUser.owners))
 	}
-	if withUser.writeOwner != withUser.owners[1] || withUser.writeOwner.OwnerType != model.MemoryOwnerTypeCallerUser {
-		t.Fatalf("write owner should be caller_user scope, got %+v", withUser.writeOwner)
+	if withUser.writeOwner != withUser.owners[1] || withUser.writeOwner.OwnerType != model.MemoryOwnerTypeAppUser {
+		t.Fatalf("write owner should be app_user scope, got %+v", withUser.writeOwner)
 	}
-	if _, ok := withUser.allowedKeys[MemoryOwnerKey(model.BuildCallerMemoryOwner("demo-app"))]; !ok {
-		t.Fatalf("caller owner should be visible")
+	if _, ok := withUser.allowedKeys[MemoryOwnerKey(model.BuildAppMemoryOwner("demo-app"))]; !ok {
+		t.Fatalf("app owner should be visible")
 	}
 
 	shared := ResolveMemoryScope("demo-app", "zhangsan", false)
-	if len(shared.owners) != 1 || shared.writeOwner.OwnerType != model.MemoryOwnerTypeCaller {
-		t.Fatalf("user scope disabled should collapse to caller owner, got %+v", shared.owners)
+	if len(shared.owners) != 1 || shared.writeOwner.OwnerType != model.MemoryOwnerTypeApp {
+		t.Fatalf("user scope disabled should collapse to app owner, got %+v", shared.owners)
 	}
 }
 
 func TestMergeMemoryItemsPrefersLaterOwnerScope(t *testing.T) {
 	base := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
-	// caller 条目更新时间更新，但 caller_user 作用域必须覆盖 caller。
-	callerItem := model.MemoryItem{ID: 1, ItemKey: "k1", Title: "caller 版本", Layer: model.MemoryLayerDetached, OwnerType: model.MemoryOwnerTypeCaller, UpdatedAt: base.Add(time.Hour)}
-	userItem := model.MemoryItem{ID: 2, ItemKey: "k1", Title: "user 版本", Layer: model.MemoryLayerDetached, OwnerType: model.MemoryOwnerTypeCallerUser, UpdatedAt: base}
-	other := model.MemoryItem{ID: 3, ItemKey: "k2", Title: "独立事实", Layer: model.MemoryLayerDetached, OwnerType: model.MemoryOwnerTypeCaller, UpdatedAt: base}
+	// app 条目更新时间更新，但 app_user 作用域必须覆盖 app。
+	appItem := model.MemoryItem{ID: 1, ItemKey: "k1", Title: "app 版本", Layer: model.MemoryLayerDetached, OwnerType: model.MemoryOwnerTypeApp, UpdatedAt: base.Add(time.Hour)}
+	userItem := model.MemoryItem{ID: 2, ItemKey: "k1", Title: "user 版本", Layer: model.MemoryLayerDetached, OwnerType: model.MemoryOwnerTypeAppUser, UpdatedAt: base}
+	other := model.MemoryItem{ID: 3, ItemKey: "k2", Title: "独立事实", Layer: model.MemoryLayerDetached, OwnerType: model.MemoryOwnerTypeApp, UpdatedAt: base}
 
-	merged := MergeMemoryItems([]model.MemoryItem{callerItem, userItem, other})
+	merged := MergeMemoryItems([]model.MemoryItem{appItem, userItem, other})
 	if len(merged) != 2 {
 		t.Fatalf("same itemKey should merge, got %d items", len(merged))
 	}
 	if merged[0].ID != 2 {
-		t.Fatalf("caller_user item should override caller item, got id=%d", merged[0].ID)
+		t.Fatalf("app_user item should override app item, got id=%d", merged[0].ID)
 	}
 	if merged[1].ID != 3 {
 		t.Fatalf("unique item should survive, got id=%d", merged[1].ID)

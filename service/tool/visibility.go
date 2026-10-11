@@ -10,14 +10,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// FindVisibleToolsByCallerAndRoutes 在原有启用状态和路由查询结果上，再按当前用户名过滤受限工具。
-func FindVisibleToolsByCallerAndRoutes(
+// FindVisibleToolsByAppAndRoutes 在原有启用状态和路由查询结果上，再按当前用户名过滤受限工具。
+func FindVisibleToolsByAppAndRoutes(
 	ctx *gin.Context,
-	callerKey string,
+	scopeKeys []string,
 	routePrefixes []string,
 	userName string,
 ) ([]model.Tool, error) {
-	tools, err := model.FindToolsByCallerAndRoutes(ctx, callerKey, routePrefixes)
+	tools, err := model.FindToolsByAppAndRoutes(ctx, scopeKeys, routePrefixes)
 	if err != nil || len(tools) == 0 {
 		return tools, err
 	}
@@ -33,8 +33,8 @@ func FindVisibleToolsByCallerAndRoutes(
 
 	visible, filteredCount := filterToolsByUserName(ctx, tools, policies, strings.TrimSpace(userName))
 	if filteredCount > 0 {
-		zlog.Infof(ctx, "[ToolUserPolicy.Filter] callerKey=%s, candidateCount=%d, policyCount=%d, filteredCount=%d",
-			callerKey, len(tools), len(policies), filteredCount)
+		zlog.Infof(ctx, "[ToolUserPolicy.Filter] scopeKeys=%v, candidateCount=%d, policyCount=%d, filteredCount=%d",
+			scopeKeys, len(tools), len(policies), filteredCount)
 	}
 	return visible, nil
 }

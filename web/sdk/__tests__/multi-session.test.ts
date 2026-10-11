@@ -81,7 +81,7 @@ function createMockFetch() {
             seq: 1,
             runId: `run_${body.sessionId}`,
             sessionId: body.sessionId,
-            payload: { callerKey: 'report-editor', routeValues: [], type: 'chat', userPrompt: '历史问题' },
+            payload: { appKey: 'report-editor', routeValues: [], type: 'chat', userPrompt: '历史问题' },
             createdAt: '2026-09-30 10:00:00',
           },
         ],
@@ -152,7 +152,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('多会话切换：各会话独立连接，subscribe 收到切换后的状态', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
 
@@ -169,7 +169,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('run 活跃时切换会话：原会话连接保持、后台事件继续累积，切回即见', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_multi_a');
@@ -202,7 +202,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('run 活跃时允许新建会话：返回 true 且原会话状态不受影响', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_multi_a');
@@ -222,7 +222,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('多会话并行 run：各连接发出各自的 run 消息，互不干扰', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
 
@@ -249,7 +249,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
     // 只 fake 定时器：fake-indexeddb 依赖 microtask/setImmediate，全量 fake 会卡死 await
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     try {
-      client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+      client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
       // 手动驱动 FakeWebSocket 的异步 open（fake timers 下 setTimeout 不再自动跑；
       // 不用 runAllTimers：WS 心跳是无限 ticker，会触发 abort）
       client.connect();
@@ -290,7 +290,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('草稿 run 拿到 sessionId 后转正：后续事件与状态归属该会话', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
 
@@ -304,7 +304,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('deleteSession：调 REST、dispose 该会话 runtime，删当前会话后切到草稿', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_del_cur');
@@ -317,7 +317,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
     const calls = ((globalThis.fetch as any).mock.calls as Array<[string, RequestInit]>)
       .filter(([url]) => new URL(url, 'http://test').pathname === '/react/session/delete');
     expect(calls).toHaveLength(1);
-    expect(JSON.parse(calls[0][1].body)).toMatchObject({ sessionId: 'session_del_cur', callerKey: 'report-editor' });
+    expect(JSON.parse(calls[0][1].body)).toMatchObject({ sessionId: 'session_del_cur', appKey: 'report-editor' });
 
     // runtime 已摘除且连接断开；视图切到草稿（sessionId 置空）
     expect((client as any).runtimes.get('session_del_cur')).toBeUndefined();
@@ -326,7 +326,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('deleteSession 删非当前会话：不影响当前视图', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_del_other');
@@ -343,7 +343,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('forkSession：调 REST 带轮次截断点，成功后切到新会话并恢复历史', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
     await client.switchSession('session_fork_src');
@@ -359,7 +359,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
       sessionId: 'session_fork_src',
       throughRunId: 'run_cut',
       inclusive: true,
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
     });
 
     // 视图切到新会话且历史已懒恢复（/session/events mock 的 run 事件还原出用户消息）
@@ -371,7 +371,7 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
   });
 
   it('renameSession：调 REST 并把归一化标题写入本地会话缓存', async () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     client.connect();
     await waitForConnected(client);
 
@@ -384,12 +384,12 @@ describe('AgentClient 多会话（每会话独立连接 + 状态分片）', () =
     expect(JSON.parse(calls[0][1].body)).toMatchObject({
       sessionId: 'session_rename_target',
       title: '  重命名后  ',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
     });
     // 本地缓存（调用方作用域列表）已带新标题
     const cached = await client.listCachedSessions();
     const found = cached.find((session) => session.sessionId === 'session_rename_target');
     expect(found?.title).toBe('重命名后');
-    expect(found?.callerKey).toBe('report-editor');
+    expect(found?.appKey).toBe('report-editor');
   });
 });

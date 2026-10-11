@@ -101,7 +101,7 @@ func DeleteTool(ctx *gin.Context) {
 
 // ListTools godoc
 // @Summary 查询工具列表
-// @Description 根据callerKey查询该调用方下的所有工具列表
+// @Description 根据appKey查询该调用方下的所有工具列表
 // @Tags Tool
 // @Accept json
 // @Produce json
@@ -118,7 +118,7 @@ func ListTools(ctx *gin.Context) {
 		return
 	}
 
-	tools, err := toolService.ListByCallerAndRoute(ctx, req.CallerKey, req.RouteValues)
+	tools, err := toolService.ListByAppAndRoute(ctx, req.AppKey, req.RouteValues)
 	if err != nil {
 		zlog.Errorf(ctx, "[Tool.List] 查询失败: %v", err)
 		components.RenderJsonFail(ctx, err)

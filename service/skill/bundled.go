@@ -4,8 +4,8 @@ package skill
 // 方案 docs/参考ZCode的运行时增强方案.md）：
 //
 //   - 技能正文随仓库 bundled-skills/ 目录经 go:embed 打进二进制，与 web/sdk/dist 同模式；
-//   - caller 创建（service/caller）与服务启动（main 种子存量 caller）时幂等导入；
-//   - DB 同名行（同 caller_key + name）存在即跳过——用户覆盖优先，内置内容不再回写；
+//   - app 创建（service/app）与服务启动（main 种子存量 app）时幂等导入；
+//   - DB 同名行（同 app_key + name）存在即跳过——用户覆盖优先，内置内容不再回写；
 //   - 单条技能导入失败只记日志不阻断（种子是增强不是依赖），其余技能继续。
 //
 // 与 Bundle 安装的区别：Bundle 是用户/管理员安装的可回滚插件包；内置技能是随版本演进的
@@ -79,10 +79,10 @@ func readBundledSkillBody(entry bundledSkillEntry) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// EnsureBundledSkillsForCaller 为一个 caller 幂等导入内置技能：
-// 同 caller_key + name 的活跃行存在即跳过（用户覆盖优先），缺失才新建。
+// EnsureBundledSkillsForApp 为一个 app 幂等导入内置技能：
+// 同 app_key + name 的活跃行存在即跳过（用户覆盖优先），缺失才新建。
 // 返回本次新建的技能数；错误按条隔离，单条失败不影响其余。
-func EnsureBundledSkillsForCaller(ctx *gin.Context, callerKey, createdBy string) (int, error) {
+func EnsureBundledSkillsForApp(ctx *gin.Context, appKey, createdBy string) (int, error) {
 	manifest := loadBundledSkillManifest()
 	if len(manifest.Skills) == 0 {
 		return 0, nil
@@ -93,12 +93,12 @@ func EnsureBundledSkillsForCaller(ctx *gin.Context, callerKey, createdBy string)
 		if strings.TrimSpace(entry.Name) == "" {
 			continue
 		}
-		existing, err := model.FindActiveSkillByCallerAndName(ctx, callerKey, entry.Name)
+		existing, err := model.FindActiveSkillByAppAndName(ctx, appKey, entry.Name)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
-			zlog.Warnf(ctx, "[Skill.Bundled] 查询已有技能失败(跳过): caller=%s, name=%s, err=%v", callerKey, entry.Name, err)
+			zlog.Warnf(ctx, "[Skill.Bundled] 查询已有技能失败(跳过): app=%s, name=%s, err=%v", appKey, entry.Name, err)
 			continue
 		}
 		if existing != nil {
@@ -106,7 +106,7 @@ func EnsureBundledSkillsForCaller(ctx *gin.Context, callerKey, createdBy string)
 		}
 		body, err := readBundledSkillBody(entry)
 		if err != nil {
-			zlog.Warnf(ctx, "[Skill.Bundled] 内置技能正文读取失败(跳过): caller=%s, file=%s, err=%v", callerKey, entry.File, err)
+			zlog.Warnf(ctx, "[Skill.Bundled] 内置技能正文读取失败(跳过): app=%s, file=%s, err=%v", appKey, entry.File, err)
 			continue
 		}
 		enabled := 1
@@ -118,7 +118,7 @@ func EnsureBundledSkillsForCaller(ctx *gin.Context, callerKey, createdBy string)
 			BusinessContext:  entry.BusinessContext,
 			Triggers:         entry.Triggers,
 			Content:          body,
-			CallerKey:        callerKey,
+			AppKey:        appKey,
 			RouteValues:      []string{},
 			Status:           &enabled,
 		}, createdBy)
@@ -126,11 +126,11 @@ func EnsureBundledSkillsForCaller(ctx *gin.Context, callerKey, createdBy string)
 			if firstErr == nil {
 				firstErr = err
 			}
-			zlog.Warnf(ctx, "[Skill.Bundled] 内置技能导入失败(跳过): caller=%s, name=%s, err=%v", callerKey, entry.Name, err)
+			zlog.Warnf(ctx, "[Skill.Bundled] 内置技能导入失败(跳过): app=%s, name=%s, err=%v", appKey, entry.Name, err)
 			continue
 		}
 		created++
-		zlog.Infof(ctx, "[Skill.Bundled] 内置技能已导入: caller=%s, name=%s", callerKey, entry.Name)
+		zlog.Infof(ctx, "[Skill.Bundled] 内置技能已导入: app=%s, name=%s", appKey, entry.Name)
 	}
 	return created, firstErr
 }
@@ -150,32 +150,32 @@ func bundledSkillDescription(entry bundledSkillEntry) string {
 	return strings.Join(parts, "；")
 }
 
-// SeedBundledSkillsForAllCallers 服务启动时为全部已有 caller 幂等补种内置技能（版本升级后生效）。
+// SeedBundledSkillsForAllApps 服务启动时为全部已有 app 幂等补种内置技能（版本升级后生效）。
 // 使用脱离 HTTP 连接的 headless gin ctx；失败整体降级为日志，不阻断启动。
-func SeedBundledSkillsForAllCallers() {
+func SeedBundledSkillsForAllApps() {
 	manifest := loadBundledSkillManifest()
 	if len(manifest.Skills) == 0 {
 		return
 	}
 	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/internal/bundled-skills-seed", nil).WithContext(context.Background())
-	callers, err := model.ListCallers(ginCtx)
+	apps, err := model.ListApps(ginCtx)
 	if err != nil {
-		zlog.Warnf(nil, "[Skill.Bundled] 启动种子读取 caller 列表失败(跳过): err=%v", err)
+		zlog.Warnf(nil, "[Skill.Bundled] 启动种子读取 app 列表失败(跳过): err=%v", err)
 		return
 	}
-	// default 是默认作用域伪 caller（全 caller 可见），同样补种一份。
-	scopes := []string{model.DefaultCallerKey}
-	for _, caller := range callers {
-		scopes = append(scopes, caller.CallerKey)
+	// default 是默认作用域伪 app（全 app 可见），同样补种一份。
+	scopes := []string{model.DefaultAppKey}
+	for _, app := range apps {
+		scopes = append(scopes, app.AppKey)
 	}
-	for _, callerKey := range scopes {
-		created, err := EnsureBundledSkillsForCaller(ginCtx, callerKey, "bundled-skills-seed")
+	for _, appKey := range scopes {
+		created, err := EnsureBundledSkillsForApp(ginCtx, appKey, "bundled-skills-seed")
 		if err != nil {
-			zlog.Warnf(nil, "[Skill.Bundled] 启动种子部分失败(继续): caller=%s, err=%v", callerKey, err)
+			zlog.Warnf(nil, "[Skill.Bundled] 启动种子部分失败(继续): app=%s, err=%v", appKey, err)
 		}
 		if created > 0 {
-			zlog.Infof(nil, "[Skill.Bundled] 启动种子完成: caller=%s, created=%d", callerKey, created)
+			zlog.Infof(nil, "[Skill.Bundled] 启动种子完成: app=%s, created=%d", appKey, created)
 		}
 	}
 }

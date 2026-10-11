@@ -10,8 +10,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// CallerConfigSnapshot 是 Caller 配置复制所需的完整资源快照。
-type CallerConfigSnapshot struct {
+// AppConfigSnapshot 是 App 配置复制所需的完整资源快照。
+type AppConfigSnapshot struct {
 	Skills           []Skill
 	SystemPrompts    []SystemPrompt
 	Tools            []Tool
@@ -19,61 +19,61 @@ type CallerConfigSnapshot struct {
 	ApiKeys          []ApiKey
 }
 
-// GetCallerByKeyUnscoped 查询 Caller，并包含软删除记录。
-func GetCallerByKeyUnscoped(ctx *gin.Context, callerKey string) (*Caller, error) {
-	var caller Caller
+// GetAppByKeyUnscoped 查询 App，并包含软删除记录。
+func GetAppByKeyUnscoped(ctx *gin.Context, appKey string) (*App, error) {
+	var app App
 	err := GetLLMDB().WithContext(ctx).Unscoped().
-		Where("caller_key = ?", callerKey).
-		First(&caller).Error
+		Where("app_key = ?", appKey).
+		First(&app).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
-	return &caller, nil
+	return &app, nil
 }
 
-// GetCallerByKeyWithDB 在指定数据库会话中查询未删除 Caller。
-func GetCallerByKeyWithDB(tx *gorm.DB, callerKey string) (*Caller, error) {
-	var caller Caller
+// GetAppByKeyWithDB 在指定数据库会话中查询未删除 App。
+func GetAppByKeyWithDB(tx *gorm.DB, appKey string) (*App, error) {
+	var app App
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("caller_key = ?", callerKey).First(&caller).Error
+		Where("app_key = ?", appKey).First(&app).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
-	return &caller, nil
+	return &app, nil
 }
 
-// GetCallerByKeyUnscopedWithDB 在指定数据库会话中查询 Caller，并包含软删除记录。
-func GetCallerByKeyUnscopedWithDB(tx *gorm.DB, callerKey string) (*Caller, error) {
-	var caller Caller
+// GetAppByKeyUnscopedWithDB 在指定数据库会话中查询 App，并包含软删除记录。
+func GetAppByKeyUnscopedWithDB(tx *gorm.DB, appKey string) (*App, error) {
+	var app App
 	err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("caller_key = ?", callerKey).First(&caller).Error
+		Where("app_key = ?", appKey).First(&app).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
-	return &caller, nil
+	return &app, nil
 }
 
-// LoadCallerConfigSnapshotWithDB 加载 Caller 下所有未删除配置资源。
-func LoadCallerConfigSnapshotWithDB(tx *gorm.DB, callerKey string) (*CallerConfigSnapshot, error) {
-	snapshot := &CallerConfigSnapshot{}
+// LoadAppConfigSnapshotWithDB 加载 App 下所有未删除配置资源。
+func LoadAppConfigSnapshotWithDB(tx *gorm.DB, appKey string) (*AppConfigSnapshot, error) {
+	snapshot := &AppConfigSnapshot{}
 	queries := []struct {
 		dest  interface{}
 		where string
 		args  []interface{}
 	}{
-		{dest: &snapshot.Skills, where: "caller_key = ?", args: []interface{}{callerKey}},
-		{dest: &snapshot.SystemPrompts, where: "caller_key = ?", args: []interface{}{callerKey}},
-		{dest: &snapshot.Tools, where: "caller_key = ?", args: []interface{}{callerKey}},
-		{dest: &snapshot.ApiKeys, where: "caller_key = ?", args: []interface{}{callerKey}},
+		{dest: &snapshot.Skills, where: "app_key = ?", args: []interface{}{appKey}},
+		{dest: &snapshot.SystemPrompts, where: "app_key = ?", args: []interface{}{appKey}},
+		{dest: &snapshot.Tools, where: "app_key = ?", args: []interface{}{appKey}},
+		{dest: &snapshot.ApiKeys, where: "app_key = ?", args: []interface{}{appKey}},
 	}
 	for _, query := range queries {
 		if err := tx.Where(query.where, query.args...).Find(query.dest).Error; err != nil {
@@ -93,9 +93,9 @@ func LoadCallerConfigSnapshotWithDB(tx *gorm.DB, callerKey string) (*CallerConfi
 	return snapshot, nil
 }
 
-// CreateCallerConfigWithDB 在指定事务中写入目标 Caller 和全部配置资源。
-func CreateCallerConfigWithDB(tx *gorm.DB, caller *Caller, snapshot *CallerConfigSnapshot) error {
-	if err := tx.Create(caller).Error; err != nil {
+// CreateAppConfigWithDB 在指定事务中写入目标 App 和全部配置资源。
+func CreateAppConfigWithDB(tx *gorm.DB, app *App, snapshot *AppConfigSnapshot) error {
+	if err := tx.Create(app).Error; err != nil {
 		return components.ErrorDbInsert.Wrap(err)
 	}
 	if len(snapshot.Skills) > 0 {
@@ -126,12 +126,12 @@ func CreateCallerConfigWithDB(tx *gorm.DB, caller *Caller, snapshot *CallerConfi
 	return nil
 }
 
-// SoftDeleteCallerConfigsWithDB 软删除单个 Caller 及其聚合配置，并返回各资源受影响行数。
-func SoftDeleteCallerConfigsWithDB(tx *gorm.DB, callerKey string) (map[string]int64, error) {
+// SoftDeleteAppConfigsWithDB 软删除单个 App 及其聚合配置，并返回各资源受影响行数。
+func SoftDeleteAppConfigsWithDB(tx *gorm.DB, appKey string) (map[string]int64, error) {
 	stats := map[string]int64{}
 	var toolIDs []string
 	if err := tx.Model(&Tool{}).
-		Where("caller_key = ?", callerKey).
+		Where("app_key = ?", appKey).
 		Pluck("tool_id", &toolIDs).Error; err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
 	}
@@ -143,12 +143,12 @@ func SoftDeleteCallerConfigsWithDB(tx *gorm.DB, callerKey string) (map[string]in
 		args  []interface{}
 	}{
 		{key: "toolUserPolicies", model: &ToolUserPolicy{}, where: "tool_id IN ?", args: []interface{}{toolIDs}},
-		{key: "skills", model: &Skill{}, where: "caller_key = ?", args: []interface{}{callerKey}},
-		{key: "systemPrompts", model: &SystemPrompt{}, where: "caller_key = ?", args: []interface{}{callerKey}},
-		{key: "tools", model: &Tool{}, where: "caller_key = ?", args: []interface{}{callerKey}},
-		{key: "apiKeys", model: &ApiKey{}, where: "caller_key = ?", args: []interface{}{callerKey}},
-		{key: "mcpServerCallers", model: &McpServerCaller{}, where: "caller_key = ?", args: []interface{}{callerKey}},
-		{key: "callers", model: &Caller{}, where: "caller_key = ?", args: []interface{}{callerKey}},
+		{key: "skills", model: &Skill{}, where: "app_key = ?", args: []interface{}{appKey}},
+		{key: "systemPrompts", model: &SystemPrompt{}, where: "app_key = ?", args: []interface{}{appKey}},
+		{key: "tools", model: &Tool{}, where: "app_key = ?", args: []interface{}{appKey}},
+		{key: "apiKeys", model: &ApiKey{}, where: "app_key = ?", args: []interface{}{appKey}},
+		{key: "mcpServerApps", model: &McpServerApp{}, where: "app_key = ?", args: []interface{}{appKey}},
+		{key: "apps", model: &App{}, where: "app_key = ?", args: []interface{}{appKey}},
 	}
 	for _, item := range deletes {
 		if item.key == "toolUserPolicies" && len(toolIDs) == 0 {

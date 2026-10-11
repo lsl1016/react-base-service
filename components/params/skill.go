@@ -59,7 +59,7 @@ type SkillChatAttachment struct {
 
 // SkillChatReq 核心对话请求
 type SkillChatReq struct {
-	CallerKey     string               `json:"callerKey"`
+	AppKey     string               `json:"appKey"`
 	RouteValues   []string             `json:"routeValues"`
 	UserPrompt    string               `json:"userPrompt"`
 	ContextInfo   json.RawMessage      `json:"contextInfo" swaggertype:"object"`
@@ -80,7 +80,7 @@ type SkillChatReq struct {
 
 // SkillSessionListReq 会话列表请求
 type SkillSessionListReq struct {
-	CallerKey   string   `json:"callerKey" binding:"required"`
+	AppKey   string   `json:"appKey" binding:"required"`
 	RouteValues []string `json:"routeValues"`
 	Keyword     string   `json:"keyword"`
 }
@@ -88,7 +88,7 @@ type SkillSessionListReq struct {
 // SkillSessionMessagesReq 会话消息请求
 type SkillSessionMessagesReq struct {
 	SessionID   string   `json:"sessionId"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 }
 
@@ -121,41 +121,48 @@ type SkillMessageFeedbackResp struct {
 	ProblemFeedbackUpdatedAt string `json:"problemFeedbackUpdatedAt,omitempty"`
 }
 
-// RegisterCallerReq Caller 注册请求
-type RegisterCallerReq struct {
-	CallerKey   string `json:"callerKey" binding:"required"`
+// RegisterAppReq App 注册请求
+type RegisterAppReq struct {
+	AppKey   string `json:"appKey" binding:"required"`
 	Name        string `json:"name" binding:"required"`
 	Description string `json:"description"`
 	Platform    string `json:"platform" binding:"required"`
-	// AllowPlan create_plan/Plan 模式 caller 级开关：nil=跟随全局配置；0=强制关；1=强制开。
+	// AllowPlan create_plan/Plan 模式 app 级开关：nil=跟随全局配置；0=强制关；1=强制开。
 	AllowPlan *int `json:"allowPlan" binding:"omitempty,min=0,max=1"`
+	// BindDefaultCapabilities 是否绑定 default 伪 app 的默认能力池（存量工具/Skill）：
+	// nil=默认绑定（1）；false=不绑定，该 app 只解析自身名下的工具与 Skill。
+	BindDefaultCapabilities *bool `json:"bindDefaultCapabilities"`
 }
 
-// UpdateCallerReq Caller 更新请求
-type UpdateCallerReq struct {
-	CallerKey   string `json:"callerKey" binding:"required"`
+// UpdateAppReq App 更新请求
+type UpdateAppReq struct {
+	AppKey   string `json:"appKey" binding:"required"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Platform    string `json:"platform"`
 	Status      *int   `json:"status"`
-	// AllowPlan create_plan/Plan 模式 caller 级开关：nil=不更新；0=强制关；1=强制开。
+	// AllowPlan create_plan/Plan 模式 app 级开关：nil=不更新；0=强制关；1=强制开。
 	// 恢复「跟随全局」需直接置库 allow_plan=NULL（API 暂不提供该语义）。
 	AllowPlan *int `json:"allowPlan" binding:"omitempty,min=0,max=1"`
+	// BindDefaultCapabilities 是否绑定默认能力池：nil=不更新；切换后对「下一个 run」生效。
+	BindDefaultCapabilities *bool `json:"bindDefaultCapabilities"`
 }
 
-// ListCallersReq Caller 列表请求（预留扩展）
-type ListCallersReq struct{}
+// ListAppsReq App 列表请求（预留扩展）
+type ListAppsReq struct{}
 
-// CallerResp Caller 响应
-type CallerResp struct {
-	CallerKey   string `json:"callerKey"`
+// AppResp App 响应
+type AppResp struct {
+	AppKey   string `json:"appKey"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Platform    string `json:"platform"`
-	// AllowPlan create_plan/Plan 模式 caller 级开关：nil=跟随全局配置；0=强制关；1=强制开。
-	AllowPlan *int   `json:"allowPlan"`
-	Status    int    `json:"status"`
-	CreatedAt string `json:"createdAt"`
+	// AllowPlan create_plan/Plan 模式 app 级开关：nil=跟随全局配置；0=强制关；1=强制开。
+	AllowPlan *int `json:"allowPlan"`
+	// BindDefaultCapabilities 是否绑定 default 伪 app 的默认能力池（1=绑定，0=不绑定）。
+	BindDefaultCapabilities int    `json:"bindDefaultCapabilities"`
+	Status                  int    `json:"status"`
+	CreatedAt               string `json:"createdAt"`
 }
 
 // CreateSkillReq Skill 创建请求
@@ -171,7 +178,7 @@ type CreateSkillReq struct {
 	Triggers []string `json:"triggers"`
 	// Content SKILL.md 正文（文件导入形态）；get_skill 全量返回时注入模型。
 	Content     string   `json:"content"`
-	CallerKey   string   `json:"callerKey" binding:"required"`
+	AppKey   string   `json:"appKey" binding:"required"`
 	RouteValues []string `json:"routeValues" binding:"required"`
 	Status      *int     `json:"status" binding:"required"`
 	IsDefault   *int     `json:"isDefault"`
@@ -194,9 +201,9 @@ type UpdateSkillReq struct {
 }
 
 // ImportSkillReq SKILL.md 粘贴导入请求（P2-2）；
-// frontmatter 中的 caller_key/route_values 优先，缺省回退请求体字段。
+// frontmatter 中的 app_key/route_values 优先，缺省回退请求体字段。
 type ImportSkillReq struct {
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	Status      *int     `json:"status"`
 	Markdown    string   `json:"markdown" binding:"required"`
@@ -208,9 +215,9 @@ type DeleteSkillReq struct {
 }
 
 // ListSkillsReq Skill 列表请求
-// ListSkillsReq Skill 列表请求；callerKey 为空表示跨 caller 列出全部（管理控制台「全部」视图）。
+// ListSkillsReq Skill 列表请求；appKey 为空表示跨 app 列出全部（管理控制台「全部」视图）。
 type ListSkillsReq struct {
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues" binding:"required"`
 }
 
@@ -231,7 +238,7 @@ type SkillResp struct {
 	PromptSupplement   string   `json:"promptSupplement"`
 	Triggers           []string `json:"triggers"`
 	Content            string   `json:"content"`
-	CallerKey          string   `json:"callerKey"`
+	AppKey          string   `json:"appKey"`
 	RouteValues        []string `json:"routeValues"`
 	IsDefault          int      `json:"isDefault"`
 	Status             int      `json:"status"`
@@ -255,7 +262,7 @@ type RegisterToolReq struct {
 	Name        string          `json:"name" binding:"required"`
 	Description string          `json:"description" binding:"required"`
 	ToolType    string          `json:"toolType" binding:"required"`
-	CallerKey   string          `json:"callerKey" binding:"required"`
+	AppKey   string          `json:"appKey" binding:"required"`
 	RouteValues []string        `json:"routeValues" binding:"required"`
 	Config      json.RawMessage `json:"config" binding:"required" swaggertype:"object"`
 	// PermissionMode 危险操作确认模式：auto（默认）/confirm/confirm_risky；空按 auto。
@@ -280,9 +287,9 @@ type DeleteToolReq struct {
 	ToolID string `json:"toolId" binding:"required"`
 }
 
-// ListToolsReq Tool 列表请求；callerKey 为空表示跨 caller 列出全部（管理控制台「全部」视图）。
+// ListToolsReq Tool 列表请求；appKey 为空表示跨 app 列出全部（管理控制台「全部」视图）。
 type ListToolsReq struct {
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues" binding:"required"`
 }
 
@@ -297,7 +304,7 @@ type ToolResp struct {
 	Name           string          `json:"name"`
 	Description    string          `json:"description"`
 	ToolType       string          `json:"toolType"`
-	CallerKey      string          `json:"callerKey"`
+	AppKey      string          `json:"appKey"`
 	RouteValues    []string        `json:"routeValues"`
 	Config         json.RawMessage `json:"config" swaggertype:"object"`
 	PermissionMode string          `json:"permissionMode"`
@@ -312,7 +319,7 @@ type ToolResp struct {
 
 // RegisterApiKeyReq API Key 注册请求
 type RegisterApiKeyReq struct {
-	CallerKey   string   `json:"callerKey" binding:"required"`
+	AppKey   string   `json:"appKey" binding:"required"`
 	RouteValues []string `json:"routeValues" binding:"required"`
 	Name        string   `json:"name" binding:"required"`
 	ApiKey      string   `json:"apiKey" binding:"required"`
@@ -334,7 +341,7 @@ type DeleteApiKeyReq struct {
 
 // ListApiKeysReq API Key 列表请求
 type ListApiKeysReq struct {
-	CallerKey   string   `json:"callerKey" binding:"required"`
+	AppKey   string   `json:"appKey" binding:"required"`
 	RouteValues []string `json:"routeValues" binding:"required"`
 }
 
@@ -346,7 +353,7 @@ type ApiKeyDetailReq struct {
 // ApiKeyResp API Key 响应
 type ApiKeyResp struct {
 	ID          uint     `json:"id"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	Name        string   `json:"name"`
 	ApiKey      string   `json:"apiKey"`
@@ -361,7 +368,7 @@ type ApiKeyResp struct {
 
 // RegisterSystemPromptReq 系统提示词注册请求
 type RegisterSystemPromptReq struct {
-	CallerKey   string   `json:"callerKey" binding:"required"`
+	AppKey   string   `json:"appKey" binding:"required"`
 	RouteValues []string `json:"routeValues" binding:"required"`
 	Name        string   `json:"name" binding:"required"`
 	Content     string   `json:"content" binding:"required"`
@@ -381,9 +388,9 @@ type DeleteSystemPromptReq struct {
 	ID uint `json:"id" binding:"required"`
 }
 
-// ListSystemPromptsReq 系统提示词列表请求；callerKey 为空表示跨 caller 列出全部（管理控制台「全部」视图）。
+// ListSystemPromptsReq 系统提示词列表请求；appKey 为空表示跨 app 列出全部（管理控制台「全部」视图）。
 type ListSystemPromptsReq struct {
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues" binding:"required"`
 }
 
@@ -395,7 +402,7 @@ type SystemPromptDetailReq struct {
 // SystemPromptResp 系统提示词响应
 type SystemPromptResp struct {
 	ID          uint     `json:"id"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	Name        string   `json:"name"`
 	Content     string   `json:"content"`

@@ -11,7 +11,6 @@ import (
 	"react-base-service/components"
 	"react-base-service/components/metrics"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 	model "react-base-service/models/llm"
 	"react-base-service/service/workspace"
 
@@ -25,7 +24,7 @@ type PreparedExternalRun struct {
 	RunID        string
 	SessionID    string
 	UserName     string
-	CallerKey    string
+	AppKey       string
 	ModelKey     string
 	ModelVersion string
 	UserPrompt   string
@@ -77,13 +76,13 @@ func PrepareExternalRun(ctx *gin.Context, payload params.ReactRunPayload, sessio
 	if err != nil {
 		return nil, err
 	}
-	// Plan 能力闸门（caller 级 allow_plan）：显式 executionMode=plan 的新 Plan 入口在
-	// caller 关闭 Plan 能力时拒绝。存量 WAIT 计划的 resume/retry/skip/cancel 走
+	// Plan 能力闸门（app 级 allow_plan）：显式 executionMode=plan 的新 Plan 入口在
+	// app 关闭 Plan 能力时拒绝。存量 WAIT 计划的 resume/retry/skip/cancel 走
 	// RestoreExternalRun（生命周期收尾，不属新计划能力），不受本闸门影响。
-	if payload.ExecutionMode == params.ReactExecutionModePlan && !effectiveAllowPlan(req.callerAllowPlan) {
-		return nil, components.ErrorParamInvalid.Sprintf("caller %s 未开启 Plan 能力（allow_plan=0），不支持 executionMode=plan", payload.CallerKey)
+	if payload.ExecutionMode == params.ReactExecutionModePlan && !effectiveAllowPlan(req.appAllowPlan) {
+		return nil, components.ErrorParamInvalid.Sprintf("app %s 未开启 Plan 能力（allow_plan=0），不支持 executionMode=plan", payload.AppKey)
 	}
-	compactCfg := conf.GetReactRuntimeConfig().ContextCompact
+	compactCfg := appRuntimeConfig(ctx).ContextCompact
 	initialTools := runtimeToolDefinitions(req, executionProfileForRun(req))
 	initialSystemContent := buildReactSystemContent(req.systemPrompt, renderToolIndexSummary(req.toolsIndexSnapshotJSON), renderSkillIndexSummary(req.skillsIndexSnapshotJSON), req.memoryContext, req.graphMemoryContext)
 	if err := checkEntryInputTokens(initialSystemContent, req.modelUserMessage, initialTools, compactCfg.TokenTrigger); err != nil {
@@ -93,12 +92,12 @@ func PrepareExternalRun(ctx *gin.Context, payload params.ReactRunPayload, sessio
 	if err != nil {
 		return nil, err
 	}
-	if req.callerRuntimeContext.SessionID == "" {
-		req.callerRuntimeContext.SessionID = resolvedSessionID
+	if req.appRuntimeContext.SessionID == "" {
+		req.appRuntimeContext.SessionID = resolvedSessionID
 	}
 	return &PreparedExternalRun{
 		RunID: runID, SessionID: resolvedSessionID, UserName: req.userName,
-		CallerKey: req.payload.CallerKey, ModelKey: req.resolvedModelKey,
+		AppKey: req.payload.AppKey, ModelKey: req.resolvedModelKey,
 		ModelVersion: req.resolvedModelVersion, UserPrompt: req.payload.UserPrompt, req: req,
 	}, nil
 }
@@ -134,7 +133,7 @@ func RestoreExternalRun(ctx *gin.Context, runID string) (*PreparedExternalRun, e
 		return nil, fmt.Errorf("outer run user input not found")
 	}
 	payload := params.ReactRunPayload{
-		CallerKey:      run.CallerKey,
+		AppKey:         run.AppKey,
 		RouteValues:    parseRouteValues(run.RouteValues),
 		Type:           model.ReactSessionTypeChat,
 		UserPrompt:     prompt,
@@ -160,7 +159,7 @@ func RestoreExternalRun(ctx *gin.Context, runID string) (*PreparedExternalRun, e
 	}
 	return &PreparedExternalRun{
 		RunID: run.RunID, SessionID: run.SessionID, UserName: run.UserName,
-		CallerKey: run.CallerKey, ModelKey: run.ModelKey, ModelVersion: run.ModelVersion, UserPrompt: prompt, req: req,
+		AppKey: run.AppKey, ModelKey: run.ModelKey, ModelVersion: run.ModelVersion, UserPrompt: prompt, req: req,
 	}, nil
 }
 
@@ -170,7 +169,7 @@ func BeginPreparedRun(parent context.Context, prepared *PreparedExternalRun) (co
 	if parent == nil {
 		parent = context.Background()
 	}
-	runCtx, cancel := context.WithCancelCause(components.ContextWithCallerRuntime(parent, prepared.req.callerRuntimeContext))
+	runCtx, cancel := context.WithCancelCause(components.ContextWithAppRuntime(parent, prepared.req.appRuntimeContext))
 	registerReactRunCancel(prepared.RunID, cancel)
 	metrics.RunsActive.Inc()
 	return runCtx, func() {
@@ -274,7 +273,7 @@ func RunScopedStep(ctx *gin.Context, runCtx context.Context, prepared *PreparedE
 	base.modelUserMessageRef = reactMessageRef{RunID: stepRunID, MessageID: generateMessageID(), Seq: 1}
 	run := &model.ReactRun{
 		RunID: stepRunID, SessionID: prepared.SessionID, UserName: base.userName,
-		CallerKey: base.payload.CallerKey, RouteValues: base.routeValuesJSON,
+		AppKey: base.payload.AppKey, RouteValues: base.routeValuesJSON,
 		State: model.ReactRunStateRunning, StepIndex: 0, MaxSteps: normalizeMaxSteps(base.payload.MaxSteps),
 		ModelKey: base.resolvedModelKey, ModelVersion: base.resolvedModelVersion, ApiKey: base.apiKey,
 		ControlContextJSON: string(base.payload.ControlContext), LLMContextJSON: string(base.payload.LLMContext),

@@ -15,12 +15,12 @@ import (
 // Connection LLM 连接注册表：协议 + base url + api key 的自包含接入单元。
 // 设计（见 docs/模型配置优化方案.md §3.2/§3.4）：
 //   - 「连接」是模型配置的主体，模型（tblLlmUserModel.connection_id）与无 ModelHash
-//     运行路径（caller+route 前缀匹配）都引用连接取凭证与端点；
-//   - 它同时是旧 tblLlmApiKey（caller 级 key）的升维形态——多出 protocol/base_url
+//     运行路径（app+route 前缀匹配）都引用连接取凭证与端点；
+//   - 它同时是旧 tblLlmApiKey（app 级 key）的升维形态——多出 protocol/base_url
 //     两个字段，route_values 语义与旧表一致（JSON 数组，[]=通用）。
 type Connection struct {
 	ID          uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
-	CallerKey   string                `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey   string                `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues string                `json:"routeValues" gorm:"column:route_values"`
 	Name        string                `json:"name" gorm:"column:name;not null"`
 	Protocol    string                `json:"protocol" gorm:"column:protocol;not null;default:'openai'"`
@@ -68,11 +68,11 @@ func GetConnectionByID(ctx *gin.Context, id uint) (*Connection, error) {
 	return &c, nil
 }
 
-// ExistConnectionByCallerAndRoute 检查 caller+route 组合下是否已有连接（防重复注册）
-func ExistConnectionByCallerAndRoute(ctx *gin.Context, callerKey, routeValues string) (bool, error) {
+// ExistConnectionByAppAndRoute 检查 app+route 组合下是否已有连接（防重复注册）
+func ExistConnectionByAppAndRoute(ctx *gin.Context, appKey, routeValues string) (bool, error) {
 	var count int64
 	err := helpers.MysqlClientLLM.Model(&Connection{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ?", callerKey, routeValues).
+		Where("app_key = ? AND route_values = ?", appKey, routeValues).
 		Count(&count).Error
 	if err != nil {
 		return false, components.ErrorDbSelect.Wrap(err)
@@ -131,13 +131,13 @@ func MapConnectionStatusByIDs(ctx *gin.Context, ids []uint) (map[uint]int, error
 	return statusByID, nil
 }
 
-// FindConnectionsByCallerAndRoutes 查询启用中的连接：caller 精确命中 + 空 caller（全局）
-// 两类候选都返回，按 route_values 前缀匹配；调用方先取 caller 精确命中、再取全局兜底
+// FindConnectionsByAppAndRoutes 查询启用中的连接：app 精确命中 + 空 app（全局）
+// 两类候选都返回，按 route_values 前缀匹配；调用方先取 app 精确命中、再取全局兜底
 //（各取 route_values 最长者，与旧 tblLlmApiKey 解析口径一致）。
-func FindConnectionsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]Connection, error) {
+func FindConnectionsByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]Connection, error) {
 	var conns []Connection
 	err := helpers.MysqlClientLLM.Model(&Connection{}).WithContext(ctx).
-		Where("caller_key IN ? AND status = 1 AND route_values IN ?", []string{callerKey, ""}, routePrefixes).
+		Where("app_key IN ? AND status = 1 AND route_values IN ?", []string{appKey, ""}, routePrefixes).
 		Find(&conns).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)

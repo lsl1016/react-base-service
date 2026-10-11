@@ -36,7 +36,7 @@ func TestApplyToolGrants(t *testing.T) {
 }
 
 // TestDedupeToolBindings 验证基础集合同名去重：MCP 工具名须全局唯一，
-// 多 caller 名下同名 http 工具只保留排序靠前的一条（输入按 name,id 升序）。
+// 多 app 名下同名 http 工具只保留排序靠前的一条（输入按 name,id 升序）。
 func TestDedupeToolBindings(t *testing.T) {
 	got := dedupeToolBindings(nil, []ToolBinding{
 		{ToolID: "t3", Name: "search"},

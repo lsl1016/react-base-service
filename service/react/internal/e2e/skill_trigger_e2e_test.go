@@ -29,7 +29,7 @@ triggers:
 //
 //	REACT_DELEGATE_E2E=1 go test ./service/react/internal/e2e/ -run TestSkillTriggerE2E -v -timeout 300s
 //
-// 前置：react-base-mysql 容器已对 tblLlmSkill 加 triggers_json/content 列；caller=demo-app 已注册。
+// 前置：react-base-mysql 容器已对 tblLlmSkill 加 triggers_json/content 列；app=demo-app 已注册。
 // 验证点：导入带 triggers 的 SKILL.md 后——
 //   - 命中路径：用户消息含关键词时，落库的 modelMessage 追加了 skill-trigger-hint 块，
 //     且用户原文（content 字段，前端历史展示用）不受污染；
@@ -46,7 +46,7 @@ func TestSkillTriggerE2E(t *testing.T) {
 
 	ctx := newHeadlessGinContext("e2e-skill-trigger")
 	imported, err := skillService.ImportFromMarkdown(ctx, &params.ImportSkillReq{
-		CallerKey: "demo-app",
+		AppKey: "demo-app",
 		Markdown:  e2eSkillTriggerMarkdown,
 	}, "e2e")
 	if err != nil {
@@ -62,7 +62,7 @@ func TestSkillTriggerE2E(t *testing.T) {
 		t.Helper()
 		var events []params.ReactEvent
 		result, err := react.RunWithClientReaderContext(ctx, ctx.Request.Context(), params.ReactRunPayload{
-			CallerKey:   "demo-app",
+			AppKey:   "demo-app",
 			RouteValues: []string{},
 			Type:        model.ReactSessionTypeChat,
 			UserPrompt:  prompt,

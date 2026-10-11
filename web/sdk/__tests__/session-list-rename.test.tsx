@@ -14,7 +14,7 @@ import type { SessionMeta } from '../storage/event-ledger';
 function makeSession(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
     sessionId: 'session_s1',
-    callerKey: 'caller',
+    appKey: 'app',
     routeValues: [],
     type: 'chat',
     title: '旧标题',

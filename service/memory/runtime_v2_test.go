@@ -39,7 +39,7 @@ func memoryItemForRender(id uint, ownerType, layer, memoryType, title, content s
 	return model.MemoryItem{
 		ID:         id,
 		OwnerType:  ownerType,
-		OwnerKey:   "caller",
+		OwnerKey:   "app",
 		Layer:      layer,
 		MemoryType: memoryType,
 		Title:      title,
@@ -53,9 +53,9 @@ func memoryItemForRender(id uint, ownerType, layer, memoryType, title, content s
 func TestRenderRuntimeContextPreferenceSectionFirst(t *testing.T) {
 	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.Local)
 	items := []model.MemoryItem{
-		memoryItemForRender(1, model.MemoryOwnerTypeCaller, model.MemoryLayerResident, model.MemoryTypeFact, "项目口径", "系统是 AI 基座", 3, base),
-		memoryItemForRender(2, model.MemoryOwnerTypeCaller, model.MemoryLayerDetached, model.MemoryTypePreference, "称呼", "用户希望被称呼为老李", 5, base),
-		memoryItemForRender(3, model.MemoryOwnerTypeCaller, model.MemoryLayerDetached, model.MemoryTypeEvent, "方案决定", "截至 2026-09-20 确定采用 V4 协议", 3, base),
+		memoryItemForRender(1, model.MemoryOwnerTypeApp, model.MemoryLayerResident, model.MemoryTypeFact, "项目口径", "系统是 AI 基座", 3, base),
+		memoryItemForRender(2, model.MemoryOwnerTypeApp, model.MemoryLayerDetached, model.MemoryTypePreference, "称呼", "用户希望被称呼为老李", 5, base),
+		memoryItemForRender(3, model.MemoryOwnerTypeApp, model.MemoryLayerDetached, model.MemoryTypeEvent, "方案决定", "截至 2026-09-20 确定采用 V4 协议", 3, base),
 	}
 
 	rendered := RenderRuntimeContext(items, defaultRenderTestConfig())
@@ -74,8 +74,8 @@ func TestRenderRuntimeContextPreferenceSectionFirst(t *testing.T) {
 
 func TestRenderRuntimeContextPreferenceOrderAndBudgetFallback(t *testing.T) {
 	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.Local)
-	high := memoryItemForRender(11, model.MemoryOwnerTypeCaller, model.MemoryLayerDetached, model.MemoryTypePreference, "格式偏好", "用户喜欢先总结后展开", 5, base)
-	low := memoryItemForRender(12, model.MemoryOwnerTypeCaller, model.MemoryLayerDetached, model.MemoryTypePreference, "旧偏好", "这条偏好更新的时间更早且重要度更低", 2, base.Add(-time.Hour))
+	high := memoryItemForRender(11, model.MemoryOwnerTypeApp, model.MemoryLayerDetached, model.MemoryTypePreference, "格式偏好", "用户喜欢先总结后展开", 5, base)
+	low := memoryItemForRender(12, model.MemoryOwnerTypeApp, model.MemoryLayerDetached, model.MemoryTypePreference, "旧偏好", "这条偏好更新的时间更早且重要度更低", 2, base.Add(-time.Hour))
 
 	// 预算充足：两条按 importance 降序全文注入。
 	rendered := RenderRuntimeContext([]model.MemoryItem{low, high}, defaultRenderTestConfig())
@@ -95,7 +95,7 @@ func TestRenderRuntimeContextPreferenceOrderAndBudgetFallback(t *testing.T) {
 
 func TestRenderRuntimeContextFactDirectoryKeepsV1Format(t *testing.T) {
 	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.Local)
-	fact := memoryItemForRender(21, model.MemoryOwnerTypeCaller, model.MemoryLayerDetached, model.MemoryTypeFact, "部署形态", "服务部署在 K8s", 3, base)
+	fact := memoryItemForRender(21, model.MemoryOwnerTypeApp, model.MemoryLayerDetached, model.MemoryTypeFact, "部署形态", "服务部署在 K8s", 3, base)
 	rendered := RenderRuntimeContext([]model.MemoryItem{fact}, defaultRenderTestConfig())
 	require.Contains(t, rendered, "- #21 [部署形态] 服务部署在 K8s")
 	require.NotContains(t, rendered, "[fact]")

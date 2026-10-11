@@ -122,7 +122,7 @@ describe('EventReducer - Plan runtime', () => {
         runId: 'run_plan_history',
         sessionId: 'session_plan_history',
         payload: {
-          callerKey: 'demo',
+          appKey: 'demo',
           type: 'chat',
           userPrompt: '执行一个需要确认的任务',
           executionMode: 'plan',

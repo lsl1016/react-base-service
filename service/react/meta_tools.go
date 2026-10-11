@@ -22,7 +22,16 @@ import (
 
 // internalMetaToolDefinitions 定义 Runtime 内置工具（稳定 Meta Tool 集合）。
 // create_plan 不在此注册：其可见性按 run 执行档案判定（runtimeToolDefinitions），
-// 与执行侧 AllowsInternalTool 门控同口径（caller 级 allow_plan 覆盖 > 全局配置）。
+// 与执行侧 AllowsInternalTool 门控同口径（app 级 allow_plan 覆盖 > 全局配置）。
+//
+// 能力型内置工具的注册门控——一律「全局运行时设置 × 基础设施可用性」，不按 app 隔离
+// （内置工具对全部 app 统一可见或统一隐藏；app 隔离只作用于 MCP/HTTP/Client 业务工具）：
+//   - load_runtime_code：workspace 运行时设置（检索代码和工作区开关，默认启用）× resolvers；
+//   - web_fetch / web_search：web 运行时设置（默认启用）× searxng 连接参数；
+//   - memory 三工具：memory 运行时设置（与注入/抽取同一开关，默认关，面板可开）；
+//   - graph_memory_*：graphiti endpoint 已配置即注册（无独立开关）。
+//
+// 工具 schema/描述在代码中维护；设置生效优先级 DB 覆盖 > custom.yaml > 默认。
 func internalMetaToolDefinitions() []llm.ToolDefinition {
 	definitions := []llm.ToolDefinition{
 		// list_tools 已软下线：Business Tool 轻量索引在 run 初始化阶段注入 system 前缀，完整 parameters 仍通过 get_tool 按需加载。
@@ -41,24 +50,24 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 		readAttachmentToolDefinition(),
 		inspectAttachmentToolDefinition(),
 	}
-	// workspace.enabled=true 时注册 load_runtime_code（P2-1 代码工作区入口）。
-	if conf.CustomConf.LLM.React.Workspace.WorkspaceEnabled() {
+	// load_runtime_code：workspace 运行时设置（默认启用）× 解析表已配置。
+	if conf.GetReactRuntimeConfig().Workspace.WorkspaceEnabled() && conf.CustomConf.LLM.React.Workspace.WorkspaceResolversConfigured() {
 		definitions = append(definitions, loadRuntimeCodeDefinition())
 	}
-	// web_fetch.enabled=true 时注册网页抓取工具（WP4，URL→正文提取→按预算回填）。
+	// web_fetch：web 运行时设置（默认启用），全局口径。
 	if conf.GetReactRuntimeConfig().WebFetch.WebFetchEnabled() {
 		definitions = append(definitions, netcap.WebFetchToolDefinition())
 	}
-	// web_search.enabled 且服务配置完整时注册网页检索工具（WP4，SearXNG 适配器）。
+	// web_search：web 运行时设置（默认启用）× searxng 连接参数齐备，全局口径。
 	if searchCfg := conf.GetReactRuntimeConfig().WebSearch; searchCfg.WebSearchEnabled() && searchCfg.WebSearchConfigured() {
 		definitions = append(definitions, netcap.WebSearchToolDefinition())
 	}
-	// memory.enabled=true 时注册长期记忆三工具（list/read/write），关闭时模型不可见。
-	if conf.CustomConf.LLM.React.Memory.MemoryEnabled() {
+	// memory：memory 运行时设置（与注入/抽取同一开关），全局口径。
+	if conf.GetReactRuntimeConfig().Memory.MemoryEnabled() {
 		definitions = append(definitions, memoryToolDefinitions()...)
 	}
-	// graph_memory.enabled=true 时注册时序图谱记忆工具（search + 可选 write），关闭时模型不可见。
-	if conf.CustomConf.LLM.React.GraphMemory.GraphMemoryEnabled() {
+	// graph_memory_*：Graphiti REST 端点已配置即注册（无独立开关）。
+	if conf.CustomConf.LLM.React.GraphMemory.GraphMemoryEndpointConfigured() {
 		definitions = append(definitions, graphMemoryToolDefinitions()...)
 	}
 	return definitions
@@ -68,7 +77,7 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 // 供引擎每轮装配与 run/delegate 入口 token 检查两处共用，避免口径漂移。
 func runtimeToolDefinitions(req *runtimeRequest, profile ExecutionProfile) []llm.ToolDefinition {
 	definitions := internalMetaToolDefinitionsForType(req.payload.Type)
-	// create_plan 可见性按执行档案判定：caller 级 allow_plan 覆盖 > 全局配置；
+	// create_plan 可见性按执行档案判定：app 级 allow_plan 覆盖 > 全局配置；
 	// reflection 受限域与 plan step 防递归分支的档案 AllowPlan=false，天然不暴露。
 	if profile.AllowPlan {
 		definitions = append(definitions, createPlanToolDefinition())
@@ -395,7 +404,7 @@ func renderSkillIndexSummary(snapshotJSON string) string {
 
 // listSkills 返回轻量 Skill 索引，作为软下线期间的兼容入口；模型默认不再看到该工具。
 func (s *reactEngineState) listSkills() (string, bool, error) {
-	skills, err := model.FindSkillsByCallerAndRoutes(s.ctx, s.req.payload.CallerKey, route.BuildRoutePrefixes(s.req.payload.RouteValues))
+	skills, err := model.FindSkillsByAppAndRoutes(s.ctx, s.req.capabilityScopeKeys, route.BuildRoutePrefixes(s.req.payload.RouteValues))
 	if err != nil {
 		return "", true, err
 	}
@@ -411,7 +420,7 @@ func (s *reactEngineState) getSkill(input json.RawMessage) (string, bool, error)
 		Name    string `json:"name"`
 	}
 	_ = json.Unmarshal(input, &req)
-	skills, err := model.FindSkillsByCallerAndRoutes(s.ctx, s.req.payload.CallerKey, route.BuildRoutePrefixes(s.req.payload.RouteValues))
+	skills, err := model.FindSkillsByAppAndRoutes(s.ctx, s.req.capabilityScopeKeys, route.BuildRoutePrefixes(s.req.payload.RouteValues))
 	if err != nil {
 		return "", true, err
 	}

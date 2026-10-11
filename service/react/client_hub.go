@@ -6,7 +6,6 @@ import (
 
 	llm "react-base-service/api/llm"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 	model "react-base-service/models/llm"
 	hub "react-base-service/service/react/internal/hub"
 
@@ -21,7 +20,7 @@ import (
 // 配置 react.loop.interaction_timeout_sec > 0 时启用交互等待超时：超时返回
 // ErrInteractionTimeout，由各交互工具以错误工具结果回灌模型继续循环（不终止 run）。
 func (s *reactEngineState) waitClientMessage(match func(params.ReactWSMessage) bool) (params.ReactWSMessage, error) {
-	if seconds := conf.GetReactRuntimeConfig().Loop.InteractionTimeoutSec; seconds > 0 {
+	if seconds := s.req.runtimeConfig().Loop.InteractionTimeoutSec; seconds > 0 {
 		return s.clientHub.WaitTimeout(match, time.Duration(seconds)*time.Second)
 	}
 	return s.clientHub.Wait(match)
@@ -118,7 +117,7 @@ func persistNoticeMessageTx(ctx *gin.Context, tx *gorm.DB, req *runtimeRequest, 
 	}
 	if req != nil {
 		row.UserName = req.userName
-		row.CallerKey = req.payload.CallerKey
+		row.AppKey = req.payload.AppKey
 	}
 	if err := model.CreateReactMessageWithDB(ctx, tx, row); err != nil {
 		return llm.ChatMessage{}, reactMessageRef{}, err

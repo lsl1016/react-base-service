@@ -21,15 +21,15 @@ const (
 
 // MemoryScopeResolved 是 service/react 保留的兼容视图。
 // 真正的 owner scope、合并、读写校验和持久化均已下沉到 service/memory；ReAct 层只负责把 Memory
-// 暴露成模型 Tool，并把当前 Caller/User/Run 信息转换为 Memory Runtime 的调用参数。
+// 暴露成模型 Tool，并把当前 App/User/Run 信息转换为 Memory Runtime 的调用参数。
 type MemoryScopeResolved struct {
 	owners      []model.MemoryOwner
 	writeOwner  model.MemoryOwner
 	allowedKeys map[string]struct{}
 }
 
-func ResolveMemoryScope(callerKey, userName string, allowUserScope bool) MemoryScopeResolved {
-	scope := memoryService.ResolveRuntimeScope(callerKey, userName, allowUserScope)
+func ResolveMemoryScope(appKey, userName string, allowUserScope bool) MemoryScopeResolved {
+	scope := memoryService.ResolveRuntimeScope(appKey, userName, allowUserScope)
 	return MemoryScopeResolved{
 		owners:      scope.Owners,
 		writeOwner:  scope.WriteOwner,
@@ -50,8 +50,8 @@ func RenderMemoryContext(items []model.MemoryItem, cfg conf.ReactMemoryConfig) s
 }
 
 // BuildMemoryContextForRun 保留 React Runtime 入口；查询/合并/渲染已下沉到 service/memory。
-func BuildMemoryContextForRun(ctx *gin.Context, callerKey, userName string) (string, error) {
-	return memoryService.BuildRuntimeContext(ctx, callerKey, userName, conf.GetReactRuntimeConfig().Memory)
+func BuildMemoryContextForRun(ctx *gin.Context, appKey, userName string) (string, error) {
+	return memoryService.BuildRuntimeContext(ctx, appKey, userName, conf.GetReactRuntimeConfig().Memory)
 }
 
 // MemoryToolDefinitions 声明模型可见的长期记忆工具。

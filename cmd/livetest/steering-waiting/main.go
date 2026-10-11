@@ -41,7 +41,7 @@ func main() {
 	defer conn.Close()
 
 	runPayload, _ := json.Marshal(map[string]any{
-		"callerKey":    "demo-app",
+		"appKey":    "demo-app",
 		"userPrompt":   "请调用 ask_question 工具问我一个问题（一个问题即可），然后等待我的回答再继续。",
 		"modelKey":     "deepseek",
 		"modelVersion": "deepseek-flash",
@@ -80,7 +80,7 @@ func main() {
 					time.Sleep(2 * time.Second)
 					askToolUseID = p.ToolUseID
 					steerPayload, _ := json.Marshal(map[string]any{
-						"callerKey":  "demo-app",
+						"appKey":  "demo-app",
 						"userPrompt": "等待期间发送的引导消息（应被拒绝）",
 					})
 					_ = websocket.JSON.Send(conn, wsMsg{Type: "run", SessionID: sessionID, RunID: runID, Payload: steerPayload})

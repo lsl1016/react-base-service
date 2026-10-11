@@ -46,7 +46,7 @@ func RenameReactSession(ctx *gin.Context, req params.ReactSessionRenameReq) (par
 			return components.ErrorReactSessionNotFound.Sprintf(sessionID)
 		}
 		// 归属校验（与 list/events/delete/fork 同口径）
-		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), req.CallerKey, marshalRouteValuesForValidate(req.RouteValues), normalizeSessionType("")); err != nil {
+		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), req.AppKey, marshalRouteValuesForValidate(req.RouteValues), normalizeSessionType("")); err != nil {
 			return err
 		}
 		// 幂等短路：标题未变化直接成功，不写库

@@ -64,7 +64,7 @@ func ForkReactSession(ctx *gin.Context, req params.ReactSessionForkReq) (params.
 			return components.ErrorReactSessionNotFound.Sprintf(sessionID)
 		}
 		// 归属校验（与 list/events/delete 同口径）
-		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), req.CallerKey, marshalRouteValuesForValidate(req.RouteValues), normalizeSessionType("")); err != nil {
+		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), req.AppKey, marshalRouteValuesForValidate(req.RouteValues), normalizeSessionType("")); err != nil {
 			return err
 		}
 		// 活跃 run 一律拒绝：避免复制到正在写入的 run，也避免非终态 run 锁死新会话
@@ -331,7 +331,7 @@ func buildForkCopyPlan(source *model.ReactSession, req params.ReactSessionForkRe
 	plan.session = &model.ReactSession{
 		SessionID:   newSessionID,
 		UserName:    source.UserName,
-		CallerKey:   source.CallerKey,
+		AppKey:   source.AppKey,
 		RouteValues: source.RouteValues,
 		SessionType: source.SessionType,
 		Title:       forkSessionTitle(source.Title, req.Title),

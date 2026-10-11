@@ -18,14 +18,14 @@ import (
 )
 
 func RegisterSystemPrompt(ctx *gin.Context, req *params.RegisterSystemPromptReq, createdBy string) (*model.SystemPrompt, error) {
-	// caller_key=default 是默认作用域伪 caller（全 caller 可用），不要求真实 caller 存在。
-	if !model.IsReservedCallerKey(req.CallerKey) {
-		caller, err := model.GetActiveCallerByKey(ctx, req.CallerKey)
+	// app_key=default 是默认作用域伪 app（全 app 可用），不要求真实 app 存在。
+	if !model.IsReservedAppKey(req.AppKey) {
+		app, err := model.GetActiveAppByKey(ctx, req.AppKey)
 		if err != nil {
 			return nil, err
 		}
-		if caller == nil {
-			return nil, components.ErrorCallerNotFound.Sprintf(req.CallerKey)
+		if app == nil {
+			return nil, components.ErrorAppNotFound.Sprintf(req.AppKey)
 		}
 	}
 
@@ -36,16 +36,16 @@ func RegisterSystemPrompt(ctx *gin.Context, req *params.RegisterSystemPromptReq,
 	routeValues, _ := json.Marshal(rv)
 	routeValuesStr := string(routeValues)
 
-	exists, err := model.ExistSystemPromptByCallerAndRoute(ctx, req.CallerKey, routeValuesStr)
+	exists, err := model.ExistSystemPromptByAppAndRoute(ctx, req.AppKey, routeValuesStr)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, components.ErrorSystemPromptDuplicate.Sprintf(req.CallerKey, routeValuesStr)
+		return nil, components.ErrorSystemPromptDuplicate.Sprintf(req.AppKey, routeValuesStr)
 	}
 
 	sp := &model.SystemPrompt{
-		CallerKey:   req.CallerKey,
+		AppKey:   req.AppKey,
 		RouteValues: routeValuesStr,
 		Name:        req.Name,
 		Content:     req.Content,
@@ -87,12 +87,12 @@ func UpdateSystemPrompt(ctx *gin.Context, req *params.UpdateSystemPromptReq) (*m
 		newRouteValues := string(rv)
 
 		if newRouteValues != existing.RouteValues {
-			exists, err := model.ExistSystemPromptByCallerAndRoute(ctx, existing.CallerKey, newRouteValues)
+			exists, err := model.ExistSystemPromptByAppAndRoute(ctx, existing.AppKey, newRouteValues)
 			if err != nil {
 				return nil, err
 			}
 			if exists {
-				return nil, components.ErrorSystemPromptDuplicate.Sprintf(existing.CallerKey, newRouteValues)
+				return nil, components.ErrorSystemPromptDuplicate.Sprintf(existing.AppKey, newRouteValues)
 			}
 		}
 		updates["route_values"] = newRouteValues
@@ -146,21 +146,21 @@ func GetDetail(ctx *gin.Context, id uint) (*model.SystemPrompt, error) {
 	return sp, nil
 }
 
-func ListByCallerAndRoute(ctx *gin.Context, callerKey string, routeValues []string) ([]model.SystemPrompt, error) {
-	// callerKey 为空：管理控制台「全部」视图，跨 caller 列出，忽略路由过滤。
-	if strings.TrimSpace(callerKey) == "" {
+func ListByAppAndRoute(ctx *gin.Context, appKey string, routeValues []string) ([]model.SystemPrompt, error) {
+	// appKey 为空：管理控制台「全部」视图，跨 app 列出，忽略路由过滤。
+	if strings.TrimSpace(appKey) == "" {
 		return model.ListAllSystemPrompts(ctx)
 	}
-	return model.ListSystemPromptsByCallerAndExactRoute(ctx, callerKey, route.SerializeRouteValues(routeValues))
+	return model.ListSystemPromptsByAppAndExactRoute(ctx, appKey, route.SerializeRouteValues(routeValues))
 }
 
-// ResolveSystemPrompt 根据 callerKey + routeValues 解析所有匹配的系统提示词
+// ResolveSystemPrompt 根据 appKey + routeValues 解析所有匹配的系统提示词
 // 策略：前缀匹配 → 默认作用域（default）优先，其余按 route_values 从短到长排序 → 全部拼接（从通用到具体）
-func ResolveSystemPrompt(ctx *gin.Context, callerKey string, routeValues []string) (string, error) {
+func ResolveSystemPrompt(ctx *gin.Context, appKey string, routeValues []string) (string, error) {
 	prefixes := route.BuildRoutePrefixes(routeValues)
-	prompts, err := model.FindSystemPromptsByCallerAndRoutes(ctx, callerKey, prefixes)
+	prompts, err := model.FindSystemPromptsByAppAndRoutes(ctx, appKey, prefixes)
 	if err != nil {
-		zlog.Warnf(ctx, "[ResolveSystemPrompt] 查询失败: callerKey=%s, err=%v", callerKey, err)
+		zlog.Warnf(ctx, "[ResolveSystemPrompt] 查询失败: appKey=%s, err=%v", appKey, err)
 		return "", err
 	}
 	if len(prompts) == 0 {
@@ -168,7 +168,7 @@ func ResolveSystemPrompt(ctx *gin.Context, callerKey string, routeValues []strin
 	}
 
 	sort.Slice(prompts, func(i, j int) bool {
-		iDefault, jDefault := model.IsReservedCallerKey(prompts[i].CallerKey), model.IsReservedCallerKey(prompts[j].CallerKey)
+		iDefault, jDefault := model.IsReservedAppKey(prompts[i].AppKey), model.IsReservedAppKey(prompts[j].AppKey)
 		if iDefault != jDefault {
 			return iDefault // 默认作用域最通用，排最前
 		}
@@ -192,7 +192,7 @@ func ToSystemPromptResp(sp *model.SystemPrompt) params.SystemPromptResp {
 
 	return params.SystemPromptResp{
 		ID:          sp.ID,
-		CallerKey:   sp.CallerKey,
+		AppKey:   sp.AppKey,
 		RouteValues: routeValues,
 		Name:        sp.Name,
 		Content:     sp.Content,

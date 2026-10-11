@@ -71,8 +71,8 @@ func LookupTool(ctx *gin.Context, appID, name string) (*ToolBinding, error) {
 	return nil, nil
 }
 
-// loadBaseTools 加载工具基础集合：全部启用的 http 工具（跨 caller）。
-// 同名工具可能挂在多个 caller 名下，MCP 工具名必须全局唯一，按 name/id 排序
+// loadBaseTools 加载工具基础集合：全部启用的 http 工具（跨 app）。
+// 同名工具可能挂在多个 app 名下，MCP 工具名必须全局唯一，按 name/id 排序
 // 保留第一条并跳过其余（记日志提示归属冲突）。
 func loadBaseTools(ctx *gin.Context) ([]ToolBinding, error) {
 	records, err := model.ListGatewayHTTPTools(ctx)

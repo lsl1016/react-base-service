@@ -113,7 +113,7 @@ func TestMcpYamlServerViewScaffold(t *testing.T) {
 	original := conf.CustomConf.MCP
 	defer func() { conf.CustomConf.MCP = original }()
 	conf.CustomConf.MCP = conf.MCPConfig{
-		CallerKey: "demo-app",
+		AppKey: "demo-app",
 		Servers: []conf.MCPServerConf{
 			{Name: "mcpgw", Kind: "http", Endpoint: "http://127.0.0.1:18080/api/mcp", Headers: map[string]string{"Authorization": "Bearer k:s"}, TimeoutMs: 30000},
 			{Name: "repo", Kind: "repo", Env: map[string]string{"REPO_ROOT": "/tmp/repo"}},
@@ -137,8 +137,8 @@ func TestMcpYamlServerViewScaffold(t *testing.T) {
 	if view.Status != 1 || !view.HasHeaders || view.TimeoutMs != 30000 {
 		t.Fatalf("静态字段不符合配置: %+v", view)
 	}
-	if len(view.BoundCallers) != 1 || view.BoundCallers[0] != "demo-app" {
-		t.Fatalf("BoundCallers 应为 mcp.caller_key: %v", view.BoundCallers)
+	if len(view.BoundApps) != 1 || view.BoundApps[0] != "demo-app" {
+		t.Fatalf("BoundApps 应为 mcp.app_key: %v", view.BoundApps)
 	}
 	if view.Running {
 		t.Fatal("无运行时客户端时 Running 应为 false")

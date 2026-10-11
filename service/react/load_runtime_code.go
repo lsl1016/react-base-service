@@ -10,13 +10,13 @@ package react
 // load_runtime_code（P2-1 服务端代码 Workspace 的业务入口，方案 §4.2.1）：
 //
 // 模型（主 Agent 或 code-agent）调用后，workspace.Manager 按静态解析表把目标服务代码
-// 接入 (service, commit) 共享 worktree（同一 commit 多 run/caller 复用一份），并动态挂载
+// 接入 (service, commit) 共享 worktree（同一 commit 多 run/app 复用一份），并动态挂载
 // 只读 repo MCP——工具名前缀 ws_<service>_<commit短哈希>_*（list_files / read_file /
 // search_code / find_symbol / get_file_symbols / find_references / get_repo_map，其中符号类
 // 工具为 go/ast 声明感知实现），完整工具名以本工具返回的 tools 字段为准；
 // 后续按普通业务工具两段式使用（get_tool 加载 → execute_tool 执行），引擎零特殊分支。
 // run 终态时统一 ReleaseRun 减引用（run() 与 delegate 收尾路径都挂了幂等清理），
-// caller 归零清工具副本、总归零才回收 worktree 与 MCP。
+// app 归零清工具副本、总归零才回收 worktree 与 MCP。
 
 import (
 	"encoding/json"
@@ -47,7 +47,7 @@ func (s *reactEngineState) executeLoadRuntimeCode(input json.RawMessage) (string
 	if req.Service == "" {
 		return "load_runtime_code requires service", true, nil
 	}
-	alloc, err := workspace.Default().Load(s.ctx, s.runID, s.req.payload.CallerKey, req.Service, req.Env)
+	alloc, err := workspace.Default().Load(s.ctx, s.runID, s.req.payload.AppKey, req.Service, req.Env)
 	if err != nil {
 		return err.Error(), true, nil
 	}

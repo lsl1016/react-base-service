@@ -17,21 +17,21 @@ import (
 
 	"react-base-service/components"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 	"react-base-service/helpers"
 	model "react-base-service/models/llm"
 
+	"react-base-service/golib/zlog"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"react-base-service/golib/zlog"
 )
 
 // EventQueueSend 是 WS 上行的显式发送消息类型（S3）：客户端指定一条排队输入，
 // 服务端 claim-once 晋升并在当前连接开新 run（实时事件流与 S2 自动续跑一致）。
 
-// validateQueueRequest 校验队列管理请求的会话归属（当前登录用户 + caller + 路由五元组），
+// validateQueueRequest 校验队列管理请求的会话归属（当前登录用户 + app + 路由五元组），
 // 返回校验通过的会话行。各 queue API 共用。
-func validateQueueRequest(ctx *gin.Context, sessionID, callerKey string, routeValues []string) (*model.ReactSession, error) {
+func validateQueueRequest(ctx *gin.Context, sessionID, appKey string, routeValues []string) (*model.ReactSession, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil, components.ErrorParamInvalid.Sprintf("sessionId 不能为空")
@@ -47,7 +47,7 @@ func validateQueueRequest(ctx *gin.Context, sessionID, callerKey string, routeVa
 		routeValues = []string{}
 	}
 	routeValuesBytes, _ := json.Marshal(routeValues)
-	if err := validateReactSessionContext(session, helpers.GetUserName(ctx), callerKey, string(routeValuesBytes), normalizeSessionType("")); err != nil {
+	if err := validateReactSessionContext(session, helpers.GetUserName(ctx), appKey, string(routeValuesBytes), normalizeSessionType("")); err != nil {
 		return nil, err
 	}
 	return session, nil
@@ -55,7 +55,7 @@ func validateQueueRequest(ctx *gin.Context, sessionID, callerKey string, routeVa
 
 // ListSessionQueue 查询会话队列（FIFO）与当前 steering 配置回显。
 func ListSessionQueue(ctx *gin.Context, req params.ReactQueueListReq) (params.ReactQueueListResp, error) {
-	if _, err := validateQueueRequest(ctx, req.SessionID, req.CallerKey, req.RouteValues); err != nil {
+	if _, err := validateQueueRequest(ctx, req.SessionID, req.AppKey, req.RouteValues); err != nil {
 		return params.ReactQueueListResp{}, err
 	}
 	rows, err := model.ListQueuedBySessionWithDB(ctx, helpers.MysqlClientLLM, strings.TrimSpace(req.SessionID))
@@ -75,7 +75,7 @@ func ListSessionQueue(ctx *gin.Context, req params.ReactQueueListReq) (params.Re
 			CreatedAt:      row.CreatedAt,
 		})
 	}
-	cfg := conf.GetReactRuntimeConfig().Steering
+	cfg := appRuntimeConfig(ctx).Steering
 	return params.ReactQueueListResp{
 		Items:        items,
 		QueueEnabled: cfg.QueueEnabled(),
@@ -87,7 +87,7 @@ func ListSessionQueue(ctx *gin.Context, req params.ReactQueueListReq) (params.Re
 // （避免 MySQL"值未变化时 RowsAffected=0"误报）；输入已被晋升/作废时 claimed=false。
 func UpdateQueuedItem(ctx *gin.Context, req params.ReactQueueUpdateReq) (params.ReactQueueMutateResp, error) {
 	sessionID := strings.TrimSpace(req.SessionID)
-	if _, err := validateQueueRequest(ctx, sessionID, req.CallerKey, req.RouteValues); err != nil {
+	if _, err := validateQueueRequest(ctx, sessionID, req.AppKey, req.RouteValues); err != nil {
 		return params.ReactQueueMutateResp{}, err
 	}
 	req.Content = strings.TrimSpace(req.Content)
@@ -119,7 +119,7 @@ func UpdateQueuedItem(ctx *gin.Context, req params.ReactQueueUpdateReq) (params.
 // （从当前最小 seq 起连续分配），防冷热事实分叉；并发晋升/删除时锁定读可见最新状态并整体拒绝。
 func ReorderSessionQueue(ctx *gin.Context, req params.ReactQueueReorderReq) (params.ReactQueueMutateResp, error) {
 	sessionID := strings.TrimSpace(req.SessionID)
-	if _, err := validateQueueRequest(ctx, sessionID, req.CallerKey, req.RouteValues); err != nil {
+	if _, err := validateQueueRequest(ctx, sessionID, req.AppKey, req.RouteValues); err != nil {
 		return params.ReactQueueMutateResp{}, err
 	}
 	if len(req.IDList) == 0 {
@@ -153,7 +153,7 @@ func ReorderSessionQueue(ctx *gin.Context, req params.ReactQueueReorderReq) (par
 
 // DeleteQueuedItem 删除（取消）一条排队输入；输入已被晋升/作废时 claimed=false。
 func DeleteQueuedItem(ctx *gin.Context, req params.ReactQueueDeleteReq) (params.ReactQueueMutateResp, error) {
-	if _, err := validateQueueRequest(ctx, req.SessionID, req.CallerKey, req.RouteValues); err != nil {
+	if _, err := validateQueueRequest(ctx, req.SessionID, req.AppKey, req.RouteValues); err != nil {
 		return params.ReactQueueMutateResp{}, err
 	}
 	if req.ID <= 0 {
@@ -243,7 +243,7 @@ func PrepareQueuedRunPayload(ctx *gin.Context, sessionID, pendingInputId string)
 			payload = params.ReactRunPayload{}
 		}
 	}
-	if err := validateReactSessionContext(session, helpers.GetUserName(ctx), payload.CallerKey, marshalRouteValuesForValidate(payload.RouteValues), normalizeSessionType(payload.Type)); err != nil {
+	if err := validateReactSessionContext(session, helpers.GetUserName(ctx), payload.AppKey, marshalRouteValuesForValidate(payload.RouteValues), normalizeSessionType(payload.Type)); err != nil {
 		return nil, "", err
 	}
 	payload.UserPrompt = row.Content
@@ -269,7 +269,7 @@ func parsePendingInputID(pendingInputID string) (uint, error) {
 // 业务校验不过（run 非 running / 软着陆 / 带附件 / 不在队列）返回 rejected 回执而非 error：
 // 排队项留在队列，由自动续跑或用户再次操作消费。
 func InjectQueuedItemAsGuide(ctx *gin.Context, sessionID, pendingInputID string) (SteerReceipt, error) {
-	if !conf.GetReactRuntimeConfig().Steering.SteeringEnabled() {
+	if !appRuntimeConfig(ctx).Steering.SteeringEnabled() {
 		return SteerReceipt{}, components.ErrorReactRunActive.Sprintf(sessionID)
 	}
 	id, err := parsePendingInputID(pendingInputID)
@@ -330,7 +330,7 @@ func InjectQueuedItemAsGuide(ctx *gin.Context, sessionID, pendingInputID string)
 			receipt = SteerReceipt{Kind: steerReceiptRejected, Reason: steerReasonAttachments}
 			return nil
 		}
-		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), payload.CallerKey, marshalRouteValuesForValidate(payload.RouteValues), normalizeSessionType(payload.Type)); err != nil {
+		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), payload.AppKey, marshalRouteValuesForValidate(payload.RouteValues), normalizeSessionType(payload.Type)); err != nil {
 			return err
 		}
 

@@ -1,6 +1,6 @@
 // Package graphmemory 是 Graphiti 时序事实图谱（Layer2 长期记忆）的接入层：
 // 一个指向 Graphiti FastAPI 服务（graphiti/server/graph_service）的瘦 HTTP 客户端，
-// 外加基座作用域（caller / caller_user）到 Graphiti group_id 的映射。
+// 外加基座作用域（app / app_user）到 Graphiti group_id 的映射。
 //
 // 只依赖官方 REST 契约（POST /search、POST /messages、GET /healthcheck），
 // 不镜像图数据、不直连图数据库；检索与写入的语义见 docs/graphiti学习.md。

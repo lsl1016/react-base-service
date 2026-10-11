@@ -12,7 +12,7 @@ import (
 
 // CreateAgent 创建子 Agent
 // @Summary      创建子 Agent
-// @Description  创建指定 caller 下的子 Agent 定义（工具/Skill 白名单 + 系统提示词 + 模型）。
+// @Description  创建指定 app 下的子 Agent 定义（工具/Skill 白名单 + 系统提示词 + 模型）。
 // @Tags         agent
 // @Accept       json
 // @Produce      json
@@ -93,7 +93,7 @@ func DeleteAgent(ctx *gin.Context) {
 
 // ListAgents 查询子 Agent 列表
 // @Summary      查询子 Agent 列表
-// @Description  按 callerKey + routeValues 前缀查询子 Agent 列表；callerKey 为空时跨 caller 列出全部。
+// @Description  按 appKey + routeValues 前缀查询子 Agent 列表；appKey 为空时跨 app 列出全部。
 // @Tags         agent
 // @Accept       json
 // @Produce      json
@@ -109,7 +109,7 @@ func ListAgents(ctx *gin.Context) {
 		return
 	}
 
-	agents, err := agentService.ListByCallerAndRoute(ctx, req.CallerKey, req.RouteValues)
+	agents, err := agentService.ListByAppAndRoute(ctx, req.AppKey, req.RouteValues)
 	if err != nil {
 		zlog.Errorf(ctx, "[Agent.List] 查询失败: %v", err)
 		components.RenderJsonFail(ctx, err)

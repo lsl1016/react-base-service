@@ -21,7 +21,7 @@ import (
 //
 // 验证点：
 //  1. 活跃 run 的会话删除被拒绝（不产生任何删除）；
-//  2. 归属不匹配（callerKey 错误）删除被拒绝；
+//  2. 归属不匹配（appKey 错误）删除被拒绝；
 //  3. 正常删除：session/run/message/tool_result/pending_input/feedback 级联清空。
 func TestDeleteReactSessionE2E(t *testing.T) {
 	if os.Getenv("REACT_SESSION_DELETE_E2E") == "" {
@@ -35,7 +35,7 @@ func TestDeleteReactSessionE2E(t *testing.T) {
 
 	const (
 		userName  = "e2e-delete-user"
-		callerKey = "e2e-delete-caller"
+		appKey = "e2e-delete-app"
 		sessionID = "session_e2e_delete_test"
 		routeJSON = `["r1"]`
 	)
@@ -55,14 +55,14 @@ func TestDeleteReactSessionE2E(t *testing.T) {
 	seed := func(runState string) {
 		cleanup()
 		session := &model.ReactSession{
-			SessionID: sessionID, UserName: userName, CallerKey: callerKey,
+			SessionID: sessionID, UserName: userName, AppKey: appKey,
 			RouteValues: routeJSON, SessionType: "chat", State: model.ReactSessionStateActive,
 		}
 		if err := model.CreateReactSession(ctx, session); err != nil {
 			t.Fatalf("建 session 失败: %v", err)
 		}
 		run := &model.ReactRun{
-			RunID: "run_e2e_delete_1", SessionID: sessionID, UserName: userName, CallerKey: callerKey,
+			RunID: "run_e2e_delete_1", SessionID: sessionID, UserName: userName, AppKey: appKey,
 			RouteValues: routeJSON, State: runState, MaxSteps: 10,
 		}
 		if err := model.GetLLMDB().WithContext(ctx).Create(run).Error; err != nil {
@@ -70,7 +70,7 @@ func TestDeleteReactSessionE2E(t *testing.T) {
 		}
 		message := &model.ReactMessage{
 			MessageID: "msg_e2e_delete_1", RunID: run.RunID, SessionID: sessionID,
-			UserName: userName, CallerKey: callerKey, Seq: 1, StepIndex: 0,
+			UserName: userName, AppKey: appKey, Seq: 1, StepIndex: 0,
 			Role: "user", MessageType: model.ReactMessageTypeUserInput, ContentJSON: "{}",
 		}
 		if err := model.GetLLMDB().WithContext(ctx).Create(message).Error; err != nil {
@@ -88,7 +88,7 @@ func TestDeleteReactSessionE2E(t *testing.T) {
 
 	baseReq := params.ReactSessionDeleteReq{
 		SessionID:   sessionID,
-		CallerKey:   callerKey,
+		AppKey:   appKey,
 		RouteValues: []string{"r1"},
 	}
 
@@ -112,7 +112,7 @@ func TestDeleteReactSessionE2E(t *testing.T) {
 	// 2. 归属不匹配拒绝
 	seed(model.ReactRunStateFinished)
 	wrongReq := baseReq
-	wrongReq.CallerKey = "other-caller"
+	wrongReq.AppKey = "other-app"
 	if _, err := DeleteReactSession(ctx, wrongReq); err == nil {
 		t.Fatalf("归属不匹配应拒绝删除")
 	}

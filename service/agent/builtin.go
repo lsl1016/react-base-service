@@ -4,11 +4,11 @@ package agent
 // 方案 docs/参考ZCode的运行时增强方案.md）：
 //
 //   - 内置 profile 物化为 model.Agent 值（AgentID 带 builtin: 前缀），不落库；
-//   - 解析顺序 DB（caller 作用域 + default 合并）> 内置：同 agent_key 的 DB 行整体覆盖内置，
+//   - 解析顺序 DB（app 作用域 + default 合并）> 内置：同 agent_key 的 DB 行整体覆盖内置，
 //     覆盖后完全按 DB 行执行（ZCode profile.ts 教训：不能只按名称套用内置行为）；
 //   - 行为唯一来源是解析命中的那份定义，下游 buildSubAgentRuntimeRequest 不感知定义来源；
 //   - 内置 researcher 携带 ReadOnly=1（只读执行域），DB fork 可经 read_only 列保留该语义；
-//   - 管理治理：DB 同名新建即 fork（覆盖内置），fork 后内置定义对当前 caller 不再参与解析。
+//   - 管理治理：DB 同名新建即 fork（覆盖内置），fork 后内置定义对当前 app 不再参与解析。
 
 import (
 	"strings"
@@ -25,7 +25,7 @@ const AgentSourceBuiltin = "builtin"
 
 // Agent 工具白名单的约定 token（tools_json 内与业务工具名并存）。
 const (
-	// AgentToolRefNone 白名单显式为空：不继承 caller 业务工具（区别于空数组=继承全部的存量语义）。
+	// AgentToolRefNone 白名单显式为空：不继承 app 业务工具（区别于空数组=继承全部的存量语义）。
 	AgentToolRefNone = "@none"
 	// AgentToolRefReadOnly 只继承声明了 readOnly 的业务工具（只读子代理用）。
 	AgentToolRefReadOnly = "@readonly"
@@ -44,7 +44,7 @@ func BuiltinAgentProfiles() []model.Agent {
 			AgentKey: "general-purpose",
 			Name:     "通用子代理",
 			Description: "通用专家子代理，适合把一个自包含的独立子任务（多步查证、批量处理、耗时分析）委派出去隔离执行。" +
-				"继承当前 caller 全部可见业务工具；不适用：需要只读保证的纯调查任务（用 researcher）。",
+				"继承当前 app 全部可见业务工具；不适用：需要只读保证的纯调查任务（用 researcher）。",
 			SystemPrompt: "你是一个通用专家子代理，独立完成父任务委派给你的自包含子任务：" +
 				"围绕 task 目标推进，不要重述任务或反问背景（父任务不会回应）；" +
 				"按需使用可见业务工具与数据分析能力，关键结论要有工具结果佐证；" +
@@ -52,7 +52,7 @@ func BuiltinAgentProfiles() []model.Agent {
 			ToolsJSON:    "[]",
 			SkillsJSON:   "[]",
 			MaxSteps:     64,
-			CallerKey:    model.DefaultCallerKey,
+			AppKey:    model.DefaultAppKey,
 			RouteValues:  "[]",
 			Status:       1,
 			ReadOnly:     0,
@@ -72,7 +72,7 @@ func BuiltinAgentProfiles() []model.Agent {
 			ToolsJSON:    `["` + AgentToolRefReadOnly + `"]`,
 			SkillsJSON:   "[]",
 			MaxSteps:     64,
-			CallerKey:    model.DefaultCallerKey,
+			AppKey:    model.DefaultAppKey,
 			RouteValues:  "[]",
 			Status:       1,
 			ReadOnly:     1,
@@ -92,7 +92,7 @@ func BuiltinAgentProfiles() []model.Agent {
 			ToolsJSON:    `["` + AgentToolRefNone + `"]`,
 			SkillsJSON:   "[]",
 			MaxSteps:     64,
-			CallerKey:    model.DefaultCallerKey,
+			AppKey:    model.DefaultAppKey,
 			RouteValues:  "[]",
 			Status:       1,
 			ReadOnly:     0,
@@ -118,7 +118,7 @@ func BuiltinAgentProfiles() []model.Agent {
 			ToolsJSON:  `["` + AgentToolRefReadOnly + `"]`,
 			SkillsJSON: `["` + skill.BundledSkillCodeInvestigation + `"]`,
 			MaxSteps:   64,
-			CallerKey:    model.DefaultCallerKey,
+			AppKey:    model.DefaultAppKey,
 			RouteValues:  "[]",
 			Status:       1,
 			ReadOnly:     1,

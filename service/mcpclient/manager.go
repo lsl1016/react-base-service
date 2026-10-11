@@ -104,7 +104,7 @@ func Default() *Manager { return defaultManager }
 // 任一服务器失败只记录日志，不影响服务启动与其余服务器。
 func Bootstrap(engine *gin.Engine) {
 	mcpConf := conf.CustomConf.MCP
-	if strings.TrimSpace(mcpConf.CallerKey) == "" || len(mcpConf.Servers) == 0 {
+	if strings.TrimSpace(mcpConf.AppKey) == "" || len(mcpConf.Servers) == 0 {
 		zlog.Infof(nil, "[MCP] 未配置 mcp.servers，跳过 MCP 客户端启动")
 	}
 
@@ -124,13 +124,13 @@ func Bootstrap(engine *gin.Engine) {
 		zlog.Infof(nil, "[MCP] 服务器 %s（kind=%s）已启动", serverCfg.Name, serverCfg.Kind)
 	}
 
-	if strings.TrimSpace(mcpConf.CallerKey) != "" && len(mcpConf.Servers) > 0 {
-		if err := SyncRegistry(mcpConf.CallerKey); err != nil {
+	if strings.TrimSpace(mcpConf.AppKey) != "" && len(mcpConf.Servers) > 0 {
+		if err := SyncRegistry(mcpConf.AppKey); err != nil {
 			zlog.Errorf(nil, "[MCP] 工具注册表同步失败: %v", err)
 		}
 	}
 
-	// 继续拉起管理接口登记的 MCP 连接（tblLlmMcpServer，跨 caller）。
+	// 继续拉起管理接口登记的 MCP 连接（tblLlmMcpServer，跨 app）。
 	bootstrapDBServers()
 
 	// 兜底清理孤儿 MCP 工具：来源服务器既不在 yaml 声明、也没有启用中的注册表记录
@@ -208,35 +208,35 @@ const (
 	CheckStatusUnknown      = "unknown"
 )
 
-// ConnectionCallers 返回连接工具同步到的全部 caller：属主在首位，其后为绑定 caller（去重）。
-// 绑定 caller 不存在/已停用（且非保留作用域）由 ConnectServer 逐个跳过。
-func ConnectionCallers(ctx *gin.Context, server *model.McpServer) []string {
-	callers := []string{server.CallerKey}
-	bound, err := model.ListMcpServerCallers(ctx, server.ServerID)
+// ConnectionApps 返回连接工具同步到的全部 app：属主在首位，其后为绑定 app（去重）。
+// 绑定 app 不存在/已停用（且非保留作用域）由 ConnectServer 逐个跳过。
+func ConnectionApps(ctx *gin.Context, server *model.McpServer) []string {
+	apps := []string{server.AppKey}
+	bound, err := model.ListMcpServerApps(ctx, server.ServerID)
 	if err != nil {
-		zlog.Errorf(ctx, "[MCP] 查询连接绑定 caller 失败: serverId=%s err=%v", server.ServerID, err)
-		return callers
+		zlog.Errorf(ctx, "[MCP] 查询连接绑定 app 失败: serverId=%s err=%v", server.ServerID, err)
+		return apps
 	}
-	seen := map[string]bool{server.CallerKey: true}
+	seen := map[string]bool{server.AppKey: true}
 	for _, key := range bound {
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		callers = append(callers, key)
+		apps = append(apps, key)
 	}
-	return callers
+	return apps
 }
 
-// OfflineServerTools 把一个服务器同步进注册表的全部工具标记停用（全部 caller 副本），
-// 供连接检测失败时下线，确保失联服务器的工具不再进入会话工具索引（FindToolsByCallerAndRoutes
+// OfflineServerTools 把一个服务器同步进注册表的全部工具标记停用（全部 app 副本），
+// 供连接检测失败时下线，确保失联服务器的工具不再进入会话工具索引（FindToolsByAppAndRoutes
 // 只取 status=1）。返回停用行数。
 func OfflineServerTools(ctx *gin.Context, serverName string) (int64, error) {
 	return model.OfflineMCPServerTools(ctx, serverName, "", nil)
 }
 
 // ConnectServer 对一条注册表连接执行完整连接流程：EnsureServer 拉起（或同名替换）→
-// 把 tools/list 结果同步到属主与全部绑定 caller 名下（更新描述与入参/出参 schema、恢复
+// 把 tools/list 结果同步到属主与全部绑定 app 名下（更新描述与入参/出参 schema、恢复
 // 停用行、下线服务器端已下架的工具）→ 结果写回 last_check_*。
 // 任一步失败即整体判失联：该服务器全部注册工具标记停用（status=0，不软删，恢复连接后
 // 下次同步自动恢复），避免「服务器连不上但工具仍进会话」。
@@ -262,15 +262,15 @@ func ConnectServer(ctx *gin.Context, server model.McpServer) (bool, string) {
 	if _, err := EnsureServer(*cfg); err != nil {
 		return fail(err)
 	}
-	// 属主用历史 toolId 格式，绑定 caller 用带后缀的副本；绑定 caller 不存在/停用则静默跳过。
-	for i, callerKey := range ConnectionCallers(ctx, &server) {
-		if i > 0 && !model.IsReservedCallerKey(callerKey) {
-			caller, err := model.GetActiveCallerByKey(ctx, callerKey)
-			if err != nil || caller == nil {
+	// 属主用历史 toolId 格式，绑定 app 用带后缀的副本；绑定 app 不存在/停用则静默跳过。
+	for i, appKey := range ConnectionApps(ctx, &server) {
+		if i > 0 && !model.IsReservedAppKey(appKey) {
+			app, err := model.GetActiveAppByKey(ctx, appKey)
+			if err != nil || app == nil {
 				continue
 			}
 		}
-		if _, err := SyncServerRegistryScoped(callerKey, server.Name, i == 0); err != nil {
+		if _, err := SyncServerRegistryScoped(appKey, server.Name, i == 0); err != nil {
 			return fail(err)
 		}
 	}
@@ -371,7 +371,7 @@ func Call(server, tool string, arguments json.RawMessage, timeout time.Duration)
 
 // SyncRegistry 把全部 MCP 服务器的工具清单 upsert 进 tblLlmTool。
 // toolId 固定为 mcp_<server>_<tool>，按 toolId 增量更新；routeValues 为 "[]"（空路由通用）。
-func SyncRegistry(callerKey string) error {
+func SyncRegistry(appKey string) error {
 	defaultManager.mu.RLock()
 	clients := make([]Server, 0, len(defaultManager.clients))
 	for _, client := range defaultManager.clients {
@@ -388,45 +388,45 @@ func SyncRegistry(callerKey string) error {
 			continue
 		}
 		for _, tool := range tools {
-			if err := upsertRegistryTool(ctx, callerKey, client.Name(), tool, true); err != nil {
+			if err := upsertRegistryTool(ctx, appKey, client.Name(), tool, true); err != nil {
 				zlog.Errorf(nil, "[MCP] 注册工具 %s_%s 失败: %v", client.Name(), tool.Tool, err)
 				continue
 			}
 			synced++
 		}
-		offlineStaleTools(ctx, callerKey, client.Name(), tools)
+		offlineStaleTools(ctx, appKey, client.Name(), tools)
 	}
-	zlog.Infof(nil, "[MCP] 注册表同步完成: callerKey=%s, 共 %d 个 MCP 工具", callerKey, synced)
+	zlog.Infof(nil, "[MCP] 注册表同步完成: appKey=%s, 共 %d 个 MCP 工具", appKey, synced)
 	return nil
 }
 
-// offlineStaleTools 把该 caller 名下、不在服务器当前清单内的注册工具标记停用
+// offlineStaleTools 把该 app 名下、不在服务器当前清单内的注册工具标记停用
 // （服务器端已下架/改名；status=0，不软删，重新出现在清单时下次同步自动恢复）。
-func offlineStaleTools(ctx *gin.Context, callerKey, serverName string, tools []RegistryTool) {
+func offlineStaleTools(ctx *gin.Context, appKey, serverName string, tools []RegistryTool) {
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, fmt.Sprintf("%s_%s", serverName, tool.Tool))
 	}
-	offlined, err := model.OfflineMCPServerTools(ctx, serverName, callerKey, names)
+	offlined, err := model.OfflineMCPServerTools(ctx, serverName, appKey, names)
 	if err != nil {
-		zlog.Errorf(ctx, "[MCP] 清理 %s 在 caller %s 名下失效工具失败: %v", serverName, callerKey, err)
+		zlog.Errorf(ctx, "[MCP] 清理 %s 在 app %s 名下失效工具失败: %v", serverName, appKey, err)
 		return
 	}
 	if offlined > 0 {
-		zlog.Infof(ctx, "[MCP] %s 在 caller %s 名下 %d 个服务器端已下架工具标记停用", serverName, callerKey, offlined)
+		zlog.Infof(ctx, "[MCP] %s 在 app %s 名下 %d 个服务器端已下架工具标记停用", serverName, appKey, offlined)
 	}
 }
 
-// SyncServerRegistry 同步单个服务器的工具清单进 tblLlmTool（属主 caller，toolId 历史格式），返回同步的工具数。
+// SyncServerRegistry 同步单个服务器的工具清单进 tblLlmTool（属主 app，toolId 历史格式），返回同步的工具数。
 // 服务器不在运行（未拉起）时返回错误，由调用方决定是否标记连接异常。
-func SyncServerRegistry(callerKey, serverName string) (int, error) {
-	return SyncServerRegistryScoped(callerKey, serverName, true)
+func SyncServerRegistry(appKey, serverName string) (int, error) {
+	return SyncServerRegistryScoped(appKey, serverName, true)
 }
 
-// SyncServerRegistryScoped 把服务器工具同步到指定 caller 名下：
-// primary=true（属主）toolId=mcp_<server>_<tool>；primary=false（绑定 caller）追加 `__<callerKey>`
-// 后缀避开全局唯一键，工具名不变（名字按 caller 内唯一约束）。
-func SyncServerRegistryScoped(callerKey, serverName string, primary bool) (int, error) {
+// SyncServerRegistryScoped 把服务器工具同步到指定 app 名下：
+// primary=true（属主）toolId=mcp_<server>_<tool>；primary=false（绑定 app）追加 `__<appKey>`
+// 后缀避开全局唯一键，工具名不变（名字按 app 内唯一约束）。
+func SyncServerRegistryScoped(appKey, serverName string, primary bool) (int, error) {
 	client := GetServer(serverName)
 	if client == nil {
 		return 0, fmt.Errorf("mcp server %q is not running", serverName)
@@ -437,19 +437,19 @@ func SyncServerRegistryScoped(callerKey, serverName string, primary bool) (int, 
 	}
 	ctx := &gin.Context{}
 	for _, tool := range tools {
-		if err := upsertRegistryTool(ctx, callerKey, client.Name(), tool, primary); err != nil {
+		if err := upsertRegistryTool(ctx, appKey, client.Name(), tool, primary); err != nil {
 			zlog.Errorf(nil, "[MCP] 注册工具 %s_%s 失败: %v", client.Name(), tool.Tool, err)
 			continue
 		}
 	}
-	offlineStaleTools(ctx, callerKey, client.Name(), tools)
+	offlineStaleTools(ctx, appKey, client.Name(), tools)
 	return len(tools), nil
 }
 
 // RemoveRegistryTools 软删除一个服务器同步进注册表的全部工具（config.mcpServer=serverName，
-// 含属主与各绑定 caller 名下的副本）。供连接删除/停用时清理注册表；未匹配任何工具不是错误。
+// 含属主与各绑定 app 名下的副本）。供连接删除/停用时清理注册表；未匹配任何工具不是错误。
 func RemoveRegistryTools(ctx *gin.Context, serverName string) (int, error) {
-	return RemoveRegistryToolsForCaller(ctx, serverName, "")
+	return RemoveRegistryToolsForApp(ctx, serverName, "")
 }
 
 // CleanupOrphanedRegistryTools 软删除"无来源服务器"的 MCP 注册工具：
@@ -488,9 +488,9 @@ func CleanupOrphanedRegistryTools(ctx *gin.Context) (int, error) {
 	return removed, nil
 }
 
-// RemoveRegistryToolsForCaller 软删除服务器在某一个 caller 名下的工具副本；
-// callerKey 为空表示全部 caller（连接删除/停用），非空用于解绑单个 caller。
-func RemoveRegistryToolsForCaller(ctx *gin.Context, serverName, callerKey string) (int, error) {
+// RemoveRegistryToolsForApp 软删除服务器在某一个 app 名下的工具副本；
+// appKey 为空表示全部 app（连接删除/停用），非空用于解绑单个 app。
+func RemoveRegistryToolsForApp(ctx *gin.Context, serverName, appKey string) (int, error) {
 	tools, err := model.ListToolsByType(ctx, "mcp")
 	if err != nil {
 		return 0, err
@@ -503,7 +503,7 @@ func RemoveRegistryToolsForCaller(ctx *gin.Context, serverName, callerKey string
 		if err := json.Unmarshal([]byte(tool.Config), &cfg); err != nil || cfg.MCPServer != serverName {
 			continue
 		}
-		if callerKey != "" && tool.CallerKey != callerKey {
+		if appKey != "" && tool.AppKey != appKey {
 			continue
 		}
 		if err := model.SoftDeleteToolByToolID(ctx, tool.ToolID); err != nil {
@@ -514,10 +514,10 @@ func RemoveRegistryToolsForCaller(ctx *gin.Context, serverName, callerKey string
 	return removed, nil
 }
 
-func upsertRegistryTool(ctx *gin.Context, callerKey, server string, tool RegistryTool, primary bool) error {
+func upsertRegistryTool(ctx *gin.Context, appKey, server string, tool RegistryTool, primary bool) error {
 	toolID := fmt.Sprintf("mcp_%s_%s", server, tool.Tool)
 	if !primary {
-		toolID = fmt.Sprintf("%s__%s", toolID, callerKey)
+		toolID = fmt.Sprintf("%s__%s", toolID, appKey)
 	}
 	name := fmt.Sprintf("%s_%s", server, tool.Tool)
 	description := strings.TrimSpace(tool.Description)
@@ -564,7 +564,7 @@ func upsertRegistryTool(ctx *gin.Context, callerKey, server string, tool Registr
 		Name:        name,
 		Description: description,
 		ToolType:    "mcp",
-		CallerKey:   callerKey,
+		AppKey:   appKey,
 		RouteValues: "[]",
 		Config:      configJSON,
 		Status:      1,

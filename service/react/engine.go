@@ -920,7 +920,7 @@ func persistAssistantMessageWithType(ctx *gin.Context, req *runtimeRequest, runI
 		return llm.ChatMessage{}, reactMessageRef{}, err
 	}
 	ref := reactMessageRef{RunID: runID, MessageID: generateMessageID(), Seq: seq + 1}
-	if err := model.CreateReactMessage(ctx, &model.ReactMessage{MessageID: ref.MessageID, RunID: runID, SessionID: sessionID, UserName: req.userName, CallerKey: req.payload.CallerKey, Seq: ref.Seq, StepIndex: step, Role: model.ReactMessageRoleAssistant, MessageType: messageType, ModelKey: actualModel.ModelKey, ModelVersion: actualModel.ModelVersion, ContentJSON: string(contentJSON)}); err != nil {
+	if err := model.CreateReactMessage(ctx, &model.ReactMessage{MessageID: ref.MessageID, RunID: runID, SessionID: sessionID, UserName: req.userName, AppKey: req.payload.AppKey, Seq: ref.Seq, StepIndex: step, Role: model.ReactMessageRoleAssistant, MessageType: messageType, ModelKey: actualModel.ModelKey, ModelVersion: actualModel.ModelVersion, ContentJSON: string(contentJSON)}); err != nil {
 		return llm.ChatMessage{}, reactMessageRef{}, err
 	}
 	return message, ref, nil
@@ -937,7 +937,7 @@ func persistToolResultMessage(ctx *gin.Context, req *runtimeRequest, runID, sess
 		return reactMessageRef{}, err
 	}
 	ref := reactMessageRef{RunID: runID, MessageID: generateMessageID(), Seq: seq + 1}
-	if err := model.CreateReactMessage(ctx, &model.ReactMessage{MessageID: ref.MessageID, RunID: runID, SessionID: sessionID, UserName: req.userName, CallerKey: req.payload.CallerKey, Seq: ref.Seq, StepIndex: step, Role: model.ReactMessageRoleUser, MessageType: model.ReactMessageTypeToolResult, ContentJSON: string(contentJSON)}); err != nil {
+	if err := model.CreateReactMessage(ctx, &model.ReactMessage{MessageID: ref.MessageID, RunID: runID, SessionID: sessionID, UserName: req.userName, AppKey: req.payload.AppKey, Seq: ref.Seq, StepIndex: step, Role: model.ReactMessageRoleUser, MessageType: model.ReactMessageTypeToolResult, ContentJSON: string(contentJSON)}); err != nil {
 		return reactMessageRef{}, err
 	}
 	return ref, nil

@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"react-base-service/conf"
 	model "react-base-service/models/llm"
 )
 
@@ -26,7 +25,7 @@ const microcompactPlaceholderPrefix = "[旧工具结果已清理"
 
 // maybeMicrocompactContext 在每轮模型调用前按 token 压力执行微压缩。
 func (s *reactEngineState) maybeMicrocompactContext() error {
-	cfg := conf.GetReactRuntimeConfig().ContextCompact
+	cfg := s.req.runtimeConfig().ContextCompact
 	// microcompact_enabled 未配置默认关闭（灰度开关），custom.yaml 显式开启。
 	if cfg.MicrocompactEnabled == nil || !*cfg.MicrocompactEnabled {
 		return nil
@@ -50,7 +49,7 @@ func (s *reactEngineState) maybeMicrocompactContext() error {
 
 // microcompactNow 执行一次微压缩：替换较旧工具结果为占位，保留最近 keepRecent 组。
 func (s *reactEngineState) microcompactNow() error {
-	cfg := conf.GetReactRuntimeConfig().ContextCompact
+	cfg := s.req.runtimeConfig().ContextCompact
 	keepRecent := cfg.MicrocompactKeepRecent
 	if keepRecent <= 0 {
 		keepRecent = 5

@@ -1,4 +1,4 @@
-package caller
+package app
 
 import (
 	"strings"
@@ -13,57 +13,58 @@ import (
 	"gorm.io/gorm"
 )
 
-// CopyConfig 创建目标 Caller，并复制源 Caller 的全部配置资源。
-func CopyConfig(ctx *gin.Context, req *params.CopyCallerConfigReq, operator string) (*params.CopyCallerConfigResp, error) {
-	sourceCallerKey := strings.TrimSpace(req.SourceCallerKey)
-	targetCallerKey := strings.TrimSpace(req.TargetCaller.CallerKey)
-	targetName := strings.TrimSpace(req.TargetCaller.Name)
-	targetPlatform := strings.TrimSpace(req.TargetCaller.Platform)
-	if sourceCallerKey == "" || targetCallerKey == "" || targetName == "" || targetPlatform == "" {
-		return nil, components.ErrorParamInvalid.Sprintf("sourceCallerKey、targetCaller.callerKey、name、platform 不能为空")
+// CopyConfig 创建目标 App，并复制源 App 的全部配置资源。
+func CopyConfig(ctx *gin.Context, req *params.CopyAppConfigReq, operator string) (*params.CopyAppConfigResp, error) {
+	sourceAppKey := strings.TrimSpace(req.SourceAppKey)
+	targetAppKey := strings.TrimSpace(req.TargetApp.AppKey)
+	targetName := strings.TrimSpace(req.TargetApp.Name)
+	targetPlatform := strings.TrimSpace(req.TargetApp.Platform)
+	if sourceAppKey == "" || targetAppKey == "" || targetName == "" || targetPlatform == "" {
+		return nil, components.ErrorParamInvalid.Sprintf("sourceAppKey、targetApp.appKey、name、platform 不能为空")
 	}
-	if sourceCallerKey == targetCallerKey {
-		return nil, components.ErrorParamInvalid.Sprintf("源 Caller 与目标 Caller 不能相同")
+	if sourceAppKey == targetAppKey {
+		return nil, components.ErrorParamInvalid.Sprintf("源 App 与目标 App 不能相同")
 	}
 
-	resp := &params.CopyCallerConfigResp{TargetCallerKey: targetCallerKey}
+	resp := &params.CopyAppConfigResp{TargetAppKey: targetAppKey}
 	err := model.GetLLMDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		source, err := model.GetCallerByKeyWithDB(tx, sourceCallerKey)
+		source, err := model.GetAppByKeyWithDB(tx, sourceAppKey)
 		if err != nil {
 			return err
 		}
 		if source == nil {
-			return components.ErrorCallerNotFound.Sprintf(sourceCallerKey)
+			return components.ErrorAppNotFound.Sprintf(sourceAppKey)
 		}
-		target, err := model.GetCallerByKeyUnscopedWithDB(tx, targetCallerKey)
+		target, err := model.GetAppByKeyUnscopedWithDB(tx, targetAppKey)
 		if err != nil {
 			return err
 		}
 		if target != nil {
-			return components.ErrorCallerDuplicate.Sprintf(targetCallerKey)
+			return components.ErrorAppDuplicate.Sprintf(targetAppKey)
 		}
 
-		snapshot, err := model.LoadCallerConfigSnapshotWithDB(tx, sourceCallerKey)
+		snapshot, err := model.LoadAppConfigSnapshotWithDB(tx, sourceAppKey)
 		if err != nil {
 			return err
 		}
-		cloneCallerConfigSnapshot(snapshot, targetCallerKey, operator)
+		cloneAppConfigSnapshot(snapshot, targetAppKey, operator)
 
-		targetCaller := &model.Caller{
-			CallerKey:   targetCallerKey,
+		targetApp := &model.App{
+			AppKey:   targetAppKey,
 			Name:        targetName,
-			Description: req.TargetCaller.Description,
+			Description: req.TargetApp.Description,
 			Platform:    targetPlatform,
-			// caller 级能力开关随配置复制（当前仅 allow_plan，三态原样拷贝）。
-			AllowPlan: source.AllowPlan,
-			Status:    1,
-			CreatedBy: operator,
+			// app 级能力开关随配置复制（allow_plan 三态原样拷贝；默认能力池绑定开关同步继承）。
+			AllowPlan:               source.AllowPlan,
+			BindDefaultCapabilities: source.BindDefaultCapabilities,
+			Status:                  1,
+			CreatedBy:               operator,
 		}
-		if err := model.CreateCallerConfigWithDB(tx, targetCaller, snapshot); err != nil {
+		if err := model.CreateAppConfigWithDB(tx, targetApp, snapshot); err != nil {
 			return err
 		}
 
-		resp.Copied = params.CallerResourceStats{
+		resp.Copied = params.AppResourceStats{
 			Skills:           int64(len(snapshot.Skills)),
 			SystemPrompts:    int64(len(snapshot.SystemPrompts)),
 			Tools:            int64(len(snapshot.Tools)),
@@ -78,15 +79,15 @@ func CopyConfig(ctx *gin.Context, req *params.CopyCallerConfigReq, operator stri
 	return resp, nil
 }
 
-func cloneCallerConfigSnapshot(snapshot *model.CallerConfigSnapshot, targetCallerKey, operator string) {
+func cloneAppConfigSnapshot(snapshot *model.AppConfigSnapshot, targetAppKey, operator string) {
 	for i := range snapshot.Skills {
 		skill := &snapshot.Skills[i]
-		resetSkillForCopy(skill, targetCallerKey, operator)
+		resetSkillForCopy(skill, targetAppKey, operator)
 	}
 	for i := range snapshot.SystemPrompts {
 		prompt := &snapshot.SystemPrompts[i]
 		prompt.ID = 0
-		prompt.CallerKey = targetCallerKey
+		prompt.AppKey = targetAppKey
 		prompt.CreatedBy = operator
 		prompt.UpdatedBy = operator
 		prompt.CreatedAt = time.Time{}
@@ -100,7 +101,7 @@ func cloneCallerConfigSnapshot(snapshot *model.CallerConfigSnapshot, targetCalle
 		oldToolID := tool.ToolID
 		tool.ID = 0
 		tool.ToolID = newResourceID("tool")
-		tool.CallerKey = targetCallerKey
+		tool.AppKey = targetAppKey
 		tool.CreatedBy = operator
 		tool.UpdatedBy = operator
 		tool.CreatedAt = time.Time{}
@@ -121,7 +122,7 @@ func cloneCallerConfigSnapshot(snapshot *model.CallerConfigSnapshot, targetCalle
 	for i := range snapshot.ApiKeys {
 		apiKey := &snapshot.ApiKeys[i]
 		apiKey.ID = 0
-		apiKey.CallerKey = targetCallerKey
+		apiKey.AppKey = targetAppKey
 		apiKey.CreatedBy = operator
 		apiKey.UpdatedBy = operator
 		apiKey.CreatedAt = time.Time{}
@@ -130,10 +131,10 @@ func cloneCallerConfigSnapshot(snapshot *model.CallerConfigSnapshot, targetCalle
 	}
 }
 
-func resetSkillForCopy(skill *model.Skill, targetCallerKey, operator string) {
+func resetSkillForCopy(skill *model.Skill, targetAppKey, operator string) {
 	skill.ID = 0
 	skill.SkillID = newResourceID("skill")
-	skill.CallerKey = targetCallerKey
+	skill.AppKey = targetAppKey
 	skill.CreatedBy = operator
 	skill.UpdatedBy = operator
 	skill.CreatedAt = time.Time{}

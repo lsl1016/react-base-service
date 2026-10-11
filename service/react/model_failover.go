@@ -13,12 +13,11 @@ import (
 	"react-base-service/components"
 	"react-base-service/components/metrics"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 
 	"react-base-service/golib/zlog"
 )
 
-// reactModelTarget 是一次模型调用所需的完整模型标识。API Key 仍按当前 caller 路由统一解析。
+// reactModelTarget 是一次模型调用所需的完整模型标识。API Key 仍按当前 app 路由统一解析。
 type reactModelTarget struct {
 	ModelKey     string
 	ModelVersion string
@@ -63,7 +62,7 @@ func sameReactModel(left, right reactModelTarget) bool {
 // 混入互备组，避免配置外模型意外切换到其它供应商。
 func configuredReactModelRouting(req *runtimeRequest) (reactModelTarget, []reactModelTarget) {
 	selected := reactModelTarget{ModelKey: req.resolvedModelKey, ModelVersion: req.resolvedModelVersion}
-	modelsCfg := conf.GetReactRuntimeConfig().Models
+	modelsCfg := req.runtimeConfig().Models
 	models := []reactModelTarget{selected}
 	if modelsCfg.MutualFailover == nil || !*modelsCfg.MutualFailover {
 		return selected, models
@@ -253,7 +252,7 @@ func (s *reactEngineState) callModelRoundWithEmitter(step int, prefixDebugKey st
 				lastErr = components.ErrorLLMRequest.Sprintf(err.Error())
 				classifyTarget = err
 			} else {
-				idleTimeout := time.Duration(conf.GetReactRuntimeConfig().StreamIdleTimeoutSec) * time.Second
+				idleTimeout := time.Duration(s.req.runtimeConfig().StreamIdleTimeoutSec) * time.Second
 				streamResult, collectErr := s.collectLLMStreamWithEmitter(stream, step, cancel, idleTimeout, emitEvents && index == 0)
 				cancel()
 				lastResult = modelRoundResult{Stream: streamResult, Model: target}

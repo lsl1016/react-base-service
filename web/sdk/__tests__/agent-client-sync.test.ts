@@ -55,7 +55,7 @@ function createMockFetch() {
             sessions: [
               {
                 sessionId: 'session_server',
-                callerKey: body.callerKey,
+                appKey: body.appKey,
                 routeValues: body.routeValues ?? [],
                 type: 'chat',
                 title: '服务端会话',
@@ -91,7 +91,7 @@ function createMockFetch() {
                 runId: 'run_server',
                 sessionId: body.sessionId,
                 payload: {
-                  callerKey: 'report-editor',
+                  appKey: 'report-editor',
                   routeValues: ['report_abc'],
                   type: 'chat',
                   userPrompt: '历史问题',
@@ -162,7 +162,7 @@ describe('AgentClient server cache sync', () => {
   it('should call session list and events during initial sync', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -179,7 +179,7 @@ describe('AgentClient server cache sync', () => {
   it('should sync server sessions into local cache', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -196,7 +196,7 @@ describe('AgentClient server cache sync', () => {
   it('should sync server events before replaying a session', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -218,7 +218,7 @@ describe('AgentClient server cache sync', () => {
   it('should enter a draft session without clearing cached history', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -236,7 +236,7 @@ describe('AgentClient server cache sync', () => {
   it('should send the first draft message without the previous session id', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -266,7 +266,7 @@ describe('AgentClient server cache sync', () => {
   it('should resend a pending run after the existing socket disconnects', () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -291,7 +291,7 @@ describe('AgentClient server cache sync', () => {
   it('should retain a terminal run id without sending stale control messages', () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -326,7 +326,7 @@ describe('AgentClient server cache sync', () => {
   it('should send controlContext and llmContext with run payload', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
       controlContext: { scope: 'default', debug: true },
       llmContext: { page: 'report', reportId: 'r1' },
@@ -343,7 +343,7 @@ describe('AgentClient server cache sync', () => {
     expect(send.mock.calls[0][0]).toMatchObject({
       type: 'run',
       payload: {
-        callerKey: 'report-editor',
+        appKey: 'report-editor',
         routeValues: ['report_abc'],
         type: 'chat',
         userPrompt: '新问题',
@@ -360,7 +360,7 @@ describe('AgentClient server cache sync', () => {
     }));
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'demo-app',
+      appKey: 'demo-app',
       routeValues: ['query-1'],
       llmContext: { source: 'static' },
       hooks: { beforeRun },
@@ -387,7 +387,7 @@ describe('AgentClient server cache sync', () => {
   it('should send the beforeRun string result as a plain llmContext value', () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'demo-app',
+      appKey: 'demo-app',
       hooks: {
         beforeRun: () => '<system_prompt>用户正在编辑sql</system_prompt>',
       },
@@ -409,7 +409,7 @@ describe('AgentClient server cache sync', () => {
     }));
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'demo-app',
+      appKey: 'demo-app',
       hooks: { beforeRun },
     });
     const send = vi.fn();
@@ -430,7 +430,7 @@ describe('AgentClient server cache sync', () => {
   it('should fall back to run llmContext when beforeRun returns undefined', () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'demo-app',
+      appKey: 'demo-app',
       llmContext: { source: 'static' },
       hooks: { beforeRun: () => undefined },
     });
@@ -445,7 +445,7 @@ describe('AgentClient server cache sync', () => {
   it('should upload chat attachments through the service upload endpoint', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -468,7 +468,7 @@ describe('AgentClient server cache sync', () => {
   it('should include attachments in the ReAct run payload', () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
     const send = vi.fn();
@@ -486,7 +486,7 @@ describe('AgentClient server cache sync', () => {
   it('should include next-button origin in the ReAct run payload', () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
     const send = vi.fn();
@@ -514,7 +514,7 @@ describe('AgentClient server cache sync', () => {
   it('should append a new message without clearing previous visible steps', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -568,7 +568,7 @@ describe('AgentClient server cache sync', () => {
   it('should persist a local run event when the first live event returns real ids', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -602,7 +602,7 @@ describe('AgentClient server cache sync', () => {
   it('should persist a completed content segment instead of raw chunks', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -658,7 +658,7 @@ describe('AgentClient server cache sync', () => {
   it('should bind a draft session after receiving the server session id', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -687,7 +687,7 @@ describe('AgentClient server cache sync', () => {
   it('should not treat reused seq in a different run as a gap', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -721,7 +721,7 @@ describe('AgentClient server cache sync', () => {
   it('should skip server events overwrite while current session is running', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 
@@ -746,7 +746,7 @@ describe('AgentClient server cache sync', () => {
 
   // 暂时下线 create_plan，恢复工具时取消 skip。
   it.skip('should accept the latest plan when the new run receives a runId', () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     const wsClient = (client as any).wsClient;
     wsClient.send = vi.fn();
     Object.defineProperty(wsClient, 'isConnected', { value: true, configurable: true });
@@ -780,7 +780,7 @@ describe('AgentClient server cache sync', () => {
 
   // 暂时下线 create_plan，恢复工具时取消 skip。
   it.skip('should restore the plan after pending run reconnect attempts are exhausted', () => {
-    client = createAgentClient({ baseUrl: '/react', callerKey: 'report-editor' });
+    client = createAgentClient({ baseUrl: '/react', appKey: 'report-editor' });
     const wsClient = (client as any).wsClient;
     wsClient.send = vi.fn();
     wsClient.clearPendingMessages = vi.fn();
@@ -814,7 +814,7 @@ describe('AgentClient server cache sync', () => {
   it.skip('should confirm a plan through plain user text without changing host llmContext', () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       llmContext: { page: 'report', reportId: 'r1' },
     });
     const send = vi.fn();
@@ -837,7 +837,7 @@ describe('AgentClient server cache sync', () => {
   it.skip('should preserve string llmContext unchanged when confirming a plan', () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       llmContext: '<context>宿主上下文</context>',
     });
     const send = vi.fn();
@@ -853,7 +853,7 @@ describe('AgentClient server cache sync', () => {
   it('should not refetch history during an active run when a seq gap appears', async () => {
     client = createAgentClient({
       baseUrl: '/react',
-      callerKey: 'report-editor',
+      appKey: 'report-editor',
       routeValues: ['report_abc'],
     });
 

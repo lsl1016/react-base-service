@@ -38,7 +38,7 @@ describe('EventReducer', () => {
         sessionId: 'session_1',
         runId: 'run_1',
         payload: {
-          callerKey: 'report-editor',
+          appKey: 'report-editor',
           type: 'chat',
           userPrompt: '历史问题',
         },
@@ -200,7 +200,7 @@ describe('EventReducer', () => {
       sessionId: 'session_1',
       runId: 'run_1',
       payload: {
-        callerKey: 'report-editor',
+        appKey: 'report-editor',
         routeValues: ['report_abc'],
         type: 'chat',
         userPrompt: '历史问题',
@@ -264,7 +264,7 @@ describe('EventReducer', () => {
       sessionId: 'session_1',
       runId: 'run_compact',
       payload: {
-        callerKey: 'report-editor',
+        appKey: 'report-editor',
         routeValues: ['report_abc'],
         type: 'chat',
         userPrompt: 'You are compacting conversation history for future model turns.\nProduce a concise plain-text summary.',

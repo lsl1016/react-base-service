@@ -80,10 +80,10 @@ func TestScanSensitiveContentAllowsNormalText(t *testing.T) {
 }
 
 func TestOwnerScopeKeyStable(t *testing.T) {
-	if OwnerScopeKey("caller", "demo-app") != "caller|demo-app" {
+	if OwnerScopeKey("app", "demo-app") != "app|demo-app" {
 		t.Fatalf("unexpected key format")
 	}
-	if OwnerScopeKey("caller_user", "demo-app|zhangsan") == OwnerScopeKey("caller", "demo-app|zhangsan") {
+	if OwnerScopeKey("app_user", "demo-app|zhangsan") == OwnerScopeKey("app", "demo-app|zhangsan") {
 		t.Fatalf("different owner types must not collide")
 	}
 }

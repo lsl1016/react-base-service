@@ -35,7 +35,10 @@ type ReactReasoningOptions struct {
 }
 
 type ReactRunPayload struct {
-	CallerKey   string               `json:"callerKey"`
+	AppKey   string               `json:"appKey"`
+	// LegacyCallerKey 是 caller→app 改名前的旧字段名（已废弃）：仅在 appKey 为空时
+	// 作为兼容回填来源，供存量 SDK/接入方在迁移期继续调用，新接入方请使用 appKey。
+	LegacyCallerKey string               `json:"callerKey,omitempty"`
 	RouteValues []string             `json:"routeValues"`
 	Type        string               `json:"type"`
 	UserPrompt  string               `json:"userPrompt"`
@@ -349,7 +352,7 @@ type ReactQueueItem struct {
 // ReactQueueListReq 查询会话队列（S3）。
 type ReactQueueListReq struct {
 	SessionID   string   `json:"sessionId"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 }
 
@@ -364,7 +367,7 @@ type ReactQueueListResp struct {
 // ReactQueueUpdateReq 编辑一条排队输入的内容（S3）。
 type ReactQueueUpdateReq struct {
 	SessionID   string   `json:"sessionId"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	ID          uint     `json:"id"`
 	Content     string   `json:"content"`
@@ -373,7 +376,7 @@ type ReactQueueUpdateReq struct {
 // ReactQueueReorderReq 重排会话队列（S3）：IDList 按期望的新顺序给出全部排队输入 ID。
 type ReactQueueReorderReq struct {
 	SessionID   string   `json:"sessionId"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	IDList      []uint   `json:"idList"`
 }
@@ -381,7 +384,7 @@ type ReactQueueReorderReq struct {
 // ReactQueueDeleteReq 删除（取消）一条排队输入（S3）：账本置 cancelled。
 type ReactQueueDeleteReq struct {
 	SessionID   string   `json:"sessionId"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	ID          uint     `json:"id"`
 }
@@ -411,7 +414,7 @@ const (
 )
 
 type ReactSessionListReq struct {
-	CallerKey   string   `json:"callerKey" binding:"required"`
+	AppKey   string   `json:"appKey" binding:"required"`
 	RouteValues []string `json:"routeValues"`
 	Type        string   `json:"type"`
 	Keyword     string   `json:"keyword"`
@@ -421,7 +424,7 @@ type ReactSessionListReq struct {
 
 type ReactSessionItem struct {
 	SessionID   string   `json:"sessionId"`
-	CallerKey   string   `json:"callerKey"`
+	AppKey   string   `json:"appKey"`
 	RouteValues []string `json:"routeValues"`
 	Type        string   `json:"type"`
 	Title       string   `json:"title"`
@@ -447,7 +450,7 @@ type ReactSessionEventsReq struct {
 // 运行中的会话会被拒绝（请先停止任务再删除）。
 type ReactSessionDeleteReq struct {
 	SessionID   string   `json:"sessionId" binding:"required"`
-	CallerKey   string   `json:"callerKey" binding:"required"`
+	AppKey   string   `json:"appKey" binding:"required"`
 	RouteValues []string `json:"routeValues"`
 }
 
@@ -477,7 +480,7 @@ type ReactSessionForkReq struct {
 	ThroughMessageID string `json:"throughMessageId"`
 	ThroughRunID     string `json:"throughRunId"`
 	Inclusive        *bool  `json:"inclusive"`
-	CallerKey        string `json:"callerKey" binding:"required"`
+	AppKey        string `json:"appKey" binding:"required"`
 	RouteValues      []string `json:"routeValues"`
 	Title            string `json:"title"`
 }
@@ -497,7 +500,7 @@ type ReactSessionForkResp struct {
 type ReactSessionRenameReq struct {
 	SessionID   string   `json:"sessionId" binding:"required"`
 	Title       string   `json:"title" binding:"required"`
-	CallerKey   string   `json:"callerKey" binding:"required"`
+	AppKey   string   `json:"appKey" binding:"required"`
 	RouteValues []string `json:"routeValues"`
 }
 
@@ -647,7 +650,7 @@ type PlanAttemptItem struct {
 type PlanExecutionDetailReq struct {
 	PlanExecutionID string `json:"planExecutionId" binding:"required"`
 	SessionID       string `json:"sessionId" binding:"required"`
-	CallerKey       string `json:"callerKey" binding:"required"`
+	AppKey       string `json:"appKey" binding:"required"`
 }
 
 type PlanExecutionDetailResp struct {
@@ -659,7 +662,7 @@ type PlanStepEventsReq struct {
 	PlanExecutionID string `json:"planExecutionId" binding:"required"`
 	StepAttemptID   string `json:"stepAttemptId" binding:"required"`
 	SessionID       string `json:"sessionId" binding:"required"`
-	CallerKey       string `json:"callerKey" binding:"required"`
+	AppKey       string `json:"appKey" binding:"required"`
 }
 
 type PlanStepEventsResp struct {

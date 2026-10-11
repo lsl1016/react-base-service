@@ -4,7 +4,7 @@ package react
 //
 // 设计要点（与方案 4.1 节逐条对应）：
 //   - 子 Agent 是注册类资源（tblLlmAgent），对主 Agent 呈现为一个 Meta Tool：
-//     描述动态渲染 caller 可见的 agent 清单，主 LLM 由此"发现"子代理；
+//     描述动态渲染 app 可见的 agent 清单，主 LLM 由此"发现"子代理；
 //   - 执行是复用现有引擎的隔离子 run：同 session 落库（parent_run_id/agent_path），
 //     上下文 = agent.system_prompt + 子代理工具/Skill 索引 + 单条 user(task)，
 //     不含父历史、不含父已加载工具、不注入长期记忆（隔离的三大来源）；
@@ -158,7 +158,7 @@ func (s *reactEngineState) executeDelegateAgent(call llm.ToolCall, step int) (st
 		return "delegate_agent requires agent_key and task", true, nil
 	}
 
-	cfg := conf.GetReactRuntimeConfig().SubAgent
+	cfg := s.req.runtimeConfig().SubAgent
 	if s.depth+1 > cfg.MaxDepth {
 		metrics.ReactDelegationsTotal.WithLabelValues(input.AgentKey, "depth_limited").Inc()
 		return fmt.Sprintf("delegation depth limit reached (max_depth=%d), handle this task yourself instead of delegating", cfg.MaxDepth), true, nil
@@ -453,7 +453,7 @@ func validateContinueRun(prior *model.ReactRun, runID, parentRunID, agentKey str
 	return ""
 }
 
-// buildSubAgentRuntimeRequest 组装子 run 的运行请求：复用 prepareRuntimeRequest 完成 caller/apikey/
+// buildSubAgentRuntimeRequest 组装子 run 的运行请求：复用 prepareRuntimeRequest 完成 app/apikey/
 // 模型解析与全量索引装配，再覆盖为 agent 定义（系统提示词、工具/Skill 白名单、独立历史、继承或指定模型）。
 // buildSubAgentRuntimeRequest 从父 Run 派生子 Agent 的运行快照。
 //
@@ -463,7 +463,7 @@ func validateContinueRun(prior *model.ReactRun, runID, parentRunID, agentKey str
 // continueRun 非空时（continue_run_id 续跑）：历史/已加载工具/todo 从该子 run 恢复，
 // modelUserMessage 仍是本次 task（继续指令），其余隔离语义不变。
 func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, expect string, continueRun *model.ReactRun) (*runtimeRequest, string, error) {
-	cfg := conf.GetReactRuntimeConfig().SubAgent
+	cfg := s.req.runtimeConfig().SubAgent
 
 	modelKey := strings.TrimSpace(agent.ModelKey)
 	modelVersion := strings.TrimSpace(agent.ModelVersion)
@@ -487,7 +487,7 @@ func (s *reactEngineState) buildSubAgentRuntimeRequest(agent model.Agent, task, 
 	}
 
 	payload := params.ReactRunPayload{
-		CallerKey:    s.req.payload.CallerKey,
+		AppKey:    s.req.payload.AppKey,
 		RouteValues:  s.req.payload.RouteValues,
 		Type:         model.ReactSessionTypeChat,
 		UserPrompt:   taskContent,
@@ -580,7 +580,7 @@ func (s *reactEngineState) createSubAgentRunRecord(req *runtimeRequest, subRunID
 		RunID:                   subRunID,
 		SessionID:               s.sessionID,
 		UserName:                req.userName,
-		CallerKey:               req.payload.CallerKey,
+		AppKey:               req.payload.AppKey,
 		RouteValues:             req.routeValuesJSON,
 		State:                   model.ReactRunStateRunning,
 		StepIndex:               0,
@@ -665,10 +665,10 @@ func (s *reactEngineState) findVisibleAgent(agentKey string) (model.Agent, bool)
 	return model.Agent{}, false
 }
 
-// resolveAgentForKey 实时查库解析 agent 定义（caller 作用域 + default 合并语义，与快照同源逻辑）：
+// resolveAgentForKey 实时查库解析 agent 定义（app 作用域 + default 合并语义，与快照同源逻辑）：
 // 委派执行取最新配置，管理面板变更从下一次委派起生效。
 func (s *reactEngineState) resolveAgentForKey(agentKey string) (model.Agent, bool) {
-	agent, err := s.services.agentResolver().Resolve(s.ctx, s.req.payload.CallerKey, s.req.payload.RouteValues, agentKey)
+	agent, err := s.services.agentResolver().Resolve(s.ctx, s.req.payload.AppKey, s.req.payload.RouteValues, agentKey)
 	if err != nil {
 		zlog.Warnf(s.ctx, "[React.Delegate] 实时解析 agent 失败(回退 run 快照): runId=%s, agentKey=%s, err=%v", s.runID, agentKey, err)
 		return s.findVisibleAgent(agentKey)

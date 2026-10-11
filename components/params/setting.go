@@ -5,6 +5,8 @@ package params
 // 想清除覆盖回落 yaml 时传对应字段的 "clear" 约定由 service 层处理（enabled 等布尔字段
 // 无法用 nil/false 区分「未传」与「关闭」，故布尔关闭=显式传 false，数字清空见 ClearFields）。
 type UpdateSubAgentSettingReq struct {
+	// AppKey 应用维度：空=写全局行；非空=写该 app 的专属覆盖行（优先于全局）。
+	AppKey string `json:"appKey"`
 	Enabled         *bool `json:"enabled"`
 	MaxParallel     *int  `json:"maxParallel"`
 	DefaultMaxSteps *int  `json:"defaultMaxSteps"`
@@ -46,6 +48,8 @@ type SubAgentSettingResp struct {
 // UpdateContextCompactSettingReq 上下文压缩策略更新请求（/setting/context/update）。
 // 字段级覆盖语义与 subagent 一致：指针为 nil = 不修改；清除覆盖走 ClearFields。
 type UpdateContextCompactSettingReq struct {
+	// AppKey 应用维度：空=写全局行；非空=写该 app 的专属覆盖行（优先于全局）。
+	AppKey string `json:"appKey"`
 	Enabled                *bool `json:"enabled"`
 	TokenTrigger           *int  `json:"tokenTrigger"`
 	TokenTarget            *int  `json:"tokenTarget"`
@@ -90,6 +94,8 @@ type ContextCompactSettingResp struct {
 // UpdateMemorySettingReq 长期记忆策略更新请求（/setting/memory/update）。
 // 字段级覆盖语义与 subagent 一致：指针为 nil = 不修改；清除覆盖走 ClearFields。
 type UpdateMemorySettingReq struct {
+	// AppKey 应用维度：空=写全局行；非空=写该 app 的专属覆盖行（优先于全局）。
+	AppKey string `json:"appKey"`
 	Enabled             *bool `json:"enabled"`
 	ResidentMaxItems    *int  `json:"residentMaxItems"`
 	ResidentBudgetChars *int  `json:"residentBudgetChars"`
@@ -129,6 +135,8 @@ type MemorySettingResp struct {
 // 一枚开关同时作用于 web_fetch 与 web_search；字段级覆盖语义与 subagent 一致：
 // 布尔显式传 false 即关闭，清除覆盖回落 yaml 走 ClearFields。
 type UpdateWebSettingReq struct {
+	// AppKey 应用维度：空=写全局行；非空=写该 app 的专属覆盖行（优先于全局）。
+	AppKey string `json:"appKey"`
 	Enabled *bool `json:"enabled"`
 	// ClearFields 是要清除覆盖、回落 yaml/默认值的字段名列表（enabled）。
 	ClearFields []string `json:"clearFields"`
@@ -147,6 +155,37 @@ type WebSettingResp struct {
 	Override *struct {
 		Enabled *bool `json:"enabled"`
 	} `json:"override"`
+	UpdatedBy string `json:"updatedBy"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// UpdateWorkspaceSettingReq 检索代码和工作区开关更新请求（全局设置，无 app 维度——
+// 内置工具不按 app 隔离）。
+type UpdateWorkspaceSettingReq struct {
+	// Enabled 是否启用检索代码和工作区；布尔字段显式传 false 即关闭，清除走 clearFields。
+	Enabled *bool `json:"enabled"`
+	// ClearFields 清除覆盖回落 yaml/默认值的字段名（当前仅 enabled）。
+	ClearFields []string `json:"clearFields"`
+}
+
+// WorkspaceSettingFieldResp 单字段生效视图。
+type WorkspaceSettingFieldResp struct {
+	Value  bool   `json:"value"`
+	Source string `json:"source"`
+}
+
+// WorkspaceSettingResp 检索代码和工作区开关生效视图。
+type WorkspaceSettingResp struct {
+	Effective struct {
+		Enabled bool `json:"enabled"`
+		// ResolversConfigured 是基础设施可用性（解析表是否配置了服务）：
+		// 开关已开但此处为 false 时 load_runtime_code 仍不会注册。
+		ResolversConfigured bool `json:"resolversConfigured"`
+	} `json:"effective"`
+	Sources map[string]WorkspaceSettingFieldResp `json:"sources"`
+	Override *struct {
+		Enabled *bool `json:"enabled"`
+	} `json:"override,omitempty"`
 	UpdatedBy string `json:"updatedBy"`
 	UpdatedAt string `json:"updatedAt"`
 }

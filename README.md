@@ -36,7 +36,7 @@
   <img src="docs/images/architecture.png" alt="系统架构图" width="920">
 </p>
 
-五层结构：客户端（Web SDK 多会话 UI / playground · replay 宿主页 / 业务 Caller / MCP 应用消费方）→ router + 免鉴权中间件（信任 X-User-Name 头，缺省 anonymous；HTTP 管理面 + WebSocket 运行入口；MCP 网关自带 Bearer 凭证鉴权）→ 控制器 → service 层（ReAct / Plan 双运行时 + Steering 引导与排队 + 双层记忆 + cron 定时工作流 + 工具 / Agent / Skill / Bundle / Caller / 模型配置等注册类资源管理 + MCP 服务端网关）→ 基础设施（LLM 网关 / MySQL / Redis / 对象存储 MinIO · COS · 本地目录 / Python 沙箱 / SearXNG 检索 / Graphiti 时序图谱）。
+五层结构：客户端（Web SDK 多会话 UI / playground · replay 宿主页 / 业务 App / MCP 应用消费方）→ router + 免鉴权中间件（信任 X-User-Name 头，缺省 anonymous；HTTP 管理面 + WebSocket 运行入口；MCP 网关自带 Bearer 凭证鉴权）→ 控制器 → service 层（ReAct / Plan 双运行时 + Steering 引导与排队 + 双层记忆 + cron 定时工作流 + 工具 / Agent / Skill / Bundle / App / 模型配置等注册类资源管理 + MCP 服务端网关）→ 基础设施（LLM 网关 / MySQL / Redis / 对象存储 MinIO · COS · 本地目录 / Python 沙箱 / SearXNG 检索 / Graphiti 时序图谱）。
 
 - 详细分层与设计约束见 [系统架构](docs/architecture.md)
 
@@ -46,7 +46,7 @@
   <img src="docs/images/react-loop.png" alt="ReAct 运行时循环图" width="920">
 </p>
 
-一次 run 的完整生命周期：**装配**（caller 路由与模型解析 / failover、系统提示词前缀拼接、工具摘要索引、Skill 索引、长期记忆分层注入）→ **单事务启动**（行锁复用或创建 session 并校验归属五元组；命中活跃 run 转 Steering 引导 / 排队；全量历史装配含 compact 覆盖过滤与孤儿 tool_use 回填；继承上一轮 TodoState 与已激活工具；用户消息落库并建 run）→ **主循环**（每轮模型调用前做上下文治理——微压缩与超阈值全量压缩按工具轮次边界对齐；模型流式轮 → 解析 tool call → 危险操作确认 / HITL 作答 → 串行执行 → 结果回填；步边界消费运行中引导；`delegate_agent` 委派子 run 同轮并行）→ **finish 收敛**（无工具调用即终态落库，触发排队输入自动续跑晋升）。
+一次 run 的完整生命周期：**装配**（app 路由与模型解析 / failover、系统提示词前缀拼接、工具摘要索引、Skill 索引、长期记忆分层注入）→ **单事务启动**（行锁复用或创建 session 并校验归属五元组；命中活跃 run 转 Steering 引导 / 排队；全量历史装配含 compact 覆盖过滤与孤儿 tool_use 回填；继承上一轮 TodoState 与已激活工具；用户消息落库并建 run）→ **主循环**（每轮模型调用前做上下文治理——微压缩与超阈值全量压缩按工具轮次边界对齐；模型流式轮 → 解析 tool call → 危险操作确认 / HITL 作答 → 串行执行 → 结果回填；步边界消费运行中引导；`delegate_agent` 委派子 run 同轮并行）→ **finish 收敛**（无工具调用即终态落库，触发排队输入自动续跑晋升）。
 
 
 ## 🚀 快速开始
@@ -91,8 +91,14 @@ go run main.go
 **方式三：本机分步运行（不依赖容器）**
 
 ```bash
-# 1. 建库（MySQL）
+# 1. 建库（MySQL，全新环境）
 mysql -h <host> -u root -p < sql/init.sql
+
+# 1b. 存量环境升级（曾以 caller 命名初始化过的库，执行改名迁移后再部署新代码）
+#     迁移内容：tblLlmCaller→tblLlmApp、caller_key→app_key（数据保留）、记忆 owner 维度、
+#     默认能力池（存量工具/Skill 迁入 default 作用域）、运行时设置表增加 app 维度
+mysql -h <host> -u root -p <your_db> < sql/app_rename_v1.sql
+
 
 # 2. 配置（编辑 conf/mount 下的四个 yaml，替换占位符）
 vim conf/mount/resource.yaml   # MySQL / Redis / COS
@@ -120,7 +126,7 @@ import { createAgentClient, mountAgentUI } from '@react-agent-web-sdk';
 
 const agent = createAgentClient({
   baseUrl: 'http://localhost:8080',
-  callerKey: 'my-app',
+  appKey: 'my-app',
   routeValues: ['demo'],
 });
 
@@ -152,9 +158,9 @@ const ui = mountAgentUI(document.getElementById('agent-container'), agent, {
 ```
 ├── main.go                  # 入口：PreInit → InitResource → 路由 → 后台任务 → HTTP
 ├── router/                  # 路由注册（react / 注册类管理接口 / 静态资源）
-├── controllers/http/        # HTTP/WS 控制器（react、attachment、caller、agent、skill、tool、apikey、systemprompt、llmmodel、mcpadmin、setting、workflow、probe）
+├── controllers/http/        # HTTP/WS 控制器（react、attachment、app、agent、skill、tool、apikey、systemprompt、llmmodel、mcpadmin、setting、workflow、probe）
 ├── service/react/           # ReAct 运行时核心（引擎、运行时装配、Meta Tool、委派、记忆注入、会话历史、异步任务…）
-├── service/                 # 领域服务：tool / skill / agent / memory / graphmemory / workspace / mcpclient / bundle / asynctask / workflow / judge / plan / caller / apikey / systemprompt / llmmodel / credits / token / skillchatfile
+├── service/                 # 领域服务：tool / skill / agent / memory / graphmemory / workspace / mcpclient / bundle / asynctask / workflow / judge / plan / app / apikey / systemprompt / llmmodel / credits / token / skillchatfile
 ├── api/llm/                 # LLM 客户端（claude / gpt 兼容 / minimax，流式+工具调用）
 ├── api/pythonexec/          # python_exec 沙箱客户端
 ├── models/llm/              # GORM 模型（38 张表，表结构见 sql/init.sql）
@@ -188,7 +194,7 @@ CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）：push / PR 触发 
 |---|---|
 | ReAct 运行时 | WebSocket 单入口 `/react-base-service/react/ws`，模型流式输出 + 工具循环 + 上下文自动压缩 + 模型互备 |
 | 多 Agent 委派 | Agent 注册表（`/agent/*`，支持 Markdown 导入）；`delegate_agent` 委派子 ReactRun 执行：父子历史/token 预算隔离、事件按 agentPath 归流、支持同轮并行委派 |
-| 计划确认 | `create_plan` Meta Tool：复杂任务先提交分步计划，前端计划卡片 + 「开始任务」确认后按计划执行（进度走 todo）；caller 级三态开关 `allow_plan`（未设置跟随全局 `llm.react.allow_plan`，caller 可强制开/关），显式 Plan 模式入口同闸门 |
+| 计划确认 | `create_plan` Meta Tool：复杂任务先提交分步计划，前端计划卡片 + 「开始任务」确认后按计划执行（进度走 todo）；app 级三态开关 `allow_plan`（未设置跟随全局 `llm.react.allow_plan`，app 可强制开/关），显式 Plan 模式入口同闸门 |
 | Plan 模式 | `executionMode=plan` 的独立执行范式：结构化 Planner 生成线性计划（6 张表全量持久化），逐步创建隔离 Scoped ReactRun 执行，USER_INPUT/USER_ACTION 步骤持久化等待，WS/HTTP 双通道 resume、retry、skip、cancel；Finalizer 总结写回会话历史，等待期间不依赖原 goroutine（详见 [Plan 模块文档](docs/system/plan.md)） |
 | 会话管理 | 会话隐式创建/复用（事务加锁 + 归属校验）、会话列表、并发 run 互斥、软删状态；启动期自动清理重启残留的陈旧活跃 run；会话分叉（fork）：截断点前历史按 run 边界单事务复制成新会话，消息级 / run 级截断点二选一（`throughRunId` + `inclusive`），活跃 run 拒绝；会话重命名（仅标题元数据，活跃 run 不拦截） |
 | 历史回放 | 持久化消息还原为与实时协议同形的事件流（`/react/session/events`），内置回放页面 `/react/replay` |
@@ -196,23 +202,26 @@ CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）：push / PR 触发 
 | Skill 体系 | Skill 注册 + 摘要索引注入 system 前缀 + get_skill 按需加载完整说明；支持 `default` 默认作用域 |
 | 长期记忆 | 跨会话记忆按 owner 作用域读写（memory_write 等 Meta Tool）、run 启动分层注入、修订审计与回滚；管理面 `/react/memory/*` |
 | 图谱记忆 | Graphiti 时序事实图谱（Layer2）：run 启动事实注入 + `graph_memory_search` / `graph_memory_write` Meta Tool，外部 REST 存储 |
-| 代码工作区 | git worktree 代码工作区：bare mirror 单副本缓存 + 静态解析 + commit 锁定，(service, commit) 粒度引用计数共享——多 run / 多 caller 复用同一 worktree 与 repo MCP 子进程；挂载只读检索工具（`ws_<service>_<commit8>_*`）；运行视图 `/react/workspace/active` |
+| 代码工作区 | git worktree 代码工作区：bare mirror 单副本缓存 + 静态解析 + commit 锁定，(service, commit) 粒度引用计数共享——多 run / 多 app 复用同一 worktree 与 repo MCP 子进程；挂载只读检索工具（`ws_<service>_<commit8>_*`）；运行视图 `/react/workspace/active` |
 | Bundle 插件包 | manifest + agents + skills + .mcp.json 打包安装，展开写入注册表并记录快照，卸载按快照逆序回滚（`/react/bundle/*`） |
 | HITL 交互 | Client Tool（浏览器执行）、ask_question 补充信息、危险工具二次确认（tool_confirm），统一经 clientMessageHub 按 toolUseId 认领回包 |
-| 系统提示词 | 按 callerKey + routeValues 前缀匹配解析，多条由通用到具体拼接；支持 `default` 默认作用域（全 caller 共享，拼接在最前） |
+| 系统提示词 | 按 appKey + routeValues 前缀匹配解析，多条由通用到具体拼接；支持 `default` 默认作用域（全 app 共享，拼接在最前） |
 | 异步任务 | 提交快照落库、`<async_tasks>` 提醒注入、resolve/get 闭环工具、Provider 状态同步框架（可插拔） |
 | 定时触发工作流 | cron 无人值守调度 ReAct run（`llm.workflow.enabled` 总开关，`/react/workflow/*` 管理接口）：占位符渲染提示词 + headless 执行、裁判外环语义判级 + 未达成自动追问续跑、markdown 报告产物化（通知附下载链接）、连环失败熔断、webhook 通知（企业微信/飞书）、管理面板 `/react/workflow/admin`（详见 [定时触发工作流实现方案](docs/定时触发工作流实现方案.md)） |
 | 产物与附件 | python_exec 沙箱执行 + 对象存储产物下载（provider 可选 minio/cos/local）；csv/md/txt 附件上传与引用 |
 | 轮次反馈 | run 级点赞/点踩与问题反馈，会话维度回显 |
 | 模型管理 | 用户自定义模型（modelHash 直引）、模型白名单、积分 |
-| 默认作用域 | 工具/系统提示词/skill 可挂在保留伪 caller `default` 下，全部 caller 的请求自动合并解析；管理面板三类资源支持 全部/默认/各 caller（按平台分组）筛选，新建跟随筛选落到目标作用域 |
+| 默认作用域 | 工具/系统提示词/skill 可挂在保留伪 app `default` 下，绑定默认能力的 app 请求自动合并解析；管理面板三类资源支持 全部/默认/各 app（按平台分组）筛选，新建跟随筛选落到目标作用域 |
+| 默认能力池 | 存量工具/Skill 经 `sql/app_rename_v1.sql` 全部迁入 `default` 作用域成为公共能力池；注册新 app 可选 `bindDefaultCapabilities`（默认绑定=true），关闭后该 app 只解析自身名下的工具与 Skill（系统提示词/子 Agent/模型凭证不受影响）；`/app/update` 支持在线切换，对下一个 run 生效 |
+| app 级运行时配置 | 运行时设置表（subagent 委派/上下文压缩/长期记忆/联网开关）增加 `app_key` 维度：`/setting/*/update` 传 `appKey` 写该 app 专属覆盖行，生效优先级 app 覆盖 > 全局覆盖 > custom.yaml；引擎在 run 装配、执行、准入全链路按 app 维度取生效值 |
+| 内置工具（全局开关，不做 app 隔离） | 能力型内置工具对全部 app 统一可见/隐藏，由全局运行时配置决定：`workspace` 键（检索代码和工作区开关，**默认启用**，`/setting/workspace/*`）控制 `load_runtime_code` 及其挂载的 `ws_*` 检索工具；`web` 键（默认启用）控制 `web_fetch`/`web_search`；`memory` 键控制记忆三工具与注入/抽取；subagent 键控制委派工具。yaml 仅保留连接参数（workspace resolvers、searxng、graphiti endpoint）作为基础设施可用性判定。**app 隔离只作用于 MCP 同步工具与 HTTP/Client 业务工具**（app+route 作用域 + 默认能力池开关） |
 | 内置页面 | playground 联调页（`/react/playground`）、回放页（`/react/replay`）、工作流管理面板（`/react/workflow/admin`）、TypeScript SDK |
 
 ## 🗺️ 范围与边界
 
 - **只做通用 Agent 基座**：提供与业务域解耦的运行时和注册管理接口。通用执行范式（ReAct、Plan）属于基座；业务知识库检索、具体业务流程编排等上层能力不属于。`create_plan` 仅为 ReAct 模式内的计划确认卡片，与 Plan 模式互不影响。
-- **对外契约保持稳定**：ReAct 引擎主循环、系统提示词装配顺序（systemPrompt + 工具索引摘要 + Skill 索引摘要）、Meta Tool 集合与描述、两段式工具加载与指纹自愈、Skill 注入，以及注册类接口（caller/skill/tool/apikey/system-prompt）的请求响应结构。
-- **通用化设计**：HTTP 工具请求头透传不绑定特定 caller；异步任务 Provider 框架默认无内置 Provider，按需注册扩展。
+- **对外契约保持稳定**：ReAct 引擎主循环、系统提示词装配顺序（systemPrompt + 工具索引摘要 + Skill 索引摘要）、Meta Tool 集合与描述、两段式工具加载与指纹自愈、Skill 注入，以及注册类接口（app/skill/tool/apikey/system-prompt）的请求响应结构。
+- **通用化设计**：HTTP 工具请求头透传不绑定特定 app；异步任务 Provider 框架默认无内置 Provider，按需注册扩展。
 
 ## 📄 License
 

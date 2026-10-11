@@ -14,6 +14,7 @@ package react
 
 import (
 	"encoding/json"
+	"react-base-service/conf"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,12 +24,12 @@ import (
 	llm "react-base-service/api/llm"
 	"react-base-service/components"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 	model "react-base-service/models/llm"
+
+	"react-base-service/golib/zlog"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"react-base-service/golib/zlog"
 )
 
 // WS 回执与事件词汇（方案 §2.1：steer_queued/guided/drained/rejected/discarded）。
@@ -253,7 +254,7 @@ func pendingInputID(id uint) string {
 // 会话行锁事务内完成归属校验、活跃 run 定位、准入决策与账本落账。
 // Steering 未开启时返回与历史一致的 ErrorReactRunActive（保持硬拒绝行为）。
 func SteerSession(ctx *gin.Context, sessionID string, payload params.ReactRunPayload) (SteerReceipt, error) {
-	if !conf.GetReactRuntimeConfig().Steering.SteeringEnabled() {
+	if !conf.GetReactRuntimeConfigForApp(payload.AppKey).Steering.SteeringEnabled() {
 		return SteerReceipt{}, components.ErrorReactRunActive.Sprintf(sessionID)
 	}
 	sessionID = strings.TrimSpace(sessionID)
@@ -283,7 +284,7 @@ func SteerSession(ctx *gin.Context, sessionID string, payload params.ReactRunPay
 		if session == nil {
 			return components.ErrorReactSessionNotFound.Sprintf(sessionID)
 		}
-		if err := validateReactSessionContext(session, userName, payload.CallerKey, string(routeValuesBytes), normalizeSessionType(payload.Type)); err != nil {
+		if err := validateReactSessionContext(session, userName, payload.AppKey, string(routeValuesBytes), normalizeSessionType(payload.Type)); err != nil {
 			return err
 		}
 		activeRun, err := model.GetActiveOuterReactRunBySessionIDWithDB(ctx, tx, sessionID)
@@ -312,7 +313,7 @@ func admitSteeringInputTx(ctx *gin.Context, tx *gorm.DB, sessionID string, activ
 		SoftLanding:    isRunSoftLanding(activeRun.RunID),
 		HasAttachments: hasAttachments,
 		PreferQueue:    strings.TrimSpace(payload.SteerDelivery) == params.ReactSteerDeliveryQueue,
-		QueueEnabled:   conf.GetReactRuntimeConfig().Steering.QueueEnabled(),
+		QueueEnabled:   conf.GetReactRuntimeConfigForApp(payload.AppKey).Steering.QueueEnabled(),
 	})
 
 	seq, err := model.GetReactPendingInputMaxSeqBySessionIDWithDB(ctx, tx, sessionID)
@@ -485,7 +486,7 @@ func persistGuideUserMessageTx(ctx *gin.Context, tx *gorm.DB, req *runtimeReques
 	}
 	if req != nil {
 		row.UserName = req.userName
-		row.CallerKey = req.payload.CallerKey
+		row.AppKey = req.payload.AppKey
 	}
 	if err := model.CreateReactMessageWithDB(ctx, tx, row); err != nil {
 		return llm.ChatMessage{}, reactMessageRef{}, err
@@ -512,7 +513,7 @@ func settleRunPendingInputs(ctx *gin.Context, emitter *runEventEmitter, runID st
 	} else if count > 0 {
 		zlog.Infof(ctx, "[React.Notify] 未消费后台通知已结算: runId=%s, count=%d, reason=%s", runID, count, settleReason)
 	}
-	if isOuterRun && conf.GetReactRuntimeConfig().Steering.QueueEnabled() {
+	if isOuterRun && appRuntimeConfig(ctx).Steering.QueueEnabled() {
 		count, err := model.FallbackPendingInputsToQueueWithDB(ctx, model.GetLLMDB(), runID)
 		if err != nil {
 			zlog.Warnf(ctx, "[React.Steer] guide 降级排队失败(留待 session_resumed 兜底): runId=%s, err=%v", runID, err)

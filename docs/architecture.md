@@ -7,7 +7,7 @@
 ```
                 ┌──────────────────────────────────────────────────────────────────┐
                 │                            接入层                                 │
-                │  Web 前端(SDK) · playground/回放页 · 服务间调用方 Caller            │
+                │  Web 前端(SDK) · playground/回放页 · 服务间调用方 App            │
                 │  外部 MCP 客户端（Claude/Cursor 等，经 Bearer app_key:secret）      │
                 └───────────────┬──────────────────────────────┬───────────────────┘
                                 │ WebSocket / HTTP              │ MCP Streamable HTTP
@@ -20,7 +20,7 @@
 ┌───────────────────────────────────────────────────────────────────────────────┐
 │                                 controllers/http                              │
 │  react(WS+会话+队列+MCP+memory+bundle+plan_execution+usage+workflow) · agent ·  │
-│  tool · skill · systemprompt · caller · apikey · llmmodel(连接/模型/白名单/积分)│
+│  tool · skill · systemprompt · app · apikey · llmmodel(连接/模型/白名单/积分)│
 │  · setting(在线配置) · mcpadmin(网关管理台兼容层) · attachment(附件上传)         │
 └───────────────────────────────────────┬───────────────────────────────────────┘
                                         ▼
@@ -57,7 +57,7 @@
 │  service/mcpgateway MCP 服务端网关（本服务 http 工具经 MCP 协议对外供给）        │
 │  service/bundle     Agent 插件包安装/卸载/回滚                                  │
 │  service/workspace  服务端代码工作区（mirror + worktree + 动态挂载 repo MCP）    │
-│  service/{tool,systemprompt,caller,apikey}  注册类资源管理                      │
+│  service/{tool,systemprompt,app,apikey}  注册类资源管理                      │
 │  service/llmmodel + credits    连接与模型管理、用户积分                          │
 │  service/setting    运行时在线配置（DB 覆盖 > yaml > 默认，TTL 刷新）            │
 │  service/asynctask  异步任务 Provider 状态同步框架                              │
@@ -88,9 +88,9 @@ WS 连接 /react/ws（run / steer / cancel / queue_send / plan_* / tool_use_answ
   └─ dispatchRunExecution：executionMode=plan 走 Plan Runtime（§10），否则普通 ReAct
       └─ run()（外层 for：S2 队列自动续跑循环）→ runSingle()
           ├─ prepareRuntimeRequest
-          │    ├─ caller 校验 + 用户名解析（X-User-Name 头，默认 anonymous）
+          │    ├─ app 校验 + 用户名解析（X-User-Name 头，默认 anonymous）
           │    ├─ 模型解析：用户自定义模型（连接/自包含双模式）或全局模型目录
-          │    ├─ ResolveSystemPrompt（caller+route 前缀匹配，多条拼接）
+          │    ├─ ResolveSystemPrompt（app+route 前缀匹配，多条拼接）
           │    ├─ 工具/Skill/Agent 索引快照（含白名单与用户策略过滤）
           │    ├─ 长期记忆注入：<memory>（分层条目）+ <graph_memory>（按本次输入检索）
           │    ├─ reasoning 三态解析（off/auto/custom，快照进 runtimeRequest）
@@ -197,7 +197,7 @@ type ToolMeta struct {
 | displayFiles | 把 python_exec 产物展示给用户 | 总是 |
 | resolve_async_task / get_async_task | 异步任务完结标记 / 完整记录回读 | 总是 |
 | read_attachment / inspect_attachment | 附件读取 / csv 表结构探查 | 总是 |
-| create_plan | 计划确认卡片（ReAct 内的轻量计划确认，§10） | `allow_plan`（caller 级三态，§10） |
+| create_plan | 计划确认卡片（ReAct 内的轻量计划确认，§10） | `allow_plan`（app 级三态，§10） |
 | load_runtime_code | 加载服务线上代码到 (service, commit) 共享只读工作区并挂检索工具 | `workspace.enabled` |
 | web_fetch | 抓取公开网页正文，按预算截断 + resultRef 续读 | `web_fetch.enabled` |
 | web_search | SearXNG 网页检索（标题/链接/摘要清单） | `web_search` 启用且已配置 |
@@ -223,7 +223,7 @@ type ToolMeta struct {
 
 ### 4.2 内置子代理 profile（`service/agent/builtin.go`）
 
-参照 ZCode"代码内置 + 同名覆盖"模式：4 个内置 profile 以 `builtin:` 前缀 AgentID 物化在代码中不落库，`CallerKey=default`（保留字伪 caller，全 caller 可见）；解析顺序 **DB > 内置**，DB 中同 agent_key 的行即 fork（整体覆盖）：
+参照 ZCode"代码内置 + 同名覆盖"模式：4 个内置 profile 以 `builtin:` 前缀 AgentID 物化在代码中不落库，`AppKey=default`（保留字伪 app，全 app 可见）；解析顺序 **DB > 内置**，DB 中同 agent_key 的行即 fork（整体覆盖）：
 
 | profile | 工具白名单 | 只读域 | 定位 |
 |---|---|---|---|
@@ -272,7 +272,7 @@ type ToolMeta struct {
 
 ### 7.1 连接与模型分离（重构后形态）
 
-- **tblLlmConnection**：`protocol(openai/anthropic) + base_url + api_key（密文）` 的自包含连接，是模型配置主体形态；`tblLlmUserModel.connection_id` 引用连接取凭证与端点（0=自包含模式，key/url 直接填模型上）；解析顺序 caller 精确命中且 route 最长 > 空 caller 全局兜底 > 回退旧 tblLlmApiKey。
+- **tblLlmConnection**：`protocol(openai/anthropic) + base_url + api_key（密文）` 的自包含连接，是模型配置主体形态；`tblLlmUserModel.connection_id` 引用连接取凭证与端点（0=自包含模式，key/url 直接填模型上）；解析顺序 app 精确命中且 route 最长 > 空 app 全局兜底 > 回退旧 tblLlmApiKey。
 - 服务端代理 `GET {base}/models` 拉取模型清单（key 不出后端），自动填能力位；连接检测先验凭证再用最小对话验推理链路。
 - `service/llmmodel/schema.go` 声明式参数 schema 下发前端渲染（contextTokens/maxOutputTokens/reasoning 预算/压缩参数等，min/max/step 零硬编码）。
 
@@ -310,14 +310,14 @@ conf 加载支持 `${VAR}` / `${VAR:-default}` 环境引用（仓库不落明文
 
 - 统一 `Server` 接口（Start/Stop/ListTools/CallTool），三种传输：`kind=repo`（stdio 子进程，可执行文件走适配器白名单，仅 `bin/repo-mcp`）；`kind=http`（手写 Streamable HTTP，按次会话，支持 JSON 与 SSE 响应）；`kind=http_sdk/sdk`（官方 MCP Go SDK）。
 - SSRF 防护（`endpoint.go`）：仅 http/https，拒绝环回/私网/链路本地/CGNAT 等保留网段，域名解析后逐一判定（防 DNS rebinding）；`allow_private_endpoint` 仅本机开发。
-- 工具同步：toolId `mcp_<server>_<tool>`（绑定 caller 副本加后缀），config 携带 inputSchema/outputSchema/mcpServer/mcpTool；**仅 kind=repo（ws_ 工具族）同步 `readOnly:true`**，其余语义未知保守不标。失联分级：连接失败 → 工具整体 status=0（恢复自动恢复）；服务器下架工具 → 停用名单外行；删除/停用/解绑 → 软删。启动时 `CleanupOrphanedRegistryTools` 兜底软删无来源服务器的孤儿工具（软删行占唯一键，同名重接自动复活）。
+- 工具同步：toolId `mcp_<server>_<tool>`（绑定 app 副本加后缀），config 携带 inputSchema/outputSchema/mcpServer/mcpTool；**仅 kind=repo（ws_ 工具族）同步 `readOnly:true`**，其余语义未知保守不标。失联分级：连接失败 → 工具整体 status=0（恢复自动恢复）；服务器下架工具 → 停用名单外行；删除/停用/解绑 → 软删。启动时 `CleanupOrphanedRegistryTools` 兜底软删无来源服务器的孤儿工具（软删行占唯一键，同名重接自动复活）。
 - 来源二：DB 注册表（`/react/mcp/*` 管理端点：list/detail/create/update/delete/connect/refresh）+ yaml 静态声明（`mcp.servers`，只读展示）；支持粘贴标准 `mcpServers` JSON（仅 url 形式，command/args 拒绝）。运行中服务器工具变更不自动重同步，需手动刷新。
 
 ### 8.2 mcpgateway
 
 - 端点 `/mcp`（独立进程）或 `/react-base-service/mcp`（内嵌），Streamable HTTP 且 `Stateless + JSONResponse`（每请求独立生命周期，天然支持多副本水平扩容）。
 - **鉴权**：`Bearer <app_key>:<app_secret>`（常量时间比较，查 tblLlmMcpApp）；失败返回 403 而非 401（避免客户端误走 OAuth 发现）；`X-MCP-User` 仅审计展示。
-- **注册与白名单**：工具基础集合（全部启用 http 工具，跨 caller 按名去重）∩ 应用绑定（tblLlmMcpAppTool）——绑定即权限；tools/call 阶段按名复核（防客户端缓存过期）。
+- **注册与白名单**：工具基础集合（全部启用 http 工具，跨 app 按名去重）∩ 应用绑定（tblLlmMcpAppTool）——绑定即权限；tools/call 阶段按名复核（防客户端缓存过期）。
 - **执行链**：JSON Schema 显式校验（缺必填字段附参数 description 追问）→ dispatch（GET/DELETE 转 query，其余 JSON body；可透传调用方 Cookie）→ 上游响应信封归一 → 审计。
 - **结构化输出**：成功同时返回文本与 StructuredContent；outputSchema 声明 `x-output-projection: true` 时按 schema 裁剪上游响应并把字段 description 渲染成说明文本；最终按 outputSchema 校验结果结构。
 - **审计**：`tools/call` 全量切面，异步批量落 tblLlmMcpCallLog（4096 队列满则丢弃告警、100 条/批、最长 1s flush；只插不改）。
@@ -327,7 +327,7 @@ conf 加载支持 `${VAR}` / `${VAR:-default}` 环境引用（仓库不落明文
 
 - `repotools/` 只读仓库访问：ast-grep 风格结构化搜索（pattern 元变量 `$NAME`/`$$$NAME`）、go/ast 声明感知检索、路径全部限制在 REPO_ROOT 内（含符号链接逃逸校验）。
 - `cmd/repo-mcp` 注册 9 个工具：list_repositories / list_files / read_file / search_code / search_pattern / find_symbol / get_file_symbols / find_references / get_repo_map。
-- `service/workspace` 四件套：静态 resolver 白名单（service+env → repo_url+ref）→ bare mirror 缓存（clone --mirror / fetch --prune，mirror 级互斥防 .lock 冲突）→ **(service, commit) 粒度共享 worktree + repo MCP（引用计数，多 run/caller 复用一份）** → 动态挂载只读 repo MCP（工具名 `ws_<service>_<commit8>_<tool>`，带 commit 天然唯一）；run 终态 ReleaseRun 减引用：caller 归零摘其工具副本、总归零才回收 worktree 与 MCP。安全面：service/env/ref 正则白名单、git 子命令白名单、不经 shell。
+- `service/workspace` 四件套：静态 resolver 白名单（service+env → repo_url+ref）→ bare mirror 缓存（clone --mirror / fetch --prune，mirror 级互斥防 .lock 冲突）→ **(service, commit) 粒度共享 worktree + repo MCP（引用计数，多 run/app 复用一份）** → 动态挂载只读 repo MCP（工具名 `ws_<service>_<commit8>_<tool>`，带 commit 天然唯一）；run 终态 ReleaseRun 减引用：app 归零摘其工具副本、总归零才回收 worktree 与 MCP。安全面：service/env/ref 正则白名单、git 子命令白名单、不经 shell。
 - 模型入口：`load_runtime_code` Meta Tool；code-reader 内置子代理的标准工作流。
 
 ## 9. 长期记忆
@@ -338,7 +338,7 @@ conf 加载支持 `${VAR}` / `${VAR:-default}` 环境引用（仓库不落明文
 
 - `tblLlmMemoryItem`：原子事实，逻辑唯一键 `(owner_type, owner_key, item_key)`——item_key 为内容规范化 SHA-256 前 16 位指纹（幂等去重）；`version` 乐观锁；`tags.locked` 只读保护。
 - `tblLlmMemoryRevision`：不可变修订流水（action/before/after/reason/source），回滚 = 用旧快照反向插入新修订。
-- 作用域：`caller`（公共底座）/ `caller_user`（用户级覆盖同名条目）。
+- 作用域：`app`（公共底座）/ `app_user`（用户级覆盖同名条目）。
 - **`ApplyMutation` 唯一写入口**：归一化 → 校验 → 敏感拦截（凭证/JWT/私钥/身份证/手机号正则）→ 事务写（含流水）→ 打点。模型工具（source=model）、管理面（admin）、reflection、extractor 四类写入方全部经此，审计链无旁门。容量守门（resident 条数上限 / detached 软上限）。
 
 ### 9.2 提取与反思（compact_end 后触发，二者互斥，均不阻塞主 run）
@@ -355,7 +355,7 @@ conf 加载支持 `${VAR}` / `${VAR:-default}` 环境引用（仓库不落明文
 
 ### 9.4 graphmemory（Layer2）
 
-指向外部 Graphiti FastAPI 服务的瘦 HTTP 客户端（/search、/messages、/healthcheck），不镜像图数据。scope：基座两级作用域映射为 Graphiti `group_id`（caller 级组做公共底座，userScope 开启时追加用户组；组名清洗 + 哈希后缀防碰撞），服务端强制注入组、模型入参不暴露组概念。`graph_memory_search/write` 两工具；run 初始化按本次输入检索渲染 `<graph_memory>` 块——增强不是依赖，失败/超时/空结果一律空串绝不阻断 run。
+指向外部 Graphiti FastAPI 服务的瘦 HTTP 客户端（/search、/messages、/healthcheck），不镜像图数据。scope：基座两级作用域映射为 Graphiti `group_id`（app 级组做公共底座，userScope 开启时追加用户组；组名清洗 + 哈希后缀防碰撞），服务端强制注入组、模型入参不暴露组概念。`graph_memory_search/write` 两工具；run 初始化按本次输入检索渲染 `<graph_memory>` 块——增强不是依赖，失败/超时/空结果一律空串绝不阻断 run。
 
 ## 10. Plan Runtime（时序编排执行器）
 
@@ -375,7 +375,7 @@ submit_plan（schema-constrained 虚拟工具，非 ReAct 不执行工具，max 
 - 失败/取消级联：剩余 PENDING 步骤批量置 CANCELLED，不留孤儿；步骤超时（区别于用户取消）换新 Attempt 重试，自动重试耗尽后允许手工 Retry（同事务复位外层 run）/ Skip（仅非 required）/ Cancel。
 - 前端视图：`plan_view_update`（状态变化推送 PlanPublicView）/ `plan_step_event`（步骤 run 事件包装）；HTTP `POST /react/plan_execution/{detail,events,resume,retry,skip,cancel}` + WS `plan_resume/plan_retry/plan_skip/plan_cancel`。
 - 与旧 `create_plan` Meta Tool 的关系：后者仍是普通 ReAct 模式里的"计划确认卡片"（生成计划 → 前端确认 → 新 run 按计划执行，进程内存态），受 `allow_plan` 控制；Plan Runtime 才是真执行器。
-- **allow_plan 三态闸门**（caller 级）：`tblLlmCaller.allow_plan` 显式 true/false 覆盖全局 `llm.react.allow_plan`（默认开），未配置跟随全局；执行档案装配与 `executionMode=plan` 显式入口闸门共用同一口径。
+- **allow_plan 三态闸门**（app 级）：`tblLlmApp.allow_plan` 显式 true/false 覆盖全局 `llm.react.allow_plan`（默认开），未配置跟随全局；执行档案装配与 `executionMode=plan` 显式入口闸门共用同一口径。
 
 ## 11. Bundle（Agent 插件包）
 
@@ -401,7 +401,7 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 
 ## 13. 周边能力
 
-- **会话管理**：sessionId 锁定复用（校验归属五元组 userName/callerKey/routeValues/type 一致）；同会话并发 run 互斥（Steering 开启后转为插话准入）。端点：`POST /react/session/list` 分页（type/keyword 过滤）、`POST /react/session/events` 历史回放、`POST /react/session/delete` **硬删级联**（Plan 五表/工具结果/排队账本/反馈/产物/异步任务/消息/run/session 单事务，活跃 run 拒绝）、`POST /react/session/fork` 复制式分叉、`POST /react/session/rename` 重命名。
+- **会话管理**：sessionId 锁定复用（校验归属五元组 userName/appKey/routeValues/type 一致）；同会话并发 run 互斥（Steering 开启后转为插话准入）。端点：`POST /react/session/list` 分页（type/keyword 过滤）、`POST /react/session/events` 历史回放、`POST /react/session/delete` **硬删级联**（Plan 五表/工具结果/排队账本/反馈/产物/异步任务/消息/run/session 单事务，活跃 run 拒绝）、`POST /react/session/fork` 复制式分叉、`POST /react/session/rename` 重命名。
 - **会话分叉（fork）**：截断点之前的历史按 **run 边界对齐**复制成一个全新普通会话——分叉出的会话走既有历史装配/回放/压缩路径零改动，原会话硬删不影响分叉。截断点两种给法：`throughRunId + inclusive`（run 级，前端轮次入口；inclusive=true 带着该轮继续，false 回到该轮提问前，缺省 true）或 `throughMessageId`（消息级，命中 run 起始用户输入该轮起丢弃、否则整轮保留），二者恰好提供一个；delegate 子 run 随父复制并重写 parent_run_id，plan/* run 与 Plan 子表剔除。复制纪律：session/run/message 业务 ID 全量重生成、compact `coveredThrough` 游标按映射重写、`created_at` 保序（timeline 主序不变）；TodoState/已加载工具经"最新外层 run 继承"无缝延续；活跃 run 拒绝（行锁 + 并发检查，与 delete 同口径），排队账本等运行态数据（ToolResult/PendingInput/Feedback/Artifact/AsyncTask/Plan）不复制。前端 SDK 在每轮末尾反馈条提供"从这里分叉"入口，分叉成功后自动切到新会话。
 - **会话重命名（rename）**：仅标题元数据（去空白 + rune 截断 64 字，与 fork 自定义标题共用上限），活跃 run **不**拦截（与 delete/fork 的数据级联约束刻意区分）；行锁读-归属校验-写同事务，幂等短路（标题未变不写库，避免无谓 bump updated_at 扰动列表排序）。
 - **历史回放**：`POST /react/session/events` 把 tblLlmReactMessage 按时间线还原成**与实时 WS 协议同形**的事件流（含 plan_view_update、steer_* 等新事件），直播与回放共用一套解析；内置回放页 `GET /react/replay`。
@@ -412,7 +412,7 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 - **web_search**：SearXNG JSON API（自建实例免密钥）；结果只含标题/链接/摘要；结构化结果经 meta 旁路给前端（可点击），不进模型上下文。
 - **上下文容量看板**：`POST /react/usage/context` 聚合会话最近 run 的容量占用、缓存命中率、六类 token 构成（context_breakdown 数据源）。
 - **工具确认门**：`tblLlmTool.permission_mode` 三档——auto / confirm（每次人工确认）/ confirm_risky（入参命中风险正则才确认）；确认流复用 ask_question 等待通道（`tool_confirm_request` 事件 + WS `tool_confirm_answer` 回填）；agent 级 permission_mode 是子 run 内全部工具的下限。
-- **内置技能包**：5 条 SKILL.md 经 go:embed 打进二进制（委派任务写作 / 大数据结果处理 / 业务工具两段式调用 / Python 数据分析 / 代码工作区调查）；caller 创建时 + 启动时为全部 caller（含 default）幂等补种，同名行跳过不覆盖用户改动；生效路径与自建技能一致（摘要索引 + get_skill 按需加载 + triggers 关键词触发）。
+- **内置技能包**：5 条 SKILL.md 经 go:embed 打进二进制（委派任务写作 / 大数据结果处理 / 业务工具两段式调用 / Python 数据分析 / 代码工作区调查）；app 创建时 + 启动时为全部 app（含 default）幂等补种，同名行跳过不覆盖用户改动；生效路径与自建技能一致（摘要索引 + get_skill 按需加载 + triggers 关键词触发）。
 
 ## 14. 运行时在线配置
 
@@ -426,14 +426,14 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 
 | 域 | 表 | 说明 |
 |---|---|---|
-| 调用方与注册资源（11） | tblLlmCaller | 调用方（鉴权与资源归属主体；default 为保留字伪作用域） |
-| | tblLlmSystemPrompt | 系统提示词（caller+route 前缀匹配） |
+| 调用方与注册资源（11） | tblLlmApp | 调用方（鉴权与资源归属主体；default 为保留字伪作用域） |
+| | tblLlmSystemPrompt | 系统提示词（app+route 前缀匹配） |
 | | tblLlmTool / tblLlmToolUserPolicy | 工具（http/client/mcp，含 permission_mode）及用户白名单 |
 | | tblLlmSkill | 技能（SKILL.md 正文 + triggers） |
 | | tblLlmAgent | 子 Agent 定义（tools_json/read_only/max_steps/max_tokens_per_run） |
 | | tblLlmBundle / tblLlmBundleResource | 插件包安装记录 / 资源清单（快照回滚） |
-| | tblLlmMcpServer / tblLlmMcpServerCaller | MCP 连接注册表 / 连接-caller 绑定 |
-| | tblLlmApiKey | caller 级模型凭证（被 tblLlmConnection 升维替代中） |
+| | tblLlmMcpServer / tblLlmMcpServerApp | MCP 连接注册表 / 连接-app 绑定 |
+| | tblLlmApiKey | app 级模型凭证（被 tblLlmConnection 升维替代中） |
 | 模型与积分（4） | tblLlmConnection | 模型连接（protocol+base_url+密文 key） |
 | | tblLlmUserModel | 用户自定义模型（connection_id 或自包含） |
 | | tblLlmUserBaseCredits / tblLlmUserBonusCredits | 月度基础/赠送积分（**未接线**：仅列表展示与管理调整，run 链路无门禁/扣减） |
@@ -447,7 +447,7 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 | MCP 网关（3） | tblLlmMcpApp / tblLlmMcpAppTool / tblLlmMcpCallLog | 应用凭证 / 工具白名单 / 调用审计 |
 | 定时工作流（2） | tblLlmWorkflow / tblLlmWorkflowRun | 工作流定义（cron/目标/判级正则/webhook）/ 执行历史（planned_fire_at 防重、终态、风险等级、结论快照） |
 
-完整 DDL 见 `sql/init.sql`（增量迁移：`mcp_gateway_v1.sql`、`plan_runtime_v1.sql`、`runtime_setting_v1.sql`、`memory_v2_upgrade.sql`、`model_config_v1.sql`、`caller_allow_plan_v1.sql`；workflow 两表随 init.sql 全量维护）。
+完整 DDL 见 `sql/init.sql`（增量迁移：`mcp_gateway_v1.sql`、`plan_runtime_v1.sql`、`runtime_setting_v1.sql`、`memory_v2_upgrade.sql`、`model_config_v1.sql`、`app_allow_plan_v1.sql`；workflow 两表随 init.sql 全量维护）。
 
 ## 16. 关键设计约束
 
@@ -465,7 +465,7 @@ cron 无人值守调度 ReAct run。总开关 `llm.workflow.enabled`：关闭时
 `main.go` → `router.Tasks(engine)`（退出挂 `router.StopTasks()`）：
 
 1. `model.ExpireStaleActiveReactRuns(30min)`：清理上一进程遗留活跃 run（同步，先于路由注册）；
-2. `go skillService.SeedBundledSkillsForAllCallers()`：内置技能包幂等补种（异步）；
+2. `go skillService.SeedBundledSkillsForAllApps()`：内置技能包幂等补种（异步）；
 3. `asynctask.Start`：异步任务状态同步框架（无 Provider 空转）；
 4. `mcpclient.Bootstrap`：拉起 yaml 静态 MCP 服务器 → 同步工具注册表 → 拉起 DB 登记连接 → 清理孤儿工具；
 5. `mcpgateway.StartAuditWriter`（`mcp_server.enabled` 时）：审计异步落库 worker 池；

@@ -50,7 +50,7 @@ type Workflow struct {
 	WorkflowKey  string `json:"workflowKey" gorm:"column:workflow_key;not null"`
 	Name         string `json:"name" gorm:"column:name;not null"`
 	Description  string `json:"description" gorm:"column:description;type:text"`
-	CallerKey    string `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey    string `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues  string `json:"routeValues" gorm:"column:route_values;not null;default:'[]'"`
 	UserName     string `json:"userName" gorm:"column:user_name;not null;default:''"`
 	Prompt       string `json:"prompt" gorm:"column:prompt;not null"`
@@ -215,12 +215,12 @@ func UpdateWorkflowRunByID(ctx context.Context, runID uint64, columns map[string
 	return nil
 }
 
-// CountRunningWorkflowRunsByCaller 统计某 caller 名下未删除 workflow 的在途 run 数（并发闸门）。
+// CountRunningWorkflowRunsByApp 统计某 app 名下未删除 workflow 的在途 run 数（并发闸门）。
 // excludeRunID 用于排除刚插入的本次 run 自身（0=不排除）。
-func CountRunningWorkflowRunsByCaller(ctx context.Context, callerKey string, excludeRunID uint64) (int64, error) {
+func CountRunningWorkflowRunsByApp(ctx context.Context, appKey string, excludeRunID uint64) (int64, error) {
 	query := helpers.MysqlClientLLM.WithContext(ctx).Model(&WorkflowRun{}).
 		Joins("JOIN tblLlmWorkflow w ON w.id = tblLlmWorkflowRun.workflow_id").
-		Where("w.caller_key = ? AND w.deleted_at = 0", callerKey).
+		Where("w.app_key = ? AND w.deleted_at = 0", appKey).
 		Where("tblLlmWorkflowRun.status IN ?", workflowRunningStatuses)
 	if excludeRunID > 0 {
 		query = query.Where("tblLlmWorkflowRun.id <> ?", excludeRunID)
@@ -284,7 +284,7 @@ func ListRecentWorkflowRunStatuses(ctx context.Context, workflowID uint64, limit
 }
 
 // ExpireStaleWorkflowRuns 把上次进程生命周期遗留的在途 run 置为 failed（单实例语义：
-// 本进程重启后它们不可能还在执行）；否则僵尸行会永久占用 caller 并发闸门（真机踩坑）。
+// 本进程重启后它们不可能还在执行）；否则僵尸行会永久占用 app 并发闸门（真机踩坑）。
 func ExpireStaleWorkflowRuns(ctx context.Context) (int64, error) {
 	result := helpers.MysqlClientLLM.WithContext(ctx).Model(&WorkflowRun{}).
 		Where("status IN ?", workflowRunningStatuses).

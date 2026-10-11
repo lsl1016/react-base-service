@@ -1,6 +1,7 @@
 package setting
 
 import (
+	"strings"
 	"react-base-service/components"
 	"react-base-service/components/params"
 	"react-base-service/helpers"
@@ -20,7 +21,7 @@ import (
 // @Failure      400  {object} components.DefaultRenderWithTrace  "查询失败"
 // @Router       /setting/context/get [post]
 func GetContextCompactSetting(ctx *gin.Context) {
-	resp, err := settingService.GetContextCompactSetting(ctx)
+	resp, err := settingService.GetContextCompactSetting(ctx, strings.TrimSpace(ctx.Query("appKey")))
 	if err != nil {
 		zlog.Errorf(ctx, "[Setting.GetContext] 查询失败: %v", err)
 		components.RenderJsonFail(ctx, err)
@@ -46,7 +47,7 @@ func UpdateContextCompactSetting(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf(err.Error()))
 		return
 	}
-	resp, err := settingService.UpdateContextCompactSetting(ctx, &req, helpers.GetUserName(ctx))
+	resp, err := settingService.UpdateContextCompactSetting(ctx, req.AppKey, &req, helpers.GetUserName(ctx))
 	if err != nil {
 		zlog.Errorf(ctx, "[Setting.UpdateContext] 更新失败: %v", err)
 		components.RenderJsonFail(ctx, err)

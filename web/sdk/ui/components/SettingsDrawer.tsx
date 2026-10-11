@@ -208,7 +208,7 @@ function ConnectionsSection(props: ConnectionsSectionProps) {
     <div class="agent-ui-settings-stack">
       <div class="agent-ui-settings-hint">
         连接 = 协议 + 接入地址 + API Key。测试连通后可一键拉取可用模型并勾选启用；
-        无 ModelHash 的 run 也会按 caller+路由解析到连接（优先于旧版 API Key）。
+        无 ModelHash 的 run 也会按 app+路由解析到连接（优先于旧版 API Key）。
       </div>
       <For each={props.connections}>
         {(item) => (
@@ -422,7 +422,7 @@ function ConnectionCard(props: ConnectionCardProps) {
         </div>
       </div>
       <div class="agent-ui-settings-card-sub" title={props.item.baseUrl}>
-        {props.item.baseUrl} · {props.item.apiKey} · caller: {props.item.callerKey || "（空）"}
+        {props.item.baseUrl} · {props.item.apiKey} · app: {props.item.appKey || "（空）"}
       </div>
       <Show when={testResult()}>
         {(result) => (
@@ -529,7 +529,7 @@ function AddConnectionRow(props: {
   const [name, setName] = createSignal("");
   const [baseUrl, setBaseUrl] = createSignal("");
   const [apiKey, setApiKey] = createSignal("");
-  const [callerKey, setCallerKey] = createSignal("");
+  const [appKey, setAppKey] = createSignal("");
   const [creating, setCreating] = createSignal(false);
 
   const activePreset = () => CONNECTION_PRESETS.find((item) => item.key === preset()) ?? CONNECTION_PRESETS[0];
@@ -557,7 +557,7 @@ function AddConnectionRow(props: {
         protocol: effectiveProtocol(),
         baseUrl: effectiveBaseUrl().trim(),
         apiKey: apiKey().trim(),
-        callerKey: callerKey().trim(),
+        appKey: appKey().trim(),
         routeValues: [],
       });
       props.onFeedback("ok", "连接已创建，可点「测试连通」验证后拉取模型");
@@ -617,8 +617,8 @@ function AddConnectionRow(props: {
             />
           </label>
           <label class="agent-ui-settings-field">
-            <span>作用 caller（可选；留空 = 全局通用，无 ModelHash 的 run 按 caller+路由解析）</span>
-            <input type="text" placeholder="如 demo-app" value={callerKey()} onInput={(event) => setCallerKey(event.currentTarget.value)} />
+            <span>作用 app（可选；留空 = 全局通用，无 ModelHash 的 run 按 app+路由解析）</span>
+            <input type="text" placeholder="如 demo-app" value={appKey()} onInput={(event) => setAppKey(event.currentTarget.value)} />
           </label>
           <div class="agent-ui-settings-form-actions">
             <button type="button" class="agent-ui-settings-btn agent-ui-settings-btn-primary" disabled={creating()} onClick={() => void create()}>

@@ -12,7 +12,7 @@ export interface SessionItem {
   /** 会话唯一标识（格式：session_ + uuid） */
   sessionId: string;
   /** 业务标识（如 'report-editor'） */
-  callerKey: string;
+  appKey: string;
   /** 路由参数（如 ['report_abc123']） */
   routeValues: string[];
   /** 会话类型，当前仅支持 'chat' */
@@ -34,7 +34,7 @@ export interface SessionItem {
 /** session/list 接口请求参数 */
 export interface SessionListParams {
   /** 业务标识（必填） */
-  callerKey: string;
+  appKey: string;
   /** 路由参数 */
   routeValues?: string[];
   /** 会话类型过滤，当前仅 'chat' */
@@ -173,7 +173,7 @@ export interface QueueItem {
 /** queue/list 请求参数 */
 export interface QueueListParams {
   sessionId: string;
-  callerKey: string;
+  appKey: string;
   routeValues?: string[];
 }
 
@@ -187,7 +187,7 @@ export interface QueueListResp {
 /** session/delete 请求参数 */
 export interface SessionDeleteParams {
   sessionId: string;
-  callerKey: string;
+  appKey: string;
   routeValues?: string[];
 }
 
@@ -215,7 +215,7 @@ export interface SessionForkParams {
   inclusive?: boolean;
   /** 新会话标题；缺省服务端用「原标题 (分叉)」 */
   title?: string;
-  callerKey: string;
+  appKey: string;
   routeValues?: string[];
 }
 
@@ -233,7 +233,7 @@ export interface SessionForkResp {
 export interface SessionRenameParams {
   sessionId: string;
   title: string;
-  callerKey: string;
+  appKey: string;
   routeValues?: string[];
 }
 

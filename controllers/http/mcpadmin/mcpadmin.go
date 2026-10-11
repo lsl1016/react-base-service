@@ -3,10 +3,10 @@
 // 协议适配到本项目的融合后端（tblLlmTool http 工具 + tblLlmMcpApp/McpAppTool 凭证绑定）。
 //
 // 字段映射（mcp-server 数据模型 → 融合模型）：
-//   - 工具数字 id → tblLlmTool 自增主键；bizTag → caller_key（归属标记，不参与网关可见性）
+//   - 工具数字 id → tblLlmTool 自增主键；bizTag → app_key（归属标记，不参与网关可见性）
 //   - url/requestConfig/readOnly → config 的 url / {method,timeout_ms,headers} / method==GET
 //   - status：管理台 1=停用 2=启用 ↔ 融合表 0/1
-//   - app → tblLlmMcpApp（应用不再绑定 caller；可见工具=tblLlmMcpAppTool 白名单子集，
+//   - app → tblLlmMcpApp（应用不再绑定 app；可见工具=tblLlmMcpAppTool 白名单子集，
 //     绑定编辑走 playground「MCP 应用」页）
 package mcpadmin
 
@@ -146,7 +146,7 @@ func toolToAdminView(tool model.Tool) adminToolView {
 	}
 	return adminToolView{
 		ID:            int(tool.ID),
-		BizTag:        tool.CallerKey,
+		BizTag:        tool.AppKey,
 		URL:           cfg.URL,
 		RequestConfig: requestConfigText(cfg),
 		Name:          tool.Name,
@@ -175,7 +175,7 @@ type adminPageResult struct {
 	PageSize int             `json:"pageSize"`
 }
 
-// ListTools 管理台工具分页列表（bizTag=caller 作用域过滤；keyword 跨名称/描述/URL 检索）。
+// ListTools 管理台工具分页列表（bizTag=app 作用域过滤；keyword 跨名称/描述/URL 检索）。
 func ListTools(ctx *gin.Context) {
 	handleToolPage(ctx, false)
 }
@@ -201,12 +201,12 @@ func handleToolPage(ctx *gin.Context, _ bool) {
 		if req.EnabledOnly && tool.Status != 1 {
 			continue
 		}
-		if req.BizTag != "" && tool.CallerKey != req.BizTag {
+		if req.BizTag != "" && tool.AppKey != req.BizTag {
 			continue
 		}
 		if keyword := strings.ToLower(strings.TrimSpace(req.Keyword)); keyword != "" {
 			cfg, _ := parseAdminToolConfig(tool.Config)
-			haystack := strings.ToLower(tool.Name + " " + tool.Description + " " + tool.CallerKey + " " + cfg.URL)
+			haystack := strings.ToLower(tool.Name + " " + tool.Description + " " + tool.AppKey + " " + cfg.URL)
 			if !strings.Contains(haystack, keyword) {
 				continue
 			}
@@ -323,8 +323,8 @@ type adminBatchCreateRequest struct {
 }
 
 // BatchCreateTools 批量注册工具（管理台「新增工具」多草稿提交）。
-// bizTag 即归属 caller（缺省 default，须为存活 caller 或保留作用域）；全部条目校验通过后逐条落库。
-// 工具名在 http 基础集合内必须全局唯一（MCP 工具名不携带 caller 维度，重名会在网关注册时被跳过）。
+// bizTag 即归属 app（缺省 default，须为存活 app 或保留作用域）；全部条目校验通过后逐条落库。
+// 工具名在 http 基础集合内必须全局唯一（MCP 工具名不携带 app 维度，重名会在网关注册时被跳过）。
 func BatchCreateTools(ctx *gin.Context) {
 	var req adminBatchCreateRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -357,15 +357,15 @@ func BatchCreateTools(ctx *gin.Context) {
 			return
 		}
 		existingNames[name] = true
-		callerKey := defaultBizTag(mutation)
-		if !model.IsReservedCallerKey(callerKey) {
-			caller, err := model.GetActiveCallerByKey(ctx, callerKey)
+		appKey := defaultBizTag(mutation)
+		if !model.IsReservedAppKey(appKey) {
+			app, err := model.GetActiveAppByKey(ctx, appKey)
 			if err != nil {
 				components.RenderJsonFail(ctx, err)
 				return
 			}
-			if caller == nil {
-				components.RenderJsonFail(ctx, components.ParamInvalidf("第 %d 条 bizTag（caller）不存在或已停用: %s", index+1, callerKey))
+			if app == nil {
+				components.RenderJsonFail(ctx, components.ParamInvalidf("第 %d 条 bizTag（app）不存在或已停用: %s", index+1, appKey))
 				return
 			}
 		}
@@ -382,7 +382,7 @@ func BatchCreateTools(ctx *gin.Context) {
 			Name:        strings.TrimSpace(mutation.Name),
 			Description: description,
 			ToolType:    "http",
-			CallerKey:   callerKey,
+			AppKey:   appKey,
 			Config:      json.RawMessage(configJSON),
 		}, operator)
 		if err != nil {
@@ -642,8 +642,8 @@ func ListApps(ctx *gin.Context) {
 type adminAppCreateRequest struct {
 	AppName string `json:"appName"`
 	Owner   string `json:"owner"`
-	// CallerKey 兼容字段：应用不再绑定 caller，传入即忽略。
-	CallerKey   string `json:"callerKey"`
+	// AppKey 兼容字段：应用不再绑定 app，传入即忽略。
+	AppKey   string `json:"appKey"`
 	Description string `json:"description"`
 }
 

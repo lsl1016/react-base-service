@@ -105,7 +105,7 @@ func (s *reactEngineState) pyexecRunContext() pyexec.RunContext {
 		RunID:     s.runID,
 		SessionID: s.sessionID,
 		UserName:  s.req.userName,
-		CallerKey: s.req.payload.CallerKey,
+		AppKey: s.req.payload.AppKey,
 	}
 }
 

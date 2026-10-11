@@ -21,7 +21,7 @@ func DefaultRuntime() *Runtime {
 }
 
 // RuntimePolicy 是 Agent 定义在运行期的能力策略视图。
-// 注意保持现有兼容语义：tools 为空=继承 caller 全部可见工具；skills 为空=不注入任何 Skill。
+// 注意保持现有兼容语义：tools 为空=继承 app 全部可见工具；skills 为空=不注入任何 Skill。
 type RuntimePolicy struct {
 	ToolRefs        []string
 	SkillRefs       []string
@@ -41,10 +41,10 @@ func (p RuntimePolicy) EffectiveMaxSteps(defaultMaxSteps int) int {
 	return defaultMaxSteps
 }
 
-// FindVisible 返回指定 caller/路由下当前可见的 Agent 定义（DB 行 + 未被同名遮蔽的内置 profile）。
+// FindVisible 返回指定 app/路由下当前可见的 Agent 定义（DB 行 + 未被同名遮蔽的内置 profile）。
 // DB 行在前、内置在后；同 agent_key 的 DB 行整体覆盖内置（同名即 fork）。
-func (r *Runtime) FindVisible(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Agent, error) {
-	dbAgents, err := model.FindAgentsByCallerAndRoutes(ctx, callerKey, route.BuildRoutePrefixes(routeValues))
+func (r *Runtime) FindVisible(ctx *gin.Context, appKey string, routeValues []string) ([]model.Agent, error) {
+	dbAgents, err := model.FindAgentsByAppAndRoutes(ctx, appKey, route.BuildRoutePrefixes(routeValues))
 	if err != nil {
 		return nil, err
 	}
@@ -52,12 +52,12 @@ func (r *Runtime) FindVisible(ctx *gin.Context, callerKey string, routeValues []
 }
 
 // Resolve 实时解析一个可见 Agent（DB > 内置同名覆盖）；nil,nil 表示当前作用域下不存在该 agentKey。
-func (r *Runtime) Resolve(ctx *gin.Context, callerKey string, routeValues []string, agentKey string) (*model.Agent, error) {
+func (r *Runtime) Resolve(ctx *gin.Context, appKey string, routeValues []string, agentKey string) (*model.Agent, error) {
 	agentKey = strings.TrimSpace(agentKey)
 	if agentKey == "" {
 		return nil, nil
 	}
-	agents, err := r.FindVisible(ctx, callerKey, routeValues)
+	agents, err := r.FindVisible(ctx, appKey, routeValues)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ type runtimeSkillIndexItem struct {
 }
 
 // FilterToolIndexSnapshot 按 Agent 工具白名单过滤 run 工具索引。
-// 白名单为空保持原快照，表示继承 caller 全部可见工具；非空按 name/toolId 匹配，
+// 白名单为空保持原快照，表示继承 app 全部可见工具；非空按 name/toolId 匹配，
 // 并支持两个约定 token（builtin.go）：
 //   - @none：显式不继承任何业务工具（返回空索引）；
 //   - @readonly：只保留声明了 readOnly 的业务工具（只读子代理用；tools 提供全量工具定义）。
@@ -195,10 +195,10 @@ func runtimeReferenceSet(values []string) map[string]bool {
 }
 
 // FindVisibleForRuntime/ResolveForRuntime 保留函数入口，兼容现有调用与测试。
-func FindVisibleForRuntime(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Agent, error) {
-	return defaultRuntime.FindVisible(ctx, callerKey, routeValues)
+func FindVisibleForRuntime(ctx *gin.Context, appKey string, routeValues []string) ([]model.Agent, error) {
+	return defaultRuntime.FindVisible(ctx, appKey, routeValues)
 }
 
-func ResolveForRuntime(ctx *gin.Context, callerKey string, routeValues []string, agentKey string) (*model.Agent, error) {
-	return defaultRuntime.Resolve(ctx, callerKey, routeValues, agentKey)
+func ResolveForRuntime(ctx *gin.Context, appKey string, routeValues []string, agentKey string) (*model.Agent, error) {
+	return defaultRuntime.Resolve(ctx, appKey, routeValues, agentKey)
 }

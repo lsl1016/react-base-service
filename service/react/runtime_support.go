@@ -22,7 +22,30 @@ import (
 	"react-base-service/golib/zlog"
 )
 
-const ()
+// appRuntimeConfig 返回当前 context 所属 app 的生效运行时配置：
+// app 覆盖 > 全局覆盖 > yaml > 内置默认（conf.GetReactRuntimeConfigForApp）。
+// run 的 context 经 ContextWithAppRuntime 携带 appKey；无 app 上下文（后台任务、
+// 启动期路径等）回落全局口径。app 覆盖快照由 service/setting 与全局快照同步刷新。
+func appRuntimeConfig(ctx context.Context) conf.ReactRuntimeConfig {
+	if appCtx, ok := components.AppRuntimeFromContext(ctx); ok {
+		if key := strings.TrimSpace(appCtx.AppKey); key != "" {
+			return conf.GetReactRuntimeConfigForApp(key)
+		}
+	}
+	return conf.GetReactRuntimeConfig()
+}
+
+// runtimeConfig 是 appRuntimeConfig 的 runtimeRequest 方法版：装配期与 req 方法
+// （如 delegationAllowed）直接按本次 run 的 appKey 取生效配置。
+func (r *runtimeRequest) runtimeConfig() conf.ReactRuntimeConfig {
+	if r == nil {
+		return conf.GetReactRuntimeConfig()
+	}
+	if key := strings.TrimSpace(r.payload.AppKey); key != "" {
+		return conf.GetReactRuntimeConfigForApp(key)
+	}
+	return conf.GetReactRuntimeConfig()
+}
 
 // NormalizedToolResult 是写入模型上下文和事件流的工具结果，避免把大结果直接塞回上下文。
 type NormalizedToolResult struct {
@@ -241,7 +264,7 @@ func (s *reactEngineState) maxContextTokens() int {
 	if threshold := reactCompactThresholdWithOverride(s.currentModel.ModelKey, contextOverride, maxOutputOverride); threshold > 0 {
 		return threshold
 	}
-	return conf.GetReactRuntimeConfig().ContextCompact.TokenTrigger
+	return s.req.runtimeConfig().ContextCompact.TokenTrigger
 }
 
 // reactMaxContextTokens 是 maxContextTokens 的独立函数版，供回放（history.go）与
@@ -334,7 +357,7 @@ func maybeCompactContext(s *reactEngineState, step int) error {
 	}
 	compactRef := reactMessageRef{RunID: s.runID, MessageID: generateMessageID(), Seq: seq + 1}
 	contentJSON, _ := json.Marshal(compactSummaryContent{Summary: summary, CoveredThrough: compactCoveredThrough(compactRefs)})
-	if err := model.CreateReactMessage(s.ctx, &model.ReactMessage{MessageID: compactRef.MessageID, RunID: s.runID, SessionID: s.sessionID, UserName: s.req.userName, CallerKey: s.req.payload.CallerKey, Seq: compactRef.Seq, StepIndex: step, Role: model.ReactMessageRoleUser, MessageType: model.ReactMessageTypeCompactSummary, ContentJSON: string(contentJSON)}); err != nil {
+	if err := model.CreateReactMessage(s.ctx, &model.ReactMessage{MessageID: compactRef.MessageID, RunID: s.runID, SessionID: s.sessionID, UserName: s.req.userName, AppKey: s.req.payload.AppKey, Seq: compactRef.Seq, StepIndex: step, Role: model.ReactMessageRoleUser, MessageType: model.ReactMessageTypeCompactSummary, ContentJSON: string(contentJSON)}); err != nil {
 		return err
 	}
 	s.messages = append(prefixPart, llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: compactSummaryMessageContent(summary)})
@@ -501,7 +524,7 @@ func estimateMessagesSize(messages []llm.ChatMessage) int {
 // 先按轮次边界分片逐段总结（map），再把各段摘要归并为最终摘要（reduce），
 // 不再把超长历史静默截断丢弃。LLM 压缩被熔断时直接走本地摘要。
 func buildLLMCompactSummary(s *reactEngineState, messages []llm.ChatMessage) (string, int, int, error) {
-	compactCfg := conf.GetReactRuntimeConfig().ContextCompact
+	compactCfg := s.req.runtimeConfig().ContextCompact
 	if s.compactLLMFailures >= compactCfg.CompactFailureBreaker {
 		return "", 0, 0, errors.New("compact llm breaker open")
 	}

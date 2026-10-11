@@ -56,7 +56,7 @@ func writeTestBundleDir(t *testing.T) string {
 		}
 	}
 	write(".plugin/plugin.json", `{"name":"uda-ops","version":"1.2.0","description":"UDA 运维插件包"}`)
-	write("agents/dba-agent.md", "---\nagent_key: bundle-dba\ncaller_key: demo-app\ndescription: 测试\n---\n你是 DBA。")
+	write("agents/dba-agent.md", "---\nagent_key: bundle-dba\napp_key: demo-app\ndescription: 测试\n---\n你是 DBA。")
 	write("skills/uda-runbook/SKILL.md", "---\nname: bundle-uda-runbook\ntriggers: [UDA 排障]\n---\n排障流程正文。")
 	write(".mcp.json", `{"mcpServers":{"bundle-demo":{"url":"https://mcp.example.com/api","headers":{"Authorization":"Bearer x"}}}}`)
 	write("README.md", "说明文件，应被忽略")

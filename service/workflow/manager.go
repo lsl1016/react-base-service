@@ -189,18 +189,18 @@ func (m *cronManager) fire(wf *model.Workflow) {
 		zlog.Warnf(nil, "[workflow.fire] 回写着火点失败: key=%s err=%v", wf.WorkflowKey, err)
 	}
 
-	// 并发闸门：caller 在途 run 数达上限 → 记 skipped（不算失败，防告警误报），不执行。
+	// 并发闸门：app 在途 run 数达上限 → 记 skipped（不算失败，防告警误报），不执行。
 	cfg := conf.GetWorkflowConfig()
-	running, err := model.CountRunningWorkflowRunsByCaller(ctx, wf.CallerKey, run.ID)
+	running, err := model.CountRunningWorkflowRunsByApp(ctx, wf.AppKey, run.ID)
 	if err != nil {
 		zlog.Errorf(nil, "[workflow.fire] 并发闸门计数失败(放行): key=%s err=%v", wf.WorkflowKey, err)
 	}
-	if err == nil && running >= int64(cfg.MaxParallelPerCaller) {
-		zlog.Warnf(nil, "[workflow.fire] caller 并发超限跳过: key=%s caller=%s running=%d max=%d",
-			wf.WorkflowKey, wf.CallerKey, running, cfg.MaxParallelPerCaller)
+	if err == nil && running >= int64(cfg.MaxParallelPerApp) {
+		zlog.Warnf(nil, "[workflow.fire] app 并发超限跳过: key=%s app=%s running=%d max=%d",
+			wf.WorkflowKey, wf.AppKey, running, cfg.MaxParallelPerApp)
 		_ = model.UpdateWorkflowRunByID(ctx, run.ID, map[string]any{
 			"status":      model.WorkflowRunStatusSkipped,
-			"error_msg":   fmt.Sprintf("caller 在途 run 数 %d 达并发上限 %d", running, cfg.MaxParallelPerCaller),
+			"error_msg":   fmt.Sprintf("app 在途 run 数 %d 达并发上限 %d", running, cfg.MaxParallelPerApp),
 			"finished_at": now,
 		})
 		metrics.WorkflowTriggerTotal.WithLabelValues(wf.WorkflowKey, "skipped").Inc()

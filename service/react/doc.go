@@ -38,7 +38,7 @@
 //	         |
 //	         v
 //	prepareRuntimeRequest
-//	  - Caller / User
+//	  - App / User
 //	  - Model / API Key
 //	  - Tool / Skill / Agent snapshot
 //	  - Memory / GraphMemory
@@ -76,7 +76,7 @@
 //
 // runtimeRequest 是“进入执行循环前已经解析好的运行快照”，包括：
 //
-//	identity      - user/session/caller runtime context
+//	identity      - user/session/app runtime context
 //	model         - apiKey/modelKey/modelVersion
 //	capabilities  - prompt/tool/skill/memory/agent snapshot
 //	execution     - agentPath/depth/HITL/token budget
@@ -149,7 +149,7 @@
 //
 // # Memory
 //
-// ReAct 只保留 Memory Tool adapter；owner scope、caller/caller_user 合并、敏感信息拦截、
+// ReAct 只保留 Memory Tool adapter；owner scope、app/app_user 合并、敏感信息拦截、
 // revision 审计、乐观锁等逻辑统一由 service/memory 负责。
 // Memory 是 Runtime 内置能力，不走 Business Tool 的 get_tool/execute_tool 两阶段协议。
 //

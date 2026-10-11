@@ -28,7 +28,7 @@ export interface AgentClientHooks {
 export interface AgentClientConfig {
   baseUrl: string;
   /** 调用方标识，用于后端区分不同调用方 */
-  callerKey: string;
+  appKey: string;
   /** 会话作用域参数，用于分隔不同的场景 */
   routeValues?: string[];
   /** 默认运行控制参数，会在每次 run 时带给后端 */
@@ -50,7 +50,7 @@ export interface AgentClientConfig {
 }
 
 export interface AgentSessionScope {
-  callerKey: string;
+  appKey: string;
   routeValues: string[];
 }
 

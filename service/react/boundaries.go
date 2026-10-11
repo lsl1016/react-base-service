@@ -22,7 +22,6 @@ import (
 	llm "react-base-service/api/llm"
 	"react-base-service/components/metrics"
 	"react-base-service/components/params"
-	"react-base-service/conf"
 
 	"react-base-service/golib/zlog"
 )
@@ -79,7 +78,7 @@ func (s *reactEngineState) maybeEnterSoftLanding(step, maxSteps int) {
 	if s.softLandingActive {
 		return
 	}
-	loopCfg := conf.GetReactRuntimeConfig().Loop
+	loopCfg := s.req.runtimeConfig().Loop
 	reason := ""
 	remainingSteps := 0
 	remainingMillis := int64(0)
@@ -139,7 +138,7 @@ func (s *reactEngineState) loopTokenBudget() int {
 	if s.req != nil && s.req.payload.TokenBudget > 0 {
 		return s.req.payload.TokenBudget
 	}
-	return conf.GetReactRuntimeConfig().Loop.BudgetTokensPerRun
+	return s.req.runtimeConfig().Loop.BudgetTokensPerRun
 }
 
 // loopTokenUsed 返回外层 run 的递归 token 消耗口径（与本 run 输入+输出+委派孙代理一致）。
@@ -223,7 +222,7 @@ const maxAnomalyInjections = 3
 // recordToolAnomaly 在每轮工具执行后更新"同签名连续重复"计数。
 // 只做软性守卫：达到阈值后由 contextMessages 注入收束提醒，不阻断循环。
 func (s *reactEngineState) recordToolAnomaly(calls []llm.ToolCall) {
-	threshold := conf.GetReactRuntimeConfig().Loop.AnomalyRepeatThreshold
+	threshold := s.req.runtimeConfig().Loop.AnomalyRepeatThreshold
 	if threshold <= 0 || len(calls) == 0 {
 		return
 	}
@@ -247,7 +246,7 @@ func (s *reactEngineState) recordToolAnomaly(calls []llm.ToolCall) {
 // anomalyReminder 渲染重复调用提醒；streak 达到阈值且未超注入上限时非空。
 // 渲染幂等且自带标记（每轮会被上下文估算等多次调用，轮末由 consumeAnomalyRender 只结算一次）。
 func (s *reactEngineState) anomalyReminder() string {
-	threshold := conf.GetReactRuntimeConfig().Loop.AnomalyRepeatThreshold
+	threshold := s.req.runtimeConfig().Loop.AnomalyRepeatThreshold
 	if threshold <= 0 || s.anomalyStreak < threshold || s.anomalyInjections >= maxAnomalyInjections {
 		return ""
 	}
@@ -284,7 +283,7 @@ func continuationReminder() string {
 // runDeadlineScope 为 run 包装 wall-clock 超时边界；返回替换后的 ctx 与 deadline 信息。
 // 超时触发时 context.Cause 为 ErrReactRunTimeout，取消/超时语义在全链路可区分。
 func runDeadlineScope(parent context.Context) (context.Context, time.Time, time.Duration, context.CancelFunc) {
-	timeout := time.Duration(conf.GetReactRuntimeConfig().Loop.RunTimeoutSec) * time.Second
+	timeout := time.Duration(appRuntimeConfig(parent).Loop.RunTimeoutSec) * time.Second
 	if timeout <= 0 {
 		return parent, time.Time{}, 0, func() {}
 	}

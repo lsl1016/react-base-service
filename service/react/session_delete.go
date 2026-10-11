@@ -41,7 +41,7 @@ func DeleteReactSession(ctx *gin.Context, req params.ReactSessionDeleteReq) (par
 			return components.ErrorReactSessionNotFound.Sprintf(sessionID)
 		}
 		// 归属校验（与 list/events 同口径）
-		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), req.CallerKey, marshalRouteValuesForValidate(req.RouteValues), normalizeSessionType("")); err != nil {
+		if err := validateReactSessionContext(session, helpers.GetUserName(ctx), req.AppKey, marshalRouteValuesForValidate(req.RouteValues), normalizeSessionType("")); err != nil {
 			return err
 		}
 		// 活跃 run 一律拒绝：避免与正在执行的 run goroutine 竞争

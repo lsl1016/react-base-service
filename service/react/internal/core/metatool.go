@@ -27,7 +27,7 @@ const (
 	// MetaToolLoadRuntimeCode 加载服务线上代码到本 run 专属工作区并挂载只读检索工具（P2-1）。
 	MetaToolLoadRuntimeCode = "load_runtime_code"
 	// MetaToolDelegateAgent 把子任务委派给注册表中的专家子 Agent（隔离子 run 执行，结果回填父循环）。
-	// 描述按 caller 可见 agent 清单动态渲染，主 LLM 由此"发现"子代理（OH TaskToolSet 模式）。
+	// 描述按 app 可见 agent 清单动态渲染，主 LLM 由此"发现"子代理（OH TaskToolSet 模式）。
 	MetaToolDelegateAgent = "delegate_agent"
 	// MetaToolSendMessage 向已委派的子代理发送补充消息（A2 父→子通道，见 send_message.go；
 	// 复用 S1 guide 注入机制，对齐 ZCode messageSink）。

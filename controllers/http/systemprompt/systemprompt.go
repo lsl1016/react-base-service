@@ -12,7 +12,7 @@ import (
 
 // RegisterSystemPrompt 注册系统提示词
 // @Summary      注册系统提示词
-// @Description  在指定 caller 的 routeValues 下注册一条系统提示词，同一 caller+routeValues 组合不允许重复。
+// @Description  在指定 app 的 routeValues 下注册一条系统提示词，同一 app+routeValues 组合不允许重复。
 // @Tags         system-prompt
 // @Accept       json
 // @Produce      json
@@ -97,7 +97,7 @@ func DeleteSystemPrompt(ctx *gin.Context) {
 
 // ListSystemPrompts 查询系统提示词列表
 // @Summary      查询系统提示词列表
-// @Description  根据 callerKey 查询该调用方下的系统提示词列表。
+// @Description  根据 appKey 查询该调用方下的系统提示词列表。
 // @Tags         system-prompt
 // @Accept       json
 // @Produce      json
@@ -113,7 +113,7 @@ func ListSystemPrompts(ctx *gin.Context) {
 		return
 	}
 
-	prompts, err := systempromptService.ListByCallerAndRoute(ctx, req.CallerKey, req.RouteValues)
+	prompts, err := systempromptService.ListByAppAndRoute(ctx, req.AppKey, req.RouteValues)
 	if err != nil {
 		zlog.Errorf(ctx, "[SystemPrompt.List] 查询失败: %v", err)
 		components.RenderJsonFail(ctx, err)

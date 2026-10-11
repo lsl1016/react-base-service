@@ -1,6 +1,6 @@
 // livetest/delegate-background：A1 后台委派 + Q1 运行时通知邮箱全链路实测客户端。
 //
-// 前置：服务运行于 127.0.0.1:8180；caller=demo-app；存在可用子 Agent（echo-agent）；
+// 前置：服务运行于 127.0.0.1:8180；app=demo-app；存在可用子 Agent（echo-agent）；
 // deepseek/deepseek-flash 模型可用（conf/mount/custom.yaml 与服务端一致）。
 //
 // 场景 absorb（默认）：
@@ -63,7 +63,7 @@ func main() {
 	_ = childTask
 
 	runPayload, _ := json.Marshal(map[string]any{
-		"callerKey":    "demo-app",
+		"appKey":    "demo-app",
 		"userPrompt":   prompt,
 		"modelKey":     "deepseek",
 		"modelVersion": "deepseek-flash",

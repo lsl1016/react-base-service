@@ -28,17 +28,17 @@ type RuntimeScope struct {
 	AllowedKeys map[string]struct{}
 }
 
-// ResolveRuntimeScope 解析 caller/caller_user 记忆作用域。
-// caller 是共享底座；启用 user scope 时 caller_user 是高优先级覆盖层与默认写入目标。
-func ResolveRuntimeScope(callerKey, userName string, allowUserScope bool) RuntimeScope {
+// ResolveRuntimeScope 解析 app/app_user 记忆作用域。
+// app 是共享底座；启用 user scope 时 app_user 是高优先级覆盖层与默认写入目标。
+func ResolveRuntimeScope(appKey, userName string, allowUserScope bool) RuntimeScope {
 	scope := RuntimeScope{
-		Owners:      []model.MemoryOwner{model.BuildCallerMemoryOwner(callerKey)},
+		Owners:      []model.MemoryOwner{model.BuildAppMemoryOwner(appKey)},
 		AllowedKeys: make(map[string]struct{}, 2),
 	}
 	scope.WriteOwner = scope.Owners[0]
 	scope.AllowedKeys[OwnerScopeKey(scope.Owners[0].OwnerType, scope.Owners[0].OwnerKey)] = struct{}{}
 	if allowUserScope {
-		userOwner := model.BuildCallerUserMemoryOwner(callerKey, userName)
+		userOwner := model.BuildAppUserMemoryOwner(appKey, userName)
 		scope.Owners = append(scope.Owners, userOwner)
 		scope.WriteOwner = userOwner
 		scope.AllowedKeys[OwnerScopeKey(userOwner.OwnerType, userOwner.OwnerKey)] = struct{}{}
@@ -46,7 +46,7 @@ func ResolveRuntimeScope(callerKey, userName string, allowUserScope bool) Runtim
 	return scope
 }
 
-// MergeRuntimeItems 合并多记忆空间条目：同 itemKey 时 caller_user 恒覆盖 caller，
+// MergeRuntimeItems 合并多记忆空间条目：同 itemKey 时 app_user 恒覆盖 app，
 // 最终结果按更新时间倒序输出。
 func MergeRuntimeItems(items []model.MemoryItem) []model.MemoryItem {
 	slices.SortStableFunc(items, func(a, b model.MemoryItem) int {
@@ -70,7 +70,7 @@ func MergeRuntimeItems(items []model.MemoryItem) []model.MemoryItem {
 }
 
 func runtimeOwnerPriority(ownerType string) int {
-	if ownerType == model.MemoryOwnerTypeCallerUser {
+	if ownerType == model.MemoryOwnerTypeAppUser {
 		return 1
 	}
 	return 0
@@ -176,8 +176,8 @@ func RenderRuntimeContext(items []model.MemoryItem, cfg conf.ReactMemoryConfig) 
 }
 
 // BuildRuntimeContext 在 run 初始化阶段完成作用域解析、查询、覆盖合并与渲染。
-func BuildRuntimeContext(ctx *gin.Context, callerKey, userName string, cfg conf.ReactMemoryConfig) (string, error) {
-	scope := ResolveRuntimeScope(callerKey, userName, cfg.MemoryAllowUserScope())
+func BuildRuntimeContext(ctx *gin.Context, appKey, userName string, cfg conf.ReactMemoryConfig) (string, error) {
+	scope := ResolveRuntimeScope(appKey, userName, cfg.MemoryAllowUserScope())
 	items, err := model.FindActiveMemoryItemsByOwners(ctx, scope.Owners)
 	if err != nil {
 		return "", err
@@ -339,12 +339,12 @@ func ReadRuntimeItems(ctx *gin.Context, scope RuntimeScope, itemIDs []uint64) ([
 
 
 // BuildContext/List/Read/ApplyMutation 提供给 Agent Runtime 的可注入方法集合。
-func (r *Runtime) ResolveScope(callerKey, userName string, allowUserScope bool) RuntimeScope {
-	return ResolveRuntimeScope(callerKey, userName, allowUserScope)
+func (r *Runtime) ResolveScope(appKey, userName string, allowUserScope bool) RuntimeScope {
+	return ResolveRuntimeScope(appKey, userName, allowUserScope)
 }
 
-func (r *Runtime) BuildContext(ctx *gin.Context, callerKey, userName string, cfg conf.ReactMemoryConfig) (string, error) {
-	return BuildRuntimeContext(ctx, callerKey, userName, cfg)
+func (r *Runtime) BuildContext(ctx *gin.Context, appKey, userName string, cfg conf.ReactMemoryConfig) (string, error) {
+	return BuildRuntimeContext(ctx, appKey, userName, cfg)
 }
 
 func (r *Runtime) List(ctx *gin.Context, scope RuntimeScope, options RuntimeListOptions) ([]RuntimeListItem, error) {

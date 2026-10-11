@@ -21,16 +21,16 @@ type serverToolRuntime interface {
 // agentRuntime 是 Agent Runtime 依赖的子 Agent 定义解析边界。
 // 子 Run 生命周期仍由 react 负责，resolver 只处理可见性和实时定义解析。
 type agentRuntime interface {
-	FindVisible(ctx *gin.Context, callerKey string, routeValues []string) ([]model.Agent, error)
-	Resolve(ctx *gin.Context, callerKey string, routeValues []string, agentKey string) (*model.Agent, error)
+	FindVisible(ctx *gin.Context, appKey string, routeValues []string) ([]model.Agent, error)
+	Resolve(ctx *gin.Context, appKey string, routeValues []string, agentKey string) (*model.Agent, error)
 	Policy(agent model.Agent) agentService.RuntimePolicy
 }
 
 // memoryRuntime 是 ReAct 对长期记忆的最小依赖面。
 // 作用域、查询、渲染、写核心都由 service/memory 负责。
 type memoryRuntime interface {
-	ResolveScope(callerKey, userName string, allowUserScope bool) memoryService.RuntimeScope
-	BuildContext(ctx *gin.Context, callerKey, userName string, cfg conf.ReactMemoryConfig) (string, error)
+	ResolveScope(appKey, userName string, allowUserScope bool) memoryService.RuntimeScope
+	BuildContext(ctx *gin.Context, appKey, userName string, cfg conf.ReactMemoryConfig) (string, error)
 	List(ctx *gin.Context, scope memoryService.RuntimeScope, options memoryService.RuntimeListOptions) ([]memoryService.RuntimeListItem, error)
 	Read(ctx *gin.Context, scope memoryService.RuntimeScope, itemIDs []uint64) ([]memoryService.RuntimeReadItem, error)
 	ApplyMutation(ctx *gin.Context, input memoryService.MutationInput) (map[string]interface{}, error)

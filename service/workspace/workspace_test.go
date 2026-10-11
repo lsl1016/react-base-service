@@ -83,7 +83,7 @@ func stubMcpTouchpoints(t *testing.T) *mcpCallLog {
 		synced:       map[string]int{},
 		toolsCleaned: map[string]int{},
 	}
-	origEnsure, origSync, origRemoveTools, origRemoveServer := ensureRepoServer, syncCallerTools, removeCallerTools, removeRepoServer
+	origEnsure, origSync, origRemoveTools, origRemoveServer := ensureRepoServer, syncAppTools, removeAppTools, removeRepoServer
 	ensureRepoServer = func(cfg mcpclient.ServerConfig) (mcpclient.Server, error) {
 		log.mu.Lock()
 		defer log.mu.Unlock()
@@ -91,16 +91,16 @@ func stubMcpTouchpoints(t *testing.T) *mcpCallLog {
 		log.repoRoots[cfg.Name] = cfg.Env["REPO_ROOT"]
 		return nil, nil
 	}
-	syncCallerTools = func(callerKey, serverName string, primary bool) (int, error) {
+	syncAppTools = func(appKey, serverName string, primary bool) (int, error) {
 		log.mu.Lock()
 		defer log.mu.Unlock()
-		log.synced[callerKey]++
+		log.synced[appKey]++
 		return 0, nil
 	}
-	removeCallerTools = func(ctx *gin.Context, serverName, callerKey string) (int, error) {
+	removeAppTools = func(ctx *gin.Context, serverName, appKey string) (int, error) {
 		log.mu.Lock()
 		defer log.mu.Unlock()
-		log.toolsCleaned[callerKey]++
+		log.toolsCleaned[appKey]++
 		return 0, nil
 	}
 	removeRepoServer = func(name string) error {
@@ -110,7 +110,7 @@ func stubMcpTouchpoints(t *testing.T) *mcpCallLog {
 		return nil
 	}
 	t.Cleanup(func() {
-		ensureRepoServer, syncCallerTools, removeCallerTools, removeRepoServer = origEnsure, origSync, origRemoveTools, origRemoveServer
+		ensureRepoServer, syncAppTools, removeAppTools, removeRepoServer = origEnsure, origSync, origRemoveTools, origRemoveServer
 	})
 	return log
 }
@@ -216,20 +216,20 @@ func TestMirrorPathSanitized(t *testing.T) {
 	}
 }
 
-// 共享与两级释放：不同 run/caller 加载同 service 同 ref 只冷启动一份；
-// caller 归零清工具副本、总归零才回收实例。
-func TestLoadSharesAcrossRunsAndCallers(t *testing.T) {
+// 共享与两级释放：不同 run/app 加载同 service 同 ref 只冷启动一份；
+// app 归零清工具副本、总归零才回收实例。
+func TestLoadSharesAcrossRunsAndApps(t *testing.T) {
 	repo := newTestRepo(t)
 	enableWorkspace(t, repo, nil)
 	log := stubMcpTouchpoints(t)
 	m := newTestManager(t)
 	ctx := &gin.Context{}
 
-	allocA, err := m.Load(ctx, "run-a", "caller-a", "svc", "")
+	allocA, err := m.Load(ctx, "run-a", "app-a", "svc", "")
 	if err != nil {
 		t.Fatalf("run-a 加载失败: %v", err)
 	}
-	allocB, err := m.Load(ctx, "run-b", "caller-b", "svc", "")
+	allocB, err := m.Load(ctx, "run-b", "app-b", "svc", "")
 	if err != nil {
 		t.Fatalf("run-b 加载失败: %v", err)
 	}
@@ -252,17 +252,17 @@ func TestLoadSharesAcrossRunsAndCallers(t *testing.T) {
 
 	snap := m.ActiveSnapshot()
 	if len(snap) != 1 || len(snap[0].Runs) != 2 ||
-		snap[0].Callers["caller-a"] != 1 || snap[0].Callers["caller-b"] != 1 {
+		snap[0].Apps["app-a"] != 1 || snap[0].Apps["app-b"] != 1 {
 		t.Fatalf("快照引用不符: %+v", snap)
 	}
 
-	// run-a 释放：只清 caller-a 工具副本；caller-b 仍引用，实例与 worktree 保留。
+	// run-a 释放：只清 app-a 工具副本；app-b 仍引用，实例与 worktree 保留。
 	m.ReleaseRun(ctx, "run-a")
 	if log.removeCount() != 0 {
 		t.Fatalf("仍有引用时不应回收 server: %v", log.removeNames)
 	}
-	if log.toolsCleaned["caller-a"] != 1 || log.toolsCleaned["caller-b"] != 0 {
-		t.Fatalf("caller-a 工具副本清理时机不符: %+v", log.toolsCleaned)
+	if log.toolsCleaned["app-a"] != 1 || log.toolsCleaned["app-b"] != 0 {
+		t.Fatalf("app-a 工具副本清理时机不符: %+v", log.toolsCleaned)
 	}
 	if _, err := os.Stat(allocA.Path); err != nil {
 		t.Fatalf("worktree 不应被回收: %v", err)
@@ -294,22 +294,22 @@ func TestLoadSameRunIdempotent(t *testing.T) {
 	m := newTestManager(t)
 	ctx := &gin.Context{}
 
-	alloc1, err := m.Load(ctx, "run-1", "caller-a", "svc", "")
+	alloc1, err := m.Load(ctx, "run-1", "app-a", "svc", "")
 	if err != nil {
 		t.Fatalf("首次加载失败: %v", err)
 	}
-	alloc2, err := m.Load(ctx, "run-1", "caller-a", "svc", "")
+	alloc2, err := m.Load(ctx, "run-1", "app-a", "svc", "")
 	if err != nil {
 		t.Fatalf("幂等加载失败: %v", err)
 	}
 	if alloc1.MCPServerName != alloc2.MCPServerName {
 		t.Fatalf("同 run 重复加载应返回同一实例: %s vs %s", alloc1.MCPServerName, alloc2.MCPServerName)
 	}
-	if log.ensureCount() != 1 || log.synced["caller-a"] != 1 {
-		t.Fatalf("幂等路径不应重复冷启动/同步: ensure=%d synced=%d", log.ensureCount(), log.synced["caller-a"])
+	if log.ensureCount() != 1 || log.synced["app-a"] != 1 {
+		t.Fatalf("幂等路径不应重复冷启动/同步: ensure=%d synced=%d", log.ensureCount(), log.synced["app-a"])
 	}
 	snap := m.ActiveSnapshot()
-	if len(snap) != 1 || snap[0].Callers["caller-a"] != 1 {
+	if len(snap) != 1 || snap[0].Apps["app-a"] != 1 {
 		t.Fatalf("幂等加载不应双计数: %+v", snap)
 	}
 	// 双计数回归闸：一次 ReleaseRun 应彻底回收（若双计数，holders 剩 1 不会回收）。
@@ -327,11 +327,11 @@ func TestLoadDifferentEnvSeparateEntries(t *testing.T) {
 	m := newTestManager(t)
 	ctx := &gin.Context{}
 
-	allocMain, err := m.Load(ctx, "run-1", "caller-a", "svc", "")
+	allocMain, err := m.Load(ctx, "run-1", "app-a", "svc", "")
 	if err != nil {
 		t.Fatalf("默认 env 加载失败: %v", err)
 	}
-	allocStable, err := m.Load(ctx, "run-2", "caller-b", "svc", "stable")
+	allocStable, err := m.Load(ctx, "run-2", "app-b", "svc", "stable")
 	if err != nil {
 		t.Fatalf("stable env 加载失败: %v", err)
 	}
@@ -359,37 +359,37 @@ func TestLoadDifferentEnvSeparateEntries(t *testing.T) {
 	}
 }
 
-// P1 修复回归：同 caller 两个 run，先结束的 run 不得清掉该 caller 名下工具副本。
-func TestSameCallerTwoRunsToolCleanupOnLastRelease(t *testing.T) {
+// P1 修复回归：同 app 两个 run，先结束的 run 不得清掉该 app 名下工具副本。
+func TestSameAppTwoRunsToolCleanupOnLastRelease(t *testing.T) {
 	repo := newTestRepo(t)
 	enableWorkspace(t, repo, nil)
 	log := stubMcpTouchpoints(t)
 	m := newTestManager(t)
 	ctx := &gin.Context{}
 
-	if _, err := m.Load(ctx, "run-1", "caller-x", "svc", ""); err != nil {
+	if _, err := m.Load(ctx, "run-1", "app-x", "svc", ""); err != nil {
 		t.Fatalf("run-1 加载失败: %v", err)
 	}
-	if _, err := m.Load(ctx, "run-2", "caller-x", "svc", ""); err != nil {
+	if _, err := m.Load(ctx, "run-2", "app-x", "svc", ""); err != nil {
 		t.Fatalf("run-2 加载失败: %v", err)
 	}
 
 	m.ReleaseRun(ctx, "run-1")
-	if log.toolsCleaned["caller-x"] != 0 {
-		t.Fatalf("同 caller 仍有活跃 run 时不应清工具副本: %+v", log.toolsCleaned)
+	if log.toolsCleaned["app-x"] != 0 {
+		t.Fatalf("同 app 仍有活跃 run 时不应清工具副本: %+v", log.toolsCleaned)
 	}
 	if log.removeCount() != 0 {
 		t.Fatalf("仍有引用时不应回收 server: %v", log.removeNames)
 	}
 
 	m.ReleaseRun(ctx, "run-2")
-	if log.toolsCleaned["caller-x"] != 1 || log.removeCount() != 1 {
+	if log.toolsCleaned["app-x"] != 1 || log.removeCount() != 1 {
 		t.Fatalf("最后一个 run 释放时应清副本并回收: tools=%d remove=%d",
-			log.toolsCleaned["caller-x"], log.removeCount())
+			log.toolsCleaned["app-x"], log.removeCount())
 	}
 }
 
-// 并发加载（不同 run/caller 混合）：fetch 锁 + entry 锁下全部成功，
+// 并发加载（不同 run/app 混合）：fetch 锁 + entry 锁下全部成功，
 // 冷启动仅一次，引用计数精确回收。
 func TestConcurrentLoadSingleColdStart(t *testing.T) {
 	repo := newTestRepo(t)
@@ -405,8 +405,8 @@ func TestConcurrentLoadSingleColdStart(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			runID := fmt.Sprintf("run-%d", i)
-			caller := fmt.Sprintf("caller-%d", i%2)
-			alloc, err := m.Load(ctx, runID, caller, "svc", "")
+			app := fmt.Sprintf("app-%d", i%2)
+			alloc, err := m.Load(ctx, runID, app, "svc", "")
 			if err != nil {
 				t.Errorf("并发加载 %s 失败: %v", runID, err)
 				return
@@ -422,7 +422,7 @@ func TestConcurrentLoadSingleColdStart(t *testing.T) {
 		t.Fatalf("并发加载应只冷启动一次: %d", log.ensureCount())
 	}
 	snap := m.ActiveSnapshot()
-	if len(snap) != 1 || snap[0].Callers["caller-0"] != n/2 || snap[0].Callers["caller-1"] != n/2 {
+	if len(snap) != 1 || snap[0].Apps["app-0"] != n/2 || snap[0].Apps["app-1"] != n/2 {
 		t.Fatalf("并发后引用计数不符: %+v", snap)
 	}
 

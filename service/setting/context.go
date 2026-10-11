@@ -49,21 +49,29 @@ type contextCompactOverrideJSON struct {
 }
 
 // GetContextCompactSetting 返回上下文压缩策略的生效视图。
-func GetContextCompactSetting(ctx *gin.Context) (*params.ContextCompactSettingResp, error) {
-	override, updatedBy, updatedAt, err := loadContextCompactOverride(ctx)
+func GetContextCompactSetting(ctx *gin.Context, appKey string) (*params.ContextCompactSettingResp, error) {
+	override, updatedBy, updatedAt, err := loadContextCompactOverride(ctx, appKey)
 	if err != nil {
 		return nil, err
+	}
+	// app 维度读取视图：在全局覆盖基线上叠加 app 行（app > 全局 > yaml），与引擎生效口径一致。
+	if strings.TrimSpace(appKey) != "" {
+		globalOverride, _, _, err := loadContextCompactOverride(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		override = mergeContextCompactOverrideJSON(globalOverride, override)
 	}
 	return buildContextCompactSettingResp(override, updatedBy, updatedAt), nil
 }
 
 // UpdateContextCompactSetting 更新上下文压缩策略：校验 → 合并现状 → 整行写回 → 立即刷新覆盖快照。
-func UpdateContextCompactSetting(ctx *gin.Context, req *params.UpdateContextCompactSettingReq, userName string) (*params.ContextCompactSettingResp, error) {
+func UpdateContextCompactSetting(ctx *gin.Context, appKey string, req *params.UpdateContextCompactSettingReq, userName string) (*params.ContextCompactSettingResp, error) {
 	if err := validateContextCompactUpdate(req); err != nil {
 		return nil, err
 	}
 
-	current, _, _, err := loadContextCompactOverride(ctx)
+	current, _, _, err := loadContextCompactOverride(ctx, appKey)
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +83,7 @@ func UpdateContextCompactSetting(ctx *gin.Context, req *params.UpdateContextComp
 	}
 	if err := model.UpsertRuntimeSetting(ctx, &model.RuntimeSetting{
 		SettingKey: SettingKeyContext,
+		AppKey:     strings.TrimSpace(appKey),
 		ValueJSON:  string(valueJSON),
 		UpdatedBy:  userName,
 	}); err != nil {
@@ -91,8 +100,8 @@ func UpdateContextCompactSetting(ctx *gin.Context, req *params.UpdateContextComp
 }
 
 // loadContextCompactOverride 读 DB 覆盖原文；行缺失/JSON 解析失败按「无覆盖」处理并告警。
-func loadContextCompactOverride(ctx *gin.Context) (override *contextCompactOverrideJSON, updatedBy, updatedAt string, err error) {
-	row, err := model.GetRuntimeSettingByKey(ctx, SettingKeyContext)
+func loadContextCompactOverride(ctx *gin.Context, appKey string) (override *contextCompactOverrideJSON, updatedBy, updatedAt string, err error) {
+	row, err := model.GetRuntimeSettingByKeyAndApp(ctx, SettingKeyContext, strings.TrimSpace(appKey))
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -107,6 +116,42 @@ func loadContextCompactOverride(ctx *gin.Context) (override *contextCompactOverr
 		}
 	}
 	return parsed, row.UpdatedBy, row.UpdatedAt.Format("2006-01-02 15:04:05"), nil
+}
+
+// mergeContextCompactOverrideJSON 把两层 context 覆盖合并（top 覆盖 base 非 nil 字段）。
+func mergeContextCompactOverrideJSON(base, top *contextCompactOverrideJSON) *contextCompactOverrideJSON {
+	merged := &contextCompactOverrideJSON{}
+	if base != nil {
+		*merged = *base
+	}
+	if top == nil {
+		return merged
+	}
+	if top.Enabled != nil {
+		merged.Enabled = top.Enabled
+	}
+	if top.TokenTrigger != nil {
+		merged.TokenTrigger = top.TokenTrigger
+	}
+	if top.TokenTarget != nil {
+		merged.TokenTarget = top.TokenTarget
+	}
+	if top.SummaryLimit != nil {
+		merged.SummaryLimit = top.SummaryLimit
+	}
+	if top.OutputReserveTokens != nil {
+		merged.OutputReserveTokens = top.OutputReserveTokens
+	}
+	if top.BufferTokens != nil {
+		merged.BufferTokens = top.BufferTokens
+	}
+	if top.MicrocompactEnabled != nil {
+		merged.MicrocompactEnabled = top.MicrocompactEnabled
+	}
+	if top.MicrocompactKeepRecent != nil {
+		merged.MicrocompactKeepRecent = top.MicrocompactKeepRecent
+	}
+	return merged
 }
 
 // validateContextCompactUpdate 校验更新请求：覆盖值范围 + clearFields 字段名合法。

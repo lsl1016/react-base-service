@@ -18,7 +18,7 @@ import (
 
 // MCP 连接管理接口 —— 查看、更新、管理 MCP 连接。
 //
-// 连接登记在 tblLlmMcpServer（每个 caller 一份视图，name 全局唯一），
+// 连接登记在 tblLlmMcpServer（每个 app 一份视图，name 全局唯一），
 // 拉起/停走 service/mcpclient 全局 Manager，工具清单同步进 tblLlmTool（tool_type=mcp），
 // ReAct 运行时经既有 get_tool/execute_tool 两段式加载使用，无需改动引擎。
 //
@@ -51,16 +51,16 @@ const (
 )
 
 type mcpListRequest struct {
-	CallerKey string `json:"callerKey"`
+	AppKey string `json:"appKey"`
 }
 
 type mcpScopeRequest struct {
-	CallerKey string `json:"callerKey"`
+	AppKey string `json:"appKey"`
 	ServerID  string `json:"serverId"`
 }
 
 type mcpCreateRequest struct {
-	CallerKey   string            `json:"callerKey"`
+	AppKey   string            `json:"appKey"`
 	RawConfig   string            `json:"rawConfig"`
 	Name        string            `json:"name"`
 	Kind        string            `json:"kind"`
@@ -68,21 +68,21 @@ type mcpCreateRequest struct {
 	Headers     map[string]string `json:"headers"`
 	TimeoutMs   int               `json:"timeoutMs"`
 	Description string            `json:"description"`
-	// BoundCallers 是连接额外绑定的 caller（工具同步到这些 caller 名下）；属主 caller 恒定生效。
-	BoundCallers []string `json:"boundCallers"`
+	// BoundApps 是连接额外绑定的 app（工具同步到这些 app 名下）；属主 app 恒定生效。
+	BoundApps []string `json:"boundApps"`
 	// Status 用指针区分「未传（默认启用）」与「显式停用 0」。
 	Status *int `json:"status"`
 }
 
 type mcpUpdateRequest struct {
-	CallerKey   string            `json:"callerKey"`
+	AppKey   string            `json:"appKey"`
 	ServerID    string            `json:"serverId"`
 	Endpoint    string            `json:"endpoint"`
 	Headers     map[string]string `json:"headers"`
 	TimeoutMs   *int              `json:"timeoutMs"`
 	Description string            `json:"description"`
-	// BoundCallers 全量替换绑定 caller；nil 表示不改动。
-	BoundCallers []string `json:"boundCallers"`
+	// BoundApps 全量替换绑定 app；nil 表示不改动。
+	BoundApps []string `json:"boundApps"`
 	Status       *int     `json:"status"`
 }
 
@@ -101,8 +101,8 @@ type mcpServerView struct {
 	LastCheckMessage string `json:"lastCheckMessage"`
 	LastCheckAt      string `json:"lastCheckAt"`
 	ToolCount        int    `json:"toolCount"`
-	// BoundCallers 是该连接工具同步到的全部 caller（属主在首位；其余为绑定 caller）。
-	BoundCallers []string `json:"boundCallers"`
+	// BoundApps 是该连接工具同步到的全部 app（属主在首位；其余为绑定 app）。
+	BoundApps []string `json:"boundApps"`
 	// Source 标识连接来源：registry=DB 注册表（管理接口可改）；yaml=conf/mount/custom.yaml
 	// 静态声明（endpoint 以配置文件为准，本机与容器版各配各的，改文件后重启生效）。
 	Source    string `json:"source"`
@@ -128,22 +128,22 @@ func formatTimePtr(t *time.Time) string {
 	return t.Format("2006-01-02 15:04:05")
 }
 
-// normalizeBoundCallers 校验并归一化绑定 caller 列表：非空、去重、剔除属主（属主恒定生效不占绑定行）、必须是存活 caller 或 default 作用域。
-func normalizeBoundCallers(ctx *gin.Context, ownerCaller string, raw []string) ([]string, error) {
+// normalizeBoundApps 校验并归一化绑定 app 列表：非空、去重、剔除属主（属主恒定生效不占绑定行）、必须是存活 app 或 default 作用域。
+func normalizeBoundApps(ctx *gin.Context, ownerApp string, raw []string) ([]string, error) {
 	normalized := make([]string, 0, len(raw))
 	seen := make(map[string]bool, len(raw))
 	for _, key := range raw {
 		key = strings.TrimSpace(key)
-		if key == "" || key == ownerCaller || seen[key] {
+		if key == "" || key == ownerApp || seen[key] {
 			continue
 		}
-		if !model.IsReservedCallerKey(key) {
-			caller, err := model.GetActiveCallerByKey(ctx, key)
+		if !model.IsReservedAppKey(key) {
+			app, err := model.GetActiveAppByKey(ctx, key)
 			if err != nil {
 				return nil, err
 			}
-			if caller == nil {
-				return nil, components.ParamInvalidf("绑定 caller 不存在或已停用: %s", key)
+			if app == nil {
+				return nil, components.ParamInvalidf("绑定 app 不存在或已停用: %s", key)
 			}
 		}
 		seen[key] = true
@@ -168,7 +168,7 @@ func mcpServerToView(server model.McpServer, withTools bool) mcpServerView {
 		LastCheckMessage: server.LastCheckMessage,
 		LastCheckAt:      formatTimePtr(server.LastCheckAt),
 		ToolCount:        len(tools),
-		BoundCallers:     mcpclient.ConnectionCallers(&gin.Context{}, &server),
+		BoundApps:     mcpclient.ConnectionApps(&gin.Context{}, &server),
 		Source:           mcpServerSourceRegistry,
 		CreatedBy:        server.CreatedBy,
 		UpdatedBy:        server.UpdatedBy,
@@ -217,7 +217,7 @@ func mcpYamlServerViewScaffold(cfg conf.MCPServerConf) mcpServerView {
 		Status:       1,
 		HasHeaders:   len(cfg.Headers) > 0,
 		Running:      mcpclient.GetServer(cfg.Name) != nil,
-		BoundCallers: []string{conf.CustomConf.MCP.CallerKey},
+		BoundApps: []string{conf.CustomConf.MCP.AppKey},
 		Source:       mcpServerSourceYaml,
 	}
 }
@@ -239,9 +239,9 @@ func fillMcpYamlServerView(ctx *gin.Context, view *mcpServerView, withTools bool
 	}
 }
 
-// ListMcpServers 列出当前 caller 下的全部 MCP 连接（含工具数与运行状态）。
+// ListMcpServers 列出当前 app 下的全部 MCP 连接（含工具数与运行状态）。
 // @Summary      MCP 连接列表
-// @Description  返回指定 caller 下的 MCP 连接（注册表记录 + 运行状态 + 工具数）
+// @Description  返回指定 app 下的 MCP 连接（注册表记录 + 运行状态 + 工具数）
 // @Tags         React
 // @Accept       json
 // @Produce      json
@@ -252,13 +252,13 @@ func ListMcpServers(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
 		return
 	}
-	callerKey := strings.TrimSpace(req.CallerKey)
-	if callerKey == "" {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("callerKey 不能为空"))
+	appKey := strings.TrimSpace(req.AppKey)
+	if appKey == "" {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("appKey 不能为空"))
 		return
 	}
 
-	servers, err := model.ListMcpServersByCaller(ctx, callerKey)
+	servers, err := model.ListMcpServersByApp(ctx, appKey)
 	if err != nil {
 		zlog.Errorf(ctx, "[MCP] 查询连接列表失败: %v", err)
 		components.RenderJsonFail(ctx, err)
@@ -270,7 +270,7 @@ func ListMcpServers(ctx *gin.Context) {
 	}
 	// yaml 静态声明的服务器一并展示（source=yaml）：endpoint 以配置文件为准，
 	// 与 DB 记录（source=registry）同名并存时两条独立可见，避免运行时状态被停用行误导。
-	if conf.CustomConf.MCP.CallerKey == callerKey {
+	if conf.CustomConf.MCP.AppKey == appKey {
 		for _, serverCfg := range conf.CustomConf.MCP.Servers {
 			view := mcpYamlServerViewScaffold(serverCfg)
 			fillMcpYamlServerView(ctx, &view, false)
@@ -282,7 +282,7 @@ func ListMcpServers(ctx *gin.Context) {
 
 // GetMcpServerDetail 返回单个 MCP 连接详情（含同步进注册表的工具清单）。
 // @Summary      MCP 连接详情
-// @Description  按 callerKey + serverId 返回连接完整配置与工具清单
+// @Description  按 appKey + serverId 返回连接完整配置与工具清单
 // @Tags         React
 // @Accept       json
 // @Produce      json
@@ -297,7 +297,7 @@ func GetMcpServerDetail(ctx *gin.Context) {
 	if strings.HasPrefix(strings.TrimSpace(req.ServerID), mcpYamlServerIDPrefix) {
 		name := strings.TrimPrefix(strings.TrimSpace(req.ServerID), mcpYamlServerIDPrefix)
 		serverCfg, ok := findMcpYamlServer(name)
-		if !ok || conf.CustomConf.MCP.CallerKey != strings.TrimSpace(req.CallerKey) {
+		if !ok || conf.CustomConf.MCP.AppKey != strings.TrimSpace(req.AppKey) {
 			components.RenderJsonFail(ctx, components.ParamInvalidf("连接不存在: %s", req.ServerID))
 			return
 		}
@@ -306,7 +306,7 @@ func GetMcpServerDetail(ctx *gin.Context) {
 		components.RenderJsonSucc(ctx, gin.H{"server": view, "headers": serverCfg.Headers})
 		return
 	}
-	server, ok := loadMcpServer(ctx, req.CallerKey, req.ServerID)
+	server, ok := loadMcpServer(ctx, req.AppKey, req.ServerID)
 	if !ok {
 		return
 	}
@@ -336,9 +336,9 @@ func CreateMcpServer(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
 		return
 	}
-	callerKey := strings.TrimSpace(req.CallerKey)
-	if callerKey == "" {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("callerKey 不能为空"))
+	appKey := strings.TrimSpace(req.AppKey)
+	if appKey == "" {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("appKey 不能为空"))
 		return
 	}
 
@@ -355,14 +355,14 @@ func CreateMcpServer(ctx *gin.Context) {
 			return
 		}
 	}
-	if err := bindMcpCreateCallers(ctx, callerKey, drafts, req); err != nil {
+	if err := bindMcpCreateApps(ctx, appKey, drafts, req); err != nil {
 		components.RenderJsonFail(ctx, err)
 		return
 	}
 
 	created := make([]mcpServerView, 0, len(drafts))
 	for _, draft := range drafts {
-		server, err := createMcpServerRecord(ctx, callerKey, draft)
+		server, err := createMcpServerRecord(ctx, appKey, draft)
 		if err != nil {
 			components.RenderJsonFail(ctx, err)
 			return
@@ -382,8 +382,8 @@ type mcpServerDraft struct {
 	TimeoutMs   int
 	Description string
 	Status      int
-	// BoundCallers 创建时一并登记的绑定 caller（已归一化）。
-	BoundCallers []string
+	// BoundApps 创建时一并登记的绑定 app（已归一化）。
+	BoundApps []string
 }
 
 func parseMcpCreateDrafts(req mcpCreateRequest) ([]mcpServerDraft, error) {
@@ -428,14 +428,14 @@ func parseMcpCreateDrafts(req mcpCreateRequest) ([]mcpServerDraft, error) {
 	return []mcpServerDraft{draft}, nil
 }
 
-// bindMcpCreateCallers 校验 create 请求的绑定 caller，写入每个 draft（rawConfig 多条共享同一份绑定）。
-func bindMcpCreateCallers(ctx *gin.Context, ownerCaller string, drafts []mcpServerDraft, req mcpCreateRequest) error {
-	bound, err := normalizeBoundCallers(ctx, ownerCaller, req.BoundCallers)
+// bindMcpCreateApps 校验 create 请求的绑定 app，写入每个 draft（rawConfig 多条共享同一份绑定）。
+func bindMcpCreateApps(ctx *gin.Context, ownerApp string, drafts []mcpServerDraft, req mcpCreateRequest) error {
+	bound, err := normalizeBoundApps(ctx, ownerApp, req.BoundApps)
 	if err != nil {
 		return err
 	}
 	for i := range drafts {
-		drafts[i].BoundCallers = bound
+		drafts[i].BoundApps = bound
 	}
 	return nil
 }
@@ -532,7 +532,7 @@ func newMcpServerID(name string) string {
 	return "mcpserver_" + name + "_" + fmt.Sprintf("%x", time.Now().UnixNano())
 }
 
-func createMcpServerRecord(ctx *gin.Context, callerKey string, draft mcpServerDraft) (*mcpServerView, error) {
+func createMcpServerRecord(ctx *gin.Context, appKey string, draft mcpServerDraft) (*mcpServerView, error) {
 	if existing, err := model.GetMcpServerByName(ctx, draft.Name); err != nil {
 		return nil, err
 	} else if existing != nil {
@@ -550,7 +550,7 @@ func createMcpServerRecord(ctx *gin.Context, callerKey string, draft mcpServerDr
 		TimeoutMs:   draft.TimeoutMs,
 		Description: draft.Description,
 		Status:      draft.Status,
-		CallerKey:   callerKey,
+		AppKey:   appKey,
 		CreatedBy:   userName,
 		UpdatedBy:   userName,
 	}
@@ -567,7 +567,7 @@ func createMcpServerRecord(ctx *gin.Context, callerKey string, draft mcpServerDr
 			"timeout_ms":         server.TimeoutMs,
 			"description":        server.Description,
 			"status":             server.Status,
-			"caller_key":         server.CallerKey,
+			"app_key":         server.AppKey,
 			"created_by":         server.CreatedBy,
 			"updated_by":         server.UpdatedBy,
 			"last_check_status":  mcpCheckUnknown,
@@ -580,9 +580,9 @@ func createMcpServerRecord(ctx *gin.Context, callerKey string, draft mcpServerDr
 		return nil, err
 	}
 
-	// 登记绑定 caller（属主之外的工具同步目标）。
-	if len(draft.BoundCallers) > 0 {
-		if err := model.ReplaceMcpServerCallers(ctx, server.ServerID, draft.BoundCallers, userName); err != nil {
+	// 登记绑定 app（属主之外的工具同步目标）。
+	if len(draft.BoundApps) > 0 {
+		if err := model.ReplaceMcpServerApps(ctx, server.ServerID, draft.BoundApps, userName); err != nil {
 			return nil, err
 		}
 	}
@@ -592,7 +592,7 @@ func createMcpServerRecord(ctx *gin.Context, callerKey string, draft mcpServerDr
 	} else {
 		_ = mcpclient.RemoveServer(draft.Name)
 	}
-	zlog.Infof(ctx, "[MCP] 新增连接: callerKey=%s name=%s kind=%s endpoint=%s", callerKey, draft.Name, draft.Kind, draft.Endpoint)
+	zlog.Infof(ctx, "[MCP] 新增连接: appKey=%s name=%s kind=%s endpoint=%s", appKey, draft.Name, draft.Kind, draft.Endpoint)
 
 	refreshed, err := model.GetMcpServerByServerID(ctx, server.ServerID)
 	if err != nil || refreshed == nil {
@@ -602,7 +602,7 @@ func createMcpServerRecord(ctx *gin.Context, callerKey string, draft mcpServerDr
 	return &view, nil
 }
 
-// applyMcpConnect 拉起连接并把工具同步到属主与全部绑定 caller 名下（更新描述与入参/出参
+// applyMcpConnect 拉起连接并把工具同步到属主与全部绑定 app 名下（更新描述与入参/出参
 // schema），结果写回 last_check_*；失败时该服务器全部注册工具标记停用（status=0），
 // 不再进入会话工具索引。流程细节见 mcpclient.ConnectServer。
 func applyMcpConnect(ctx *gin.Context, server *model.McpServer) {
@@ -623,11 +623,11 @@ func recordMcpCheckResult(ctx *gin.Context, serverID, status, message string) {
 	}
 }
 
-func loadMcpServer(ctx *gin.Context, callerKey, serverID string) (*model.McpServer, bool) {
-	callerKey = strings.TrimSpace(callerKey)
+func loadMcpServer(ctx *gin.Context, appKey, serverID string) (*model.McpServer, bool) {
+	appKey = strings.TrimSpace(appKey)
 	serverID = strings.TrimSpace(serverID)
-	if callerKey == "" || serverID == "" {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("callerKey 与 serverId 不能为空"))
+	if appKey == "" || serverID == "" {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("appKey 与 serverId 不能为空"))
 		return nil, false
 	}
 	if strings.HasPrefix(serverID, mcpYamlServerIDPrefix) {
@@ -641,7 +641,7 @@ func loadMcpServer(ctx *gin.Context, callerKey, serverID string) (*model.McpServ
 		components.RenderJsonFail(ctx, err)
 		return nil, false
 	}
-	if server == nil || server.CallerKey != callerKey {
+	if server == nil || server.AppKey != appKey {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("连接不存在: %s", serverID))
 		return nil, false
 	}
@@ -651,7 +651,7 @@ func loadMcpServer(ctx *gin.Context, callerKey, serverID string) (*model.McpServ
 // UpdateMcpServer 更新 MCP 连接（端点/请求头/超时/描述/启停）。
 // 更新后重启客户端并重新同步工具；停用时会停掉客户端并软删除其注册工具。
 // @Summary      更新 MCP 连接
-// @Description  按 callerKey + serverId 更新连接配置或启停状态，并重连同步
+// @Description  按 appKey + serverId 更新连接配置或启停状态，并重连同步
 // @Tags         React
 // @Accept       json
 // @Produce      json
@@ -662,7 +662,7 @@ func UpdateMcpServer(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
 		return
 	}
-	server, ok := loadMcpServer(ctx, req.CallerKey, req.ServerID)
+	server, ok := loadMcpServer(ctx, req.AppKey, req.ServerID)
 	if !ok {
 		return
 	}
@@ -696,17 +696,17 @@ func UpdateMcpServer(ctx *gin.Context) {
 		}
 		updates["status"] = *req.Status
 	}
-	// 绑定 caller 全量替换：先算差集，落库后解绑方清理工具副本、连接启用时新增方立即同步。
-	var unboundCallers []string
-	newBoundCallers := []string{}
+	// 绑定 app 全量替换：先算差集，落库后解绑方清理工具副本、连接启用时新增方立即同步。
+	var unboundApps []string
+	newBoundApps := []string{}
 	bindingsChanged := false
-	if req.BoundCallers != nil {
-		normalized, err := normalizeBoundCallers(ctx, server.CallerKey, req.BoundCallers)
+	if req.BoundApps != nil {
+		normalized, err := normalizeBoundApps(ctx, server.AppKey, req.BoundApps)
 		if err != nil {
 			components.RenderJsonFail(ctx, err)
 			return
 		}
-		current, err := model.ListMcpServerCallers(ctx, server.ServerID)
+		current, err := model.ListMcpServerApps(ctx, server.ServerID)
 		if err != nil {
 			components.RenderJsonFail(ctx, err)
 			return
@@ -724,19 +724,19 @@ func UpdateMcpServer(ctx *gin.Context) {
 		}
 		for _, key := range current {
 			if !newSet[key] {
-				unboundCallers = append(unboundCallers, key)
+				unboundApps = append(unboundApps, key)
 				bindingsChanged = true
 			}
 		}
-		newBoundCallers = normalized
+		newBoundApps = normalized
 	}
 
 	if err := model.UpdateMcpServerByServerID(ctx, server.ServerID, updates); err != nil {
 		components.RenderJsonFail(ctx, err)
 		return
 	}
-	if req.BoundCallers != nil {
-		if err := model.ReplaceMcpServerCallers(ctx, server.ServerID, newBoundCallers, helpers.GetUserName(ctx)); err != nil {
+	if req.BoundApps != nil {
+		if err := model.ReplaceMcpServerApps(ctx, server.ServerID, newBoundApps, helpers.GetUserName(ctx)); err != nil {
 			components.RenderJsonFail(ctx, err)
 			return
 		}
@@ -747,10 +747,10 @@ func UpdateMcpServer(ctx *gin.Context) {
 		return
 	}
 
-	// 解绑的 caller 名下工具副本立即清理（不论连接启停）。
-	for _, callerKey := range unboundCallers {
-		if _, err := mcpclient.RemoveRegistryToolsForCaller(ctx, refreshed.Name, callerKey); err != nil {
-			zlog.Errorf(ctx, "[MCP] 解绑 caller %s 清理工具失败: %v", callerKey, err)
+	// 解绑的 app 名下工具副本立即清理（不论连接启停）。
+	for _, appKey := range unboundApps {
+		if _, err := mcpclient.RemoveRegistryToolsForApp(ctx, refreshed.Name, appKey); err != nil {
+			zlog.Errorf(ctx, "[MCP] 解绑 app %s 清理工具失败: %v", appKey, err)
 		}
 	}
 
@@ -763,13 +763,13 @@ func UpdateMcpServer(ctx *gin.Context) {
 		}
 		recordMcpCheckResult(ctx, refreshed.ServerID, mcpCheckUnknown, "连接已停用")
 	}
-	zlog.Infof(ctx, "[MCP] 更新连接: callerKey=%s name=%s status=%d bindingsChanged=%t", refreshed.CallerKey, refreshed.Name, refreshed.Status, bindingsChanged)
+	zlog.Infof(ctx, "[MCP] 更新连接: appKey=%s name=%s status=%d bindingsChanged=%t", refreshed.AppKey, refreshed.Name, refreshed.Status, bindingsChanged)
 	components.RenderJsonSucc(ctx, gin.H{"serverId": refreshed.ServerID})
 }
 
 // DeleteMcpServer 删除 MCP 连接：停掉客户端、软删除注册表工具、软删除连接记录。
 // @Summary      删除 MCP 连接
-// @Description  按 callerKey + serverId 删除连接及其同步的注册工具
+// @Description  按 appKey + serverId 删除连接及其同步的注册工具
 // @Tags         React
 // @Accept       json
 // @Produce      json
@@ -780,7 +780,7 @@ func DeleteMcpServer(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
 		return
 	}
-	server, ok := loadMcpServer(ctx, req.CallerKey, req.ServerID)
+	server, ok := loadMcpServer(ctx, req.AppKey, req.ServerID)
 	if !ok {
 		return
 	}
@@ -796,13 +796,13 @@ func DeleteMcpServer(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, err)
 		return
 	}
-	zlog.Infof(ctx, "[MCP] 删除连接: callerKey=%s name=%s 清理工具=%d", server.CallerKey, server.Name, removedTools)
+	zlog.Infof(ctx, "[MCP] 删除连接: appKey=%s name=%s 清理工具=%d", server.AppKey, server.Name, removedTools)
 	components.RenderJsonSucc(ctx, gin.H{"serverId": server.ServerID, "removedTools": removedTools})
 }
 
 // ConnectMcpServer 连接测试：拉起客户端、同步工具清单并写回检测结果。
 // @Summary      MCP 连接测试
-// @Description  按 callerKey + serverId 立即连接该 MCP 服务器并同步工具清单
+// @Description  按 appKey + serverId 立即连接该 MCP 服务器并同步工具清单
 // @Tags         React
 // @Accept       json
 // @Produce      json
@@ -813,7 +813,7 @@ func ConnectMcpServer(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
 		return
 	}
-	server, ok := loadMcpServer(ctx, req.CallerKey, req.ServerID)
+	server, ok := loadMcpServer(ctx, req.AppKey, req.ServerID)
 	if !ok {
 		return
 	}
@@ -861,13 +861,13 @@ func countActiveMcpTools(ctx *gin.Context, serverName string) int {
 	return active
 }
 
-// RefreshMcpServers 刷新 MCP 连接：对当前 caller 可见的全部连接重新执行连接检测与工具
+// RefreshMcpServers 刷新 MCP 连接：对当前 app 可见的全部连接重新执行连接检测与工具
 // 同步，把工具描述、入参/出参 schema 与上下线状态写回 tblLlmTool，检测结果写回
 // last_check_*。失联服务器的全部注册工具标记停用（status=0，不软删，恢复连接后下次
 // 同步自动恢复），不再进入会话工具索引；服务器端已下架的工具同样标记停用。
 // 停用中的连接跳过（其工具已随停用清理）。
 // @Summary      MCP 连接刷新
-// @Description  按 callerKey 重新检测全部 MCP 连接并同步工具清单（描述/入参出参 schema/上下线状态落库）
+// @Description  按 appKey 重新检测全部 MCP 连接并同步工具清单（描述/入参出参 schema/上下线状态落库）
 // @Tags         React
 // @Accept       json
 // @Produce      json
@@ -878,13 +878,13 @@ func RefreshMcpServers(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ParamInvalidf("请求体解析失败: %s", err.Error()))
 		return
 	}
-	callerKey := strings.TrimSpace(req.CallerKey)
-	if callerKey == "" {
-		components.RenderJsonFail(ctx, components.ParamInvalidf("callerKey 不能为空"))
+	appKey := strings.TrimSpace(req.AppKey)
+	if appKey == "" {
+		components.RenderJsonFail(ctx, components.ParamInvalidf("appKey 不能为空"))
 		return
 	}
 
-	servers, err := model.ListMcpServersByCaller(ctx, callerKey)
+	servers, err := model.ListMcpServersByApp(ctx, appKey)
 	if err != nil {
 		zlog.Errorf(ctx, "[MCP] 查询连接列表失败: %v", err)
 		components.RenderJsonFail(ctx, err)
@@ -912,14 +912,14 @@ func RefreshMcpServers(ctx *gin.Context) {
 		entry.ActiveToolCount = countActiveMcpTools(ctx, server.Name)
 		results = append(results, entry)
 	}
-	// yaml 静态声明的服务器（与列表接口同口径：配置 caller 匹配时一并刷新）。
-	if conf.CustomConf.MCP.CallerKey == callerKey {
+	// yaml 静态声明的服务器（与列表接口同口径：配置 app 匹配时一并刷新）。
+	if conf.CustomConf.MCP.AppKey == appKey {
 		for _, serverCfg := range conf.CustomConf.MCP.Servers {
 			entry := mcpRefreshResult{Name: serverCfg.Name, Source: mcpServerSourceYaml}
 			refreshed := false
 			if _, err := mcpclient.EnsureServer(mcpclient.ConfServerConfig(serverCfg)); err != nil {
 				entry.Message = err.Error()
-			} else if _, err := mcpclient.SyncServerRegistryScoped(callerKey, serverCfg.Name, true); err != nil {
+			} else if _, err := mcpclient.SyncServerRegistryScoped(appKey, serverCfg.Name, true); err != nil {
 				entry.Message = err.Error()
 			} else {
 				refreshed = true
@@ -942,7 +942,7 @@ func RefreshMcpServers(ctx *gin.Context) {
 			results = append(results, entry)
 		}
 	}
-	zlog.Infof(ctx, "[MCP] 刷新连接: callerKey=%s 共 %d 个（正常 %d，失联 %d）", callerKey, len(results), connected, disconnected)
+	zlog.Infof(ctx, "[MCP] 刷新连接: appKey=%s 共 %d 个（正常 %d，失联 %d）", appKey, len(results), connected, disconnected)
 	components.RenderJsonSucc(ctx, gin.H{
 		"checked":      len(results),
 		"connected":    connected,

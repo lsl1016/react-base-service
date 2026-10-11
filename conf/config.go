@@ -246,11 +246,22 @@ type ReactWorkspaceResolverConf struct {
 }
 
 // WorkspaceEnabled 解析 workspace.enabled：未配置默认 false。
+// WorkspaceEnabled 返回检索代码和工作区能力的启用绑定：未配置时默认 true
+//（默认启用）。生效口径 = 管理面板「运行时配置」DB 覆盖 > custom.yaml > 默认启用；
+// 该开关全局生效（内置工具不按 app 隔离），决定 ReAct 运行时能否看见
+// load_runtime_code 及其挂载的 ws_* 代码检索工具。
 func (c ReactWorkspaceConfig) WorkspaceEnabled() bool {
 	if c.Enabled != nil {
 		return *c.Enabled
 	}
-	return false
+	return true
+}
+
+// WorkspaceResolversConfigured 判定代码工作区基础设施是否可用（静态解析表非空）。
+// load_runtime_code 工具的注册门控 = DB 绑定（默认启用）× 本判定；yaml enabled
+// 不再决定工具是否暴露，仅作为工作箱子系统的部署期说明。
+func (c ReactWorkspaceConfig) WorkspaceResolversConfigured() bool {
+	return len(c.Resolvers) > 0
 }
 
 // ReactWebFetchConfig 内置 web_fetch 工具配置（参考 ZCode WebFetch：URL→正文提取→按预算回填）。
@@ -290,11 +301,13 @@ const (
 )
 
 // WebSearchEnabled 解析 web_search.enabled：未配置默认 false。
+// WebSearchEnabled 返回 web_search 工具的启用绑定基线：未配置时默认 true；
+// 实际注册还需 WebSearchConfigured()（searxng 连接参数齐备）。
 func (c ReactWebSearchConfig) WebSearchEnabled() bool {
 	if c.Enabled != nil {
 		return *c.Enabled
 	}
-	return false
+	return true
 }
 
 // WebSearchConfigured 校验 kind 与 base_url：enabled 但配置不完整时工具同样不注册（记日志）。
@@ -325,11 +338,13 @@ const (
 )
 
 // WebFetchEnabled 解析 web_fetch.enabled：未配置默认 false。
+// WebFetchEnabled 返回 web_fetch 工具的启用绑定基线：未配置时默认 true（默认启用），
+// yaml 显式 false 或管理面板 DB 覆盖可关。绑定不再以"未配置=关闭"为默认。
 func (c ReactWebFetchConfig) WebFetchEnabled() bool {
 	if c.Enabled != nil {
 		return *c.Enabled
 	}
-	return false
+	return true
 }
 
 // EffectiveTimeoutSec 返回抓取超时秒数（带默认值兜底）。
@@ -411,8 +426,8 @@ type ReactMemoryConfig struct {
 	IndexMaxItems int `yaml:"index_max_items"`
 	// DetachedMaxItems 是单个记忆空间按需层 active 条目软上限，超出拒绝新增。
 	DetachedMaxItems int `yaml:"detached_max_items"`
-	// AllowUserScope 控制是否启用 caller_user 维度记忆；未配置时默认 true。
-	// false 时全部记忆收敛到 caller 维度（同 caller 用户共享）。
+	// AllowUserScope 控制是否启用 app_user 维度记忆；未配置时默认 true。
+	// false 时全部记忆收敛到 app 维度（同 app 用户共享）。
 	AllowUserScope *bool `yaml:"allow_user_scope"`
 	// Reflection 控制压缩事件后的自动整理（后台受限子 run）。
 	Reflection ReactMemoryReflectionConfig `yaml:"reflection"`
@@ -544,7 +559,7 @@ type ReactGraphMemoryConfig struct {
 	Endpoint string `yaml:"endpoint"`
 	// TimeoutMs 是工具调用（检索/写入）的单次请求超时。
 	TimeoutMs int `yaml:"timeout_ms"`
-	// GroupScope 是图谱分区作用域：caller（同 caller 共享一张图）或 caller_user（按用户分区）；默认 caller_user。
+	// GroupScope 是图谱分区作用域：app（同 app 共享一张图）或 app_user（按用户分区）；默认 app_user。
 	GroupScope string `yaml:"group_scope"`
 	// Inject 控制运行启动时的相关事实注入块（<graph_memory>）。
 	Inject ReactGraphMemoryInjectConfig `yaml:"inject"`
@@ -596,9 +611,15 @@ func (c ReactGraphMemoryConfig) GraphMemoryEnabled() bool {
 	return false
 }
 
-// GraphMemoryUserScope 解析 group_scope 是否为 caller_user 维度；未配置或非法值默认 true。
+// GraphMemoryEndpointConfigured 判定图谱记忆外部 REST 服务是否已配置。
+// 图谱工具的注册门控 = DB 绑定（默认启用）× 本判定；yaml enabled 仅保留给注入开关。
+func (c ReactGraphMemoryConfig) GraphMemoryEndpointConfigured() bool {
+	return strings.TrimSpace(c.Endpoint) != ""
+}
+
+// GraphMemoryUserScope 解析 group_scope 是否为 app_user 维度；未配置或非法值默认 true。
 func (c ReactGraphMemoryConfig) GraphMemoryUserScope() bool {
-	return c.GroupScope != "caller"
+	return c.GroupScope != "app"
 }
 
 // ReactModelConfig 描述一个可由前端选择、也可参与自动互备的模型。
@@ -688,8 +709,8 @@ type ModelCatalog struct {
 // enabled=false 时不启动调度器、不注册管理接口（与历史版本行为一致）。
 type WorkflowConfig struct {
 	Enabled bool `yaml:"enabled"`
-	// MaxParallelPerCaller 是 caller 级并发闸门（该 caller 在途 run 数达上限时本次触发记 skipped）。
-	MaxParallelPerCaller int `yaml:"max_parallel_per_caller"`
+	// MaxParallelPerApp 是 app 级并发闸门（该 app 在途 run 数达上限时本次触发记 skipped）。
+	MaxParallelPerApp int `yaml:"max_parallel_per_app"`
 	// DefaultTimeoutSec 是 workflow 未显式配置 timeout_sec 时的超时兜底。
 	DefaultTimeoutSec int `yaml:"default_timeout_sec"`
 	// DefaultMaxSteps 是 workflow 未显式配置 max_steps 时的步数兜底。
@@ -722,7 +743,7 @@ type WorkflowJudgeConfig struct {
 }
 
 const (
-	defaultWorkflowMaxParallelPerCaller = 2
+	defaultWorkflowMaxParallelPerApp = 2
 	defaultWorkflowTimeoutSec           = 1800
 	defaultWorkflowMaxSteps             = 20
 	defaultWorkflowMaxFollowupRounds    = 1
@@ -732,8 +753,8 @@ const (
 // GetWorkflowConfig 返回合并内置默认值后的 workflow 配置。
 func GetWorkflowConfig() WorkflowConfig {
 	cfg := CustomConf.LLM.Workflow
-	if cfg.MaxParallelPerCaller <= 0 {
-		cfg.MaxParallelPerCaller = defaultWorkflowMaxParallelPerCaller
+	if cfg.MaxParallelPerApp <= 0 {
+		cfg.MaxParallelPerApp = defaultWorkflowMaxParallelPerApp
 	}
 	if cfg.DefaultTimeoutSec <= 0 {
 		cfg.DefaultTimeoutSec = defaultWorkflowTimeoutSec
@@ -784,8 +805,8 @@ type MCPServerAuditConfig struct {
 
 // MCPConfig 声明 MCP 客户端：servers 的 kind 必须命中代码内适配器白名单。
 type MCPConfig struct {
-	// CallerKey 是 MCP 工具同步进注册表时挂载的调用方；为空则不启用 MCP。
-	CallerKey string          `yaml:"caller_key"`
+	// AppKey 是 MCP 工具同步进注册表时挂载的调用方；为空则不启用 MCP。
+	AppKey string          `yaml:"app_key"`
 	Servers   []MCPServerConf `yaml:"servers"`
 	// AllowPrivateEndpoint 允许连接环回/私网 MCP 端点（默认拒绝，SSRF 防护）。
 	// 仅本机开发/演示环境开启；生产环境必须保持 false。
@@ -886,7 +907,25 @@ func IsReactPlaygroundWhitelisted(userName string) bool {
 	return len(whitelist) == 0 || slices.Contains(whitelist, strings.TrimSpace(userName))
 }
 
+// GetReactRuntimeConfig 返回全局生效的运行时配置（全局 DB 覆盖 > yaml > 内置默认）。
 func GetReactRuntimeConfig() ReactRuntimeConfig {
+	return getReactRuntimeConfigWithOverride(GetRuntimeSettingOverride())
+}
+
+// GetReactRuntimeConfigForApp 返回指定 app 生效的运行时配置：
+// app 覆盖 > 全局覆盖 > custom.yaml > 内置默认。appKey 为空或该 app 无覆盖行时
+// 与全局口径一致。run 装配与引擎内策略判定按此入口取 app 维度生效值。
+func GetReactRuntimeConfigForApp(appKey string) ReactRuntimeConfig {
+	if strings.TrimSpace(appKey) == "" {
+		return GetReactRuntimeConfig()
+	}
+	merged := mergeRuntimeSettingOverride(GetRuntimeSettingOverride(), GetAppRuntimeSettingOverride(strings.TrimSpace(appKey)))
+	return getReactRuntimeConfigWithOverride(merged)
+}
+
+// getReactRuntimeConfigWithOverride 按「覆盖 > yaml > 内置默认」的单一口径构建运行时配置；
+// 全局与 app 维度共用同一实现，保证面板、装配、引擎三方读到一致的归一化结果。
+func getReactRuntimeConfigWithOverride(settingOverride RuntimeSettingOverride) ReactRuntimeConfig {
 	cfg := CustomConf.LLM.React
 	if cfg.MaxSteps <= 0 {
 		cfg.MaxSteps = defaultReactMaxSteps
@@ -897,7 +936,7 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 
 	// context_compact 策略统一经 applyContextCompactOverride 合并管理面板「运行时配置」
 	// 的 DB 覆盖（覆盖 > yaml > 内置默认），与 /setting/context 面板响应口径一致。
-	compact := applyContextCompactOverride(cfg.ContextCompact, GetRuntimeSettingOverride().ContextCompact)
+	compact := applyContextCompactOverride(cfg.ContextCompact, settingOverride.ContextCompact)
 	if compact.TokenTrigger <= 0 {
 		compact.TokenTrigger = defaultReactCompactTokenTrigger
 	}
@@ -987,18 +1026,22 @@ func GetReactRuntimeConfig() ReactRuntimeConfig {
 
 	// memory 策略先应用管理面板「运行时配置」的 DB 覆盖（覆盖 > yaml > 内置默认），再统一
 	// 归一化；归一化与 /setting/memory 面板响应（EffectiveMemoryConfig）共用同一实现。
-	memory := applyMemoryOverride(cfg.Memory, GetRuntimeSettingOverride().Memory)
+	memory := applyMemoryOverride(cfg.Memory, settingOverride.Memory)
 	cfg.Memory = normalizeReactMemoryConfig(memory)
 
 	// subagent 策略统一经 EffectiveSubAgentConfig 合并管理面板「运行时配置」的 DB 覆盖
 	//（覆盖 > yaml > 内置默认），与 /setting/subagent 面板响应口径一致。
-	cfg.SubAgent = EffectiveSubAgentConfig(GetRuntimeSettingOverride().SubAgent)
+	cfg.SubAgent = EffectiveSubAgentConfig(settingOverride.SubAgent)
 
 	// 联网能力总开关（web_fetch / web_search 共用一枚开关）经 apply*Override 合并管理面板
 	//「运行时配置」的 DB 覆盖（覆盖 > yaml > 内置默认），与 /setting/web 面板响应口径一致；
 	// 数字参数默认值由 Effective* 方法按需兜底，此处无需归一化。
-	cfg.WebFetch = applyWebFetchOverride(cfg.WebFetch, GetRuntimeSettingOverride().Web)
-	cfg.WebSearch = applyWebSearchOverride(cfg.WebSearch, GetRuntimeSettingOverride().Web)
+	cfg.WebFetch = applyWebFetchOverride(cfg.WebFetch, settingOverride.Web)
+	cfg.WebSearch = applyWebSearchOverride(cfg.WebSearch, settingOverride.Web)
+
+	// 检索代码和工作区开关（全局生效）：DB 覆盖 > yaml > 默认启用；
+	// 决定 load_runtime_code / ws_* 检索工具的注册与可见性。
+	cfg.Workspace = applyWorkspaceOverride(cfg.Workspace, settingOverride.Workspace)
 
 	workspace := cfg.Workspace
 	if strings.TrimSpace(workspace.RootDir) == "" {

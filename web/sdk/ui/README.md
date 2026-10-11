@@ -28,7 +28,7 @@ import { createAgentClient, mountAgentUI } from 'react-agent-web-sdk';
 // Create agent client
 const agent = createAgentClient({
   baseUrl: 'https://your-api.com',
-  callerKey: 'my-app',
+  appKey: 'my-app',
 });
 
 // Mount UI to a DOM element
@@ -86,7 +86,7 @@ interface MountAgentUIOptions {
 ```typescript
 interface AgentClientConfig {
   baseUrl: string;          // API base URL
-  callerKey: string;        // Application identifier
+  appKey: string;        // Application identifier
   routeValues?: string[];   // Route parameters for session routing
   modelKey?: string;        // Model identifier
   modelVersion?: string;    // Model version

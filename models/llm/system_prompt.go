@@ -14,7 +14,7 @@ import (
 
 type SystemPrompt struct {
 	ID          uint                  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
-	CallerKey   string                `json:"callerKey" gorm:"column:caller_key;not null"`
+	AppKey   string                `json:"appKey" gorm:"column:app_key;not null"`
 	RouteValues string                `json:"routeValues" gorm:"column:route_values"`
 	Name        string                `json:"name" gorm:"column:name;not null"`
 	Content     string                `json:"content" gorm:"column:content;not null"`
@@ -51,11 +51,11 @@ func GetSystemPromptByID(ctx *gin.Context, id uint) (*SystemPrompt, error) {
 	return &sp, nil
 }
 
-// ExistSystemPromptByCallerAndRoute 检查 caller+route 组合下是否已有有效记录
-func ExistSystemPromptByCallerAndRoute(ctx *gin.Context, callerKey, routeValues string) (bool, error) {
+// ExistSystemPromptByAppAndRoute 检查 app+route 组合下是否已有有效记录
+func ExistSystemPromptByAppAndRoute(ctx *gin.Context, appKey, routeValues string) (bool, error) {
 	var count int64
 	err := helpers.MysqlClientLLM.Model(&SystemPrompt{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ?", callerKey, routeValues).
+		Where("app_key = ? AND route_values = ?", appKey, routeValues).
 		Count(&count).Error
 	if err != nil {
 		return false, components.ErrorDbSelect.Wrap(err)
@@ -81,10 +81,10 @@ func SoftDeleteSystemPromptByID(ctx *gin.Context, id uint) error {
 	return nil
 }
 
-func ListSystemPromptsByCaller(ctx *gin.Context, callerKey string) ([]SystemPrompt, error) {
+func ListSystemPromptsByApp(ctx *gin.Context, appKey string) ([]SystemPrompt, error) {
 	var prompts []SystemPrompt
 	err := helpers.MysqlClientLLM.Model(&SystemPrompt{}).WithContext(ctx).
-		Where("caller_key = ?", callerKey).
+		Where("app_key = ?", appKey).
 		Order("created_at DESC").
 		Find(&prompts).Error
 	if err != nil {
@@ -93,11 +93,11 @@ func ListSystemPromptsByCaller(ctx *gin.Context, callerKey string) ([]SystemProm
 	return prompts, nil
 }
 
-// ListSystemPromptsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询系统提示词列表（不过滤 status，管理后台用）
-func ListSystemPromptsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]SystemPrompt, error) {
+// ListSystemPromptsByAppAndRoutes 按 appKey + 路由前缀匹配查询系统提示词列表（不过滤 status，管理后台用）
+func ListSystemPromptsByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]SystemPrompt, error) {
 	var prompts []SystemPrompt
 	err := helpers.MysqlClientLLM.Model(&SystemPrompt{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values IN ?", callerKey, routePrefixes).
+		Where("app_key = ? AND route_values IN ?", appKey, routePrefixes).
 		Order("created_at DESC").
 		Find(&prompts).Error
 	if err != nil {
@@ -106,11 +106,11 @@ func ListSystemPromptsByCallerAndRoutes(ctx *gin.Context, callerKey string, rout
 	return prompts, nil
 }
 
-// ListSystemPromptsByCallerAndExactRoute 按 callerKey + routeValues 精确匹配查询系统提示词列表
-func ListSystemPromptsByCallerAndExactRoute(ctx *gin.Context, callerKey string, routeValues string) ([]SystemPrompt, error) {
+// ListSystemPromptsByAppAndExactRoute 按 appKey + routeValues 精确匹配查询系统提示词列表
+func ListSystemPromptsByAppAndExactRoute(ctx *gin.Context, appKey string, routeValues string) ([]SystemPrompt, error) {
 	var prompts []SystemPrompt
 	err := helpers.MysqlClientLLM.Model(&SystemPrompt{}).WithContext(ctx).
-		Where("caller_key = ? AND route_values = ?", callerKey, routeValues).
+		Where("app_key = ? AND route_values = ?", appKey, routeValues).
 		Order("created_at DESC").
 		Find(&prompts).Error
 	if err != nil {
@@ -119,12 +119,12 @@ func ListSystemPromptsByCallerAndExactRoute(ctx *gin.Context, callerKey string, 
 	return prompts, nil
 }
 
-// FindSystemPromptsByCallerAndRoutes 按 callerKey + 路由前缀匹配查询系统提示词；
-// 同时并入「默认作用域」（caller_key=default）下命中的提示词，对全部 caller 生效。
-func FindSystemPromptsByCallerAndRoutes(ctx *gin.Context, callerKey string, routePrefixes []string) ([]SystemPrompt, error) {
+// FindSystemPromptsByAppAndRoutes 按 appKey + 路由前缀匹配查询系统提示词；
+// 同时并入「默认作用域」（app_key=default）下命中的提示词，对全部 app 生效。
+func FindSystemPromptsByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]SystemPrompt, error) {
 	var prompts []SystemPrompt
 	err := helpers.MysqlClientLLM.Model(&SystemPrompt{}).WithContext(ctx).
-		Where("caller_key IN ? AND status = 1 AND route_values IN ?", CallerScopeKeys(callerKey), routePrefixes).
+		Where("app_key IN ? AND status = 1 AND route_values IN ?", AppScopeKeys(appKey), routePrefixes).
 		Find(&prompts).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)
@@ -132,11 +132,11 @@ func FindSystemPromptsByCallerAndRoutes(ctx *gin.Context, callerKey string, rout
 	return prompts, nil
 }
 
-// ListAllSystemPrompts 列出全部 caller 的系统提示词（管理控制台「全部」视图用）。
+// ListAllSystemPrompts 列出全部 app 的系统提示词（管理控制台「全部」视图用）。
 func ListAllSystemPrompts(ctx *gin.Context) ([]SystemPrompt, error) {
 	var prompts []SystemPrompt
 	err := helpers.MysqlClientLLM.Model(&SystemPrompt{}).WithContext(ctx).
-		Order("caller_key ASC, created_at DESC").
+		Order("app_key ASC, created_at DESC").
 		Find(&prompts).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)

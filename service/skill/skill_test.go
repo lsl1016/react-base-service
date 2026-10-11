@@ -118,7 +118,7 @@ func TestToSkillResp(t *testing.T) {
 		ExecutionSteps:     "step1",
 		BusinessContext:    "biz",
 		PromptSupplement:   "prompt",
-		CallerKey:          "caller",
+		AppKey:          "app",
 		RouteValues:        `["space_a","report_b"]`,
 		IsDefault:          0,
 		Status:             1,
