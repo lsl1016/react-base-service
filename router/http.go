@@ -195,17 +195,6 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		appGroup.POST("/batch_delete", app.BatchDelete)
 	}
 
-	// caller→app 改名兼容：旧 /caller/* 路由别名指向同一组 handler，
-	// 供迁移期存量管理客户端继续调用，新接入方请使用 /app/*。
-	legacyAppGroup := router.Group("/caller")
-	{
-		legacyAppGroup.POST("/register", app.RegisterApp)
-		legacyAppGroup.POST("/update", app.UpdateApp)
-		legacyAppGroup.POST("/list", app.ListApps)
-		legacyAppGroup.POST("/copy_config", app.CopyConfig)
-		legacyAppGroup.POST("/batch_delete", app.BatchDelete)
-	}
-
 	// Skill 管理接口（SKILL.md 文件导入见 /skill/import 与 /skill/import_zip）
 	skillGroup := router.Group("/skill")
 	{

@@ -463,10 +463,6 @@ func prepareRuntimeRequest(ctx *gin.Context, payload params.ReactRunPayload, ses
 // 这里采用依赖注入，是后续扩展 Plan Runtime / Durable Runtime 时保持核心循环稳定的重要边界。
 func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRunPayload, sessionID string, services runtimeServices) (*runtimeRequest, error) {
 	payload.AppKey = strings.TrimSpace(payload.AppKey)
-	if payload.AppKey == "" {
-		// caller→app 改名兼容：存量客户端仍发 callerKey 时回填为 appKey（仅此一处收口）。
-		payload.AppKey = strings.TrimSpace(payload.LegacyCallerKey)
-	}
 	payload.Type = normalizeSessionType(payload.Type)
 	payload.ModelKey = strings.TrimSpace(payload.ModelKey)
 	payload.ModelVersion = strings.TrimSpace(payload.ModelVersion)

@@ -36,9 +36,6 @@ type ReactReasoningOptions struct {
 
 type ReactRunPayload struct {
 	AppKey   string               `json:"appKey"`
-	// LegacyCallerKey 是 caller→app 改名前的旧字段名（已废弃）：仅在 appKey 为空时
-	// 作为兼容回填来源，供存量 SDK/接入方在迁移期继续调用，新接入方请使用 appKey。
-	LegacyCallerKey string               `json:"callerKey,omitempty"`
 	RouteValues []string             `json:"routeValues"`
 	Type        string               `json:"type"`
 	UserPrompt  string               `json:"userPrompt"`
