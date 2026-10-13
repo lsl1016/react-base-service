@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"react-base-service/components"
@@ -14,7 +15,7 @@ import (
 	"react-base-service/golib/zlog"
 )
 
-func RegisterApp(ctx *gin.Context, appKey, name, description, platform string, allowPlan *int, bindDefaultCapabilities *bool, createdBy string) (*model.App, error) {
+func RegisterApp(ctx *gin.Context, appKey, name, description, platform string, allowPlan *int, bindDefaultCapabilities *bool, defaultModelHash string, createdBy string) (*model.App, error) {
 	// "default" 是默认作用域伪 app 的保留字，不允许注册为真实 app。
 	if model.IsReservedAppKey(appKey) {
 		return nil, components.ErrorAppDuplicate.Sprintf(appKey)
@@ -25,6 +26,13 @@ func RegisterApp(ctx *gin.Context, appKey, name, description, platform string, a
 	}
 	if existing != nil {
 		return nil, components.ErrorAppDuplicate.Sprintf(appKey)
+	}
+
+	defaultModelHash = strings.TrimSpace(defaultModelHash)
+	if defaultModelHash != "" {
+		if err := validateDefaultModelHash(ctx, defaultModelHash); err != nil {
+			return nil, err
+		}
 	}
 
 	// bindDefaultCapabilities 缺省为绑定（1）：新 app 默认继承 default 伪 app 的公共能力池；
@@ -39,9 +47,10 @@ func RegisterApp(ctx *gin.Context, appKey, name, description, platform string, a
 		Description: description,
 		Platform:    platform,
 		AllowPlan:   allowPlan,
+		DefaultModelHash: defaultModelHash,
 		BindDefaultCapabilities: bindDefault,
-		Status:      1,
-		CreatedBy:   createdBy,
+		Status:  1,
+		CreatedBy: createdBy,
 	}
 	if err := model.CreateApp(ctx, app); err != nil {
 		return nil, err
@@ -95,7 +104,41 @@ func UpdateApp(ctx *gin.Context, appKey string, updates map[string]interface{}) 
 	if existing == nil {
 		return components.ErrorAppNotFound.Sprintf(appKey)
 	}
+	// 默认模型非 nil 即更新（含空串=清除）；配置期校验存在性与连接启用状态，
+	// 运行期引用失效则回退连接解析（见 llmmodel.ResolveAppDefaultModel）。
+	if raw, ok := updates["default_model_hash"]; ok {
+		hash, _ := raw.(string)
+		hash = strings.TrimSpace(hash)
+		if hash != "" {
+			if err := validateDefaultModelHash(ctx, hash); err != nil {
+				return err
+			}
+		}
+		updates["default_model_hash"] = hash
+	}
 	return model.UpdateAppByKey(ctx, appKey, updates)
+}
+
+// validateDefaultModelHash 校验默认模型可解析：用户模型存在，且引用连接（若有）启用中。
+func validateDefaultModelHash(ctx *gin.Context, hash string) error {
+	userModel, err := model.GetUserModelByHash(ctx, hash)
+	if err != nil {
+		return err
+	}
+	if userModel == nil {
+		return components.ErrorUserModelNotFound.Sprintf(hash)
+	}
+	if userModel.ConnectionID > 0 {
+		conn, err := model.GetConnectionByID(ctx, userModel.ConnectionID)
+		if err != nil {
+			return err
+		}
+		if conn == nil || conn.Status != 1 {
+			return components.ErrorConnectionNotFound.Sprintf(
+				fmt.Sprintf("默认模型引用的连接(id=%d)已删除或停用", userModel.ConnectionID))
+		}
+	}
+	return nil
 }
 
 func ListAll(ctx *gin.Context) ([]model.App, error) {

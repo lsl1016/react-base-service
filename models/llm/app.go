@@ -21,6 +21,11 @@ type App struct {
 	// AllowPlan 是 create_plan/Plan 模式的 app 级开关（三态）：
 	// nil=跟随全局 custom.yaml llm.react.allow_plan；0=app 级强制关；1=app 级强制开。
 	AllowPlan *int `json:"allowPlan" gorm:"column:allow_plan"`
+	// DefaultModelHash 是 app 默认模型：指向一条用户模型（tblLlmUserModel.model_hash），
+	// 无 ModelHash 的 run 与 workflow 凭证解析以它为第一优先——厂商（连接）与模型
+	// 一次选定。空 = 未配置（走连接解析 → 旧 app 级 API Key 兜底）；
+	// 引用的模型/连接失效时运行时同样回退，不阻断 run。
+	DefaultModelHash string `json:"defaultModelHash" gorm:"column:default_model_hash;not null;default:''"`
 	// BindDefaultCapabilities 控制是否继承 default 伪 app 的默认能力池（工具/Skill）：
 	// 1=继承（注册新 app 时的默认值，也是存量行为）；0=只解析自身名下的工具与 Skill。
 	// 系统提示词/子 Agent/模型凭证不受此开关影响，始终按 app+default 合并解析。

@@ -1,6 +1,8 @@
 package app
 
 import (
+	"strings"
+
 	"react-base-service/components"
 	"react-base-service/components/params"
 	"react-base-service/helpers"
@@ -30,7 +32,7 @@ func RegisterApp(ctx *gin.Context) {
 
 	userName := helpers.GetUserName(ctx)
 
-	app, err := appService.RegisterApp(ctx, req.AppKey, req.Name, req.Description, req.Platform, req.AllowPlan, req.BindDefaultCapabilities, userName)
+	app, err := appService.RegisterApp(ctx, req.AppKey, req.Name, req.Description, req.Platform, req.AllowPlan, req.BindDefaultCapabilities, req.DefaultModelHash, userName)
 	if err != nil {
 		zlog.Errorf(ctx, "[App.Register] 注册失败: appKey=%s, err=%v", req.AppKey, err)
 		components.RenderJsonFail(ctx, err)
@@ -43,6 +45,7 @@ func RegisterApp(ctx *gin.Context) {
 		Description: app.Description,
 		Platform:    app.Platform,
 		AllowPlan:   app.AllowPlan,
+		DefaultModelHash: app.DefaultModelHash,
 		BindDefaultCapabilities: app.BindDefaultCapabilities,
 		Status:                  app.Status,
 		CreatedAt:               app.CreatedAt.Format("2006-01-02 15:04:05"),
@@ -86,6 +89,10 @@ func UpdateApp(ctx *gin.Context) {
 	if req.BindDefaultCapabilities != nil {
 		updates["bind_default_capabilities"] = boolToInt(*req.BindDefaultCapabilities)
 	}
+	// 非 nil 即更新默认模型（空串=清除），service 层校验可解析性。
+	if req.DefaultModelHash != nil {
+		updates["default_model_hash"] = strings.TrimSpace(*req.DefaultModelHash)
+	}
 
 	if err := appService.UpdateApp(ctx, req.AppKey, updates); err != nil {
 		zlog.Errorf(ctx, "[App.Update] 更新失败: appKey=%s, err=%v", req.AppKey, err)
@@ -120,6 +127,7 @@ func ListApps(ctx *gin.Context) {
 			Description: c.Description,
 			Platform:    c.Platform,
 			AllowPlan:   c.AllowPlan,
+			DefaultModelHash: c.DefaultModelHash,
 			BindDefaultCapabilities: c.BindDefaultCapabilities,
 			Status:                  c.Status,
 			CreatedAt:               c.CreatedAt.Format("2006-01-02 15:04:05"),

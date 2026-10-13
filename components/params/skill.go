@@ -132,6 +132,9 @@ type RegisterAppReq struct {
 	// BindDefaultCapabilities 是否绑定 default 伪 app 的默认能力池（存量工具/Skill）：
 	// nil=默认绑定（1）；false=不绑定，该 app 只解析自身名下的工具与 Skill。
 	BindDefaultCapabilities *bool `json:"bindDefaultCapabilities"`
+	// DefaultModelHash app 默认模型（tblLlmUserModel.model_hash）：无 ModelHash 的
+	// run/workflow 凭证解析第一优先，厂商与模型一次选定；空 = 未配置。
+	DefaultModelHash string `json:"defaultModelHash"`
 }
 
 // UpdateAppReq App 更新请求
@@ -146,6 +149,9 @@ type UpdateAppReq struct {
 	AllowPlan *int `json:"allowPlan" binding:"omitempty,min=0,max=1"`
 	// BindDefaultCapabilities 是否绑定默认能力池：nil=不更新；切换后对「下一个 run」生效。
 	BindDefaultCapabilities *bool `json:"bindDefaultCapabilities"`
+	// DefaultModelHash app 默认模型：nil=不更新；非 nil（含空串）=设置/清除，
+	// 指向的用户模型须存在且引用连接启用中。
+	DefaultModelHash *string `json:"defaultModelHash"`
 }
 
 // ListAppsReq App 列表请求（预留扩展）
@@ -160,7 +166,9 @@ type AppResp struct {
 	// AllowPlan create_plan/Plan 模式 app 级开关：nil=跟随全局配置；0=强制关；1=强制开。
 	AllowPlan *int `json:"allowPlan"`
 	// BindDefaultCapabilities 是否绑定 default 伪 app 的默认能力池（1=绑定，0=不绑定）。
-	BindDefaultCapabilities int    `json:"bindDefaultCapabilities"`
+	BindDefaultCapabilities int `json:"bindDefaultCapabilities"`
+	// DefaultModelHash app 默认模型（无 ModelHash 的 run 兜底；空=未配置）。
+	DefaultModelHash string `json:"defaultModelHash"`
 	Status                  int    `json:"status"`
 	CreatedAt               string `json:"createdAt"`
 }

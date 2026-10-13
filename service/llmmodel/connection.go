@@ -26,7 +26,8 @@ import (
 
 const connectionFetchTimeout = 15 * time.Second
 
-// CreateConnection 创建连接；同一 app+routeValues 组合不允许重复。
+// CreateConnection 创建连接；同一 app+route+接入地址组合不允许重复
+//（同 app+路由允许多厂商连接并存，仅拦同一接入点的重复注册）。
 func CreateConnection(ctx *gin.Context, req params.CreateConnectionReq, userName string) (*model.Connection, error) {
 	protocol := strings.TrimSpace(req.Protocol)
 	if !llm.IsValidProtocol(protocol) {
@@ -36,13 +37,14 @@ func CreateConnection(ctx *gin.Context, req params.CreateConnectionReq, userName
 	routeValues, _ := json.Marshal(req.RouteValues)
 	routeValuesStr := string(routeValues)
 	appKey := strings.TrimSpace(req.AppKey)
+	baseURL := strings.TrimSpace(req.BaseURL)
 
-	exists, err := model.ExistConnectionByAppAndRoute(ctx, appKey, routeValuesStr)
+	exists, err := model.ExistConnectionByAppRouteAndBaseURL(ctx, appKey, routeValuesStr, baseURL)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, components.ErrorConnectionDuplicate.Sprintf(fmt.Sprintf("%s %s", appKey, routeValuesStr))
+		return nil, components.ErrorConnectionDuplicate.Sprintf(fmt.Sprintf("%s %s %s", appKey, routeValuesStr, baseURL))
 	}
 
 	conn := &model.Connection{
@@ -50,7 +52,7 @@ func CreateConnection(ctx *gin.Context, req params.CreateConnectionReq, userName
 		RouteValues: routeValuesStr,
 		Name:        strings.TrimSpace(req.Name),
 		Protocol:    protocol,
-		BaseURL:     strings.TrimSpace(req.BaseURL),
+		BaseURL:     baseURL,
 		ApiKeyValue: strings.TrimSpace(req.ApiKey),
 		Status:      1,
 		CreatedBy:   userName,
@@ -94,23 +96,39 @@ func UpdateConnectionByID(ctx *gin.Context, req params.UpdateConnectionReq, user
 	}
 	if req.RouteValues != nil {
 		routeValues, _ := json.Marshal(req.RouteValues)
-		newRouteValues := string(routeValues)
-		if newRouteValues != existing.RouteValues || strings.TrimSpace(req.AppKey) != existing.AppKey {
-			exists, err := model.ExistConnectionByAppAndRoute(ctx, strings.TrimSpace(req.AppKey), newRouteValues)
-			if err != nil {
-				return err
-			}
-			if exists {
-				return components.ErrorConnectionDuplicate.Sprintf(fmt.Sprintf("%s %s", req.AppKey, newRouteValues))
-			}
-		}
-		updates["route_values"] = newRouteValues
+		updates["route_values"] = string(routeValues)
 	}
 	if req.Status != nil {
 		updates["status"] = *req.Status
 	}
 
+	// 防重口径与创建一致（app+路由+接入地址）：三者任一变化时，用变更后的
+	// 最终组合查重，避免改名/换路由时撞上同接入点的既有连接。
+	effectiveAppKey := strOrExisting(req.AppKey, existing.AppKey)
+	effectiveRouteValues := strOrExisting(updates["route_values"], existing.RouteValues)
+	effectiveBaseURL := strOrExisting(updates["base_url"], existing.BaseURL)
+	if effectiveAppKey != existing.AppKey || effectiveRouteValues != existing.RouteValues || effectiveBaseURL != existing.BaseURL {
+		exists, err := model.ExistConnectionByAppRouteAndBaseURL(ctx, effectiveAppKey, effectiveRouteValues, effectiveBaseURL)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return components.ErrorConnectionDuplicate.Sprintf(fmt.Sprintf("%s %s %s", effectiveAppKey, effectiveRouteValues, effectiveBaseURL))
+		}
+	}
+
 	return model.UpdateConnectionByID(ctx, req.ID, updates)
+}
+
+// strOrExisting 更新语义下的字段终值：请求非空取请求值，否则保持库中现值。
+func strOrExisting(requested, existing interface{}) string {
+	if text, ok := requested.(string); ok && strings.TrimSpace(text) != "" {
+		return strings.TrimSpace(text)
+	}
+	if text, ok := existing.(string); ok {
+		return text
+	}
+	return ""
 }
 
 // DeleteConnectionByID 删除连接；仍被模型引用时拒绝。
@@ -173,6 +191,8 @@ func toConnectionItem(conn *model.Connection, modelCount int64) params.Connectio
 
 // ResolveConnection 按 appKey + 路由前缀匹配解析最佳连接：
 // 先在 app 精确命中的连接里取 route_values 最长者，没有再取空 app（全局）兜底。
+// 同前缀长度存在多条时取 id 最小的（FindConnectionsByAppAndRoutes 已按
+// CHAR_LENGTH(route_values) DESC, id ASC 排序），结果确定可复现。
 // 返回 nil 表示未配置连接（调用方回退旧 tblLlmApiKey 口径）。
 func ResolveConnection(ctx *gin.Context, appKey string, routeValues []string) (*model.Connection, error) {
 	conns, err := model.FindConnectionsByAppAndRoutes(ctx, appKey, route.BuildRoutePrefixes(routeValues))

@@ -62,13 +62,19 @@ func executeWorkflowRun(wf *model.Workflow, run *model.WorkflowRun) {
 	defer cancel()
 
 	ginCtx := react.NewHeadlessGinContext(resolveWorkflowUserName(wf))
+	// 模型解析：wf.ModelKey 显式配置优先；未配置且 app 默认模型可解析时 modelKey 留空，
+	// 交由 run 侧走默认模型分支（厂商+模型+凭证同源）；否则沿用全局默认模型 key。
+	runModelKey := resolveWorkflowModelKey(wf)
+	if strings.TrimSpace(wf.ModelKey) == "" && workflowAppDefaultModelResolvable(ginCtx, wf.AppKey) {
+		runModelKey = ""
+	}
 	payload := params.ReactRunPayload{
 		AppKey:    wf.AppKey,
 		RouteValues:  parseRouteValues(wf.RouteValues),
 		Type:         model.ReactSessionTypeScheduled,
 		UserPrompt:   renderWorkflowPrompt(wf),
 		SessionTitle: buildWorkflowSessionTitle(wf, run),
-		ModelKey:     resolveWorkflowModelKey(wf),
+		ModelKey:     runModelKey,
 		ModelVersion: wf.ModelVersion,
 		MaxSteps:     wf.MaxSteps,
 		ControlContext: mustJSON(map[string]any{
@@ -313,31 +319,82 @@ func artifactNames(artifacts []struct {
 	return "产出文件 " + strings.Join(names, ", ")
 }
 
-// newJudgeInvoker 构造裁判的 LLM 调用器：凭证与主 run 同源（app 连接/API Key），
-// 模型用 workflow 显式配置，未配置时回退全局默认 ReAct 模型（与 run 同口径，轻量判定不必独配）。
+// newJudgeInvoker 构造裁判的 LLM 调用器，解析顺序与 run 无 ModelHash 路径同口径：
+//   1) workflow 显式配置 modelKey → 凭证走 app+route 连接 / 旧 API Key（历史行为）；
+//   2) app 默认模型——厂商（连接）与模型一次选定，凭证/端点/协议同源，消除多厂商
+//      连接并存时模型与接入点错配；
+//   3) 全局默认 ReAct 模型 + 旧凭证链（轻量判定不必独配）。
 func newJudgeInvoker(ctx *gin.Context, wf *model.Workflow) judge.Invoker {
-	modelKey := resolveWorkflowModelKey(wf)
-	modelVersion := wf.ModelVersion
-	if strings.TrimSpace(modelVersion) == "" {
-		modelVersion = llm.ResolveModelVersion(modelKey, "")
+	if key := strings.TrimSpace(wf.ModelKey); key != "" {
+		modelVersion := wf.ModelVersion
+		if strings.TrimSpace(modelVersion) == "" {
+			modelVersion = llm.ResolveModelVersion(key, "")
+		}
+		apiKey, err := resolveWorkflowCredential(ctx, wf)
+		if err != nil {
+			zlog.Warnf(ctx, "[workflow.judge] 解析裁判凭证失败(裁判不生效): key=%s err=%v", wf.WorkflowKey, err)
+			return nil
+		}
+		return judgeLLMInvoker{apiKey: apiKey, modelKey: key, modelVersion: modelVersion}
 	}
+
+	app, err := model.GetAppByKey(ctx, wf.AppKey)
+	if err != nil {
+		zlog.Warnf(ctx, "[workflow.judge] 查询 app 失败(跳过默认模型): app=%s err=%v", wf.AppKey, err)
+	} else if app != nil {
+		resolved, err := llmmodelService.ResolveAppDefaultModel(ctx, app)
+		if err != nil {
+			zlog.Warnf(ctx, "[workflow.judge] 解析 app 默认模型失败(跳过): app=%s err=%v", wf.AppKey, err)
+		} else if resolved != nil {
+			invoker := judgeLLMInvoker{
+				apiKey:          resolved.UserModel.ApiKey,
+				modelKey:        resolved.UserModel.ModelKey,
+				modelVersion:    resolved.UserModel.ModelVersion,
+				apiURL:          resolved.UserModel.ApiURL,
+				maxOutputTokens: resolved.UserModel.MaxOutputTokens,
+			}
+			if resolved.Connection != nil {
+				invoker.apiKey = resolved.Connection.ApiKeyValue
+				invoker.apiURL = resolved.Connection.BaseURL
+				invoker.protocol = resolved.Connection.Protocol
+			}
+			return invoker
+		}
+	}
+
+	// 回退全局默认 ReAct 模型 + 旧凭证链。
+	modelKey := conf.GetReactRuntimeConfig().Models.Default.ModelKey
 	apiKey, err := resolveWorkflowCredential(ctx, wf)
 	if err != nil {
 		zlog.Warnf(ctx, "[workflow.judge] 解析裁判凭证失败(裁判不生效): key=%s err=%v", wf.WorkflowKey, err)
 		return nil
 	}
-	return judgeLLMInvoker{apiKey: apiKey, modelKey: modelKey, modelVersion: modelVersion}
+	return judgeLLMInvoker{apiKey: apiKey, modelKey: modelKey, modelVersion: llm.ResolveModelVersion(modelKey, "")}
 }
 
 // judgeLLMInvoker 把 api/llm 流式客户端适配为 judge.Invoker（非工具纯文本调用，extractor 同款）。
+// protocol 非空 = 连接驱动（显式协议+端点）；否则按 modelKey 走用户模型客户端
+//（apiURL 非空时作为端点覆盖）。
 type judgeLLMInvoker struct {
-	apiKey       string
-	modelKey     string
-	modelVersion string
+	apiKey          string
+	modelKey        string
+	modelVersion    string
+	apiURL          string
+	protocol        string
+	maxOutputTokens int
 }
 
 func (i judgeLLMInvoker) ChatOnce(ctx context.Context, system, user string) (string, error) {
-	client, err := llm.GetClientWithUserModel(i.apiKey, i.modelKey)
+	var client llm.LLMClient
+	var err error
+	switch {
+	case i.protocol != "":
+		client, err = llm.GetClientWithProtocol(i.apiKey, i.protocol, i.apiURL, i.maxOutputTokens)
+	case i.apiURL != "":
+		client, err = llm.GetClientWithUserModelEndpoint(i.apiKey, i.modelKey, i.apiURL, i.maxOutputTokens)
+	default:
+		client, err = llm.GetClientWithUserModel(i.apiKey, i.modelKey)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -356,6 +413,17 @@ func (i judgeLLMInvoker) ChatOnce(ctx context.Context, system, user string) (str
 		sb.WriteString(chunk.Content)
 	}
 	return sb.String(), nil
+}
+
+// workflowAppDefaultModelResolvable 判断 app 默认模型是否可解析（模型存在 + 引用连接启用）；
+// 查询失败按不可解析处理（run 回退全局默认模型，行为与历史一致）。
+func workflowAppDefaultModelResolvable(ctx *gin.Context, appKey string) bool {
+	app, err := model.GetAppByKey(ctx, appKey)
+	if err != nil || app == nil {
+		return false
+	}
+	resolved, err := llmmodelService.ResolveAppDefaultModel(ctx, app)
+	return err == nil && resolved != nil
 }
 
 // resolveWorkflowCredential 按 run 同口径解析凭证：app+route 连接优先，旧 API Key 兜底。

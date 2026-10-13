@@ -297,7 +297,7 @@ var ErrorConnectionNotFound = base.Error{
 }
 var ErrorConnectionDuplicate = base.Error{
 	ErrNo:  6080011,
-	ErrMsg: "同一 app+路由下已存在连接: %s",
+	ErrMsg: "同一 app+路由+接入地址下已存在连接: %s",
 }
 var ErrorConnectionProtocolInvalid = base.Error{
 	ErrNo:  6080012,

@@ -7,6 +7,34 @@ import (
 	"testing"
 )
 
+// strOrExisting 是连接更新防重的终值推导：请求非空取请求值、否则保持库中现值。
+// 防重键（app+路由+接入地址）任一变化时按终值查重，推导错误会漏拦或误拦。
+func TestStrOrExisting(t *testing.T) {
+	cases := []struct {
+		name      string
+		requested interface{}
+		existing  interface{}
+		want      string
+	}{
+		{"请求非空取请求值", "  https://new.example.com ", "https://old.example.com", "https://new.example.com"},
+		{"请求空串保持现值", "", "https://old.example.com", "https://old.example.com"},
+		{"请求空白保持现值", "   ", "[]", "[]"},
+		{"请求缺失(nil)保持现值", nil, "app-a", "app-a"},
+		{"请求缺失(map 无该键)保持现值", nil, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			updates := map[string]interface{}{}
+			if tc.requested != nil {
+				updates["field"] = tc.requested
+			}
+			if got := strOrExisting(updates["field"], tc.existing); got != tc.want {
+				t.Fatalf("strOrExisting(%v, %v) = %q, want %q", tc.requested, tc.existing, got, tc.want)
+			}
+		})
+	}
+}
+
 // 模拟 DeepSeek 形态：Anthropic 兼容面挂子路径（/anthropic 下无模型发现接口，404），
 // 模型发现仅在 host 根 /v1/models 提供；首选失败应回退命中，且结果去重排序。
 func TestFetchUpstreamModelsFallbackToHostRoot(t *testing.T) {

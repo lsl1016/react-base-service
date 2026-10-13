@@ -507,14 +507,11 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 	var userModelMaxOutputTokens, userModelContextTokens int
 	var connProtocol string
 	var capsKnown, capsTools, capsVision, capsThinking bool
-	if payload.ModelHash != "" {
-		userModel, err := model.GetUserModelByHash(ctx, payload.ModelHash)
-		if err != nil {
-			return nil, err
-		}
-		if userModel == nil {
-			return nil, components.ErrorUserModelNotFound.Sprintf(payload.ModelHash)
-		}
+	// applyUserModel 把用户模型（及其引用连接）快照进 run 解析变量：模型身份、
+	// 凭证/端点/协议、能力位与容量参数同源。ModelHash 路径与 app 默认模型路径共用，
+	// 保证两条路径的解析口径完全一致。conn 非-nil 时跳过按 ConnectionID 复查
+	//（app 默认模型解析时已校验连接启用）。
+	applyUserModel := func(userModel *model.UserModel, conn *model.Connection) error {
 		apiKey = userModel.ApiKey
 		modelKey = userModel.ModelKey
 		modelVersion = userModel.ModelVersion
@@ -529,46 +526,84 @@ func prepareRuntimeRequestWithServices(ctx *gin.Context, payload params.ReactRun
 		capsThinking = userModel.SupportThinking == 1
 		// 连接引用模式：凭证/端点/协议以连接为准（自带 key/接入地址不参与解析）。
 		if userModel.ConnectionID > 0 {
-			conn, err := llmmodelService.GetConnectionByID(ctx, userModel.ConnectionID)
-			if err != nil {
-				return nil, err
-			}
 			if conn == nil {
-				return nil, components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("%d", userModel.ConnectionID))
-			}
-			if conn.Status != 1 {
-				return nil, components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("连接 %s 已停用（id=%d）", conn.Name, conn.ID))
+				loaded, err := llmmodelService.GetConnectionByID(ctx, userModel.ConnectionID)
+				if err != nil {
+					return err
+				}
+				if loaded == nil {
+					return components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("%d", userModel.ConnectionID))
+				}
+				if loaded.Status != 1 {
+					return components.ErrorConnectionNotFound.Sprintf(fmt.Sprintf("连接 %s 已停用（id=%d）", loaded.Name, loaded.ID))
+				}
+				conn = loaded
 			}
 			apiKey = conn.ApiKeyValue
 			userModelApiURL = conn.BaseURL
 			connProtocol = conn.Protocol
 		}
-	} else {
-		if payload.ModelKey == "" {
-			return nil, components.ErrorParamInvalid.Sprintf("modelKey 不能为空")
-		}
-		// 凭证解析顺序：LLM 连接（app+route 前缀匹配）→ 旧 app 级 API Key 兜底。
-		// 连接命中时端点与协议改由连接提供（无 ModelHash 契约路径的平台连接形态）。
-		var err error
-		conn, err := llmmodelService.ResolveConnection(ctx, payload.AppKey, routeValues)
+		return nil
+	}
+	if payload.ModelHash != "" {
+		userModel, err := model.GetUserModelByHash(ctx, payload.ModelHash)
 		if err != nil {
 			return nil, err
 		}
-		if conn != nil {
-			apiKey = conn.ApiKeyValue
-			userModelApiURL = conn.BaseURL
-			connProtocol = conn.Protocol
+		if userModel == nil {
+			return nil, components.ErrorUserModelNotFound.Sprintf(payload.ModelHash)
+		}
+		if err := applyUserModel(userModel, nil); err != nil {
+			return nil, err
+		}
+	} else {
+		// 凭证与模型解析顺序（方案「app 级默认模型」）：
+		//   1) app 默认模型——厂商（连接）与模型一次选定，凭证/端点/协议同源；
+		//      调用方显式指定了与默认模型不同的 modelKey 时不接管（保留调用方意图，
+		//      走下方旧链路，避免「要 A 厂商模型、打到 B 厂商端点」的新错配）；
+		//   2) LLM 连接（app+route 前缀匹配，同前缀长度取 id 最小）；
+		//   3) 旧 app 级 API Key 兜底。
+		defaultModel, err := llmmodelService.ResolveAppDefaultModel(ctx, app)
+		if err != nil {
+			return nil, err
+		}
+		defaultModelUsable := defaultModel != nil &&
+			(payload.ModelKey == "" || payload.ModelKey == defaultModel.UserModel.ModelKey)
+		if defaultModelUsable {
+			if err := applyUserModel(defaultModel.UserModel, defaultModel.Connection); err != nil {
+				return nil, err
+			}
+			// 调用方未带 modelVersion 时以默认模型配置的版本为准；带了则尊重显式选择
+			//（modelKey 相同=同一厂商家族，端点与凭证仍然同源一致）。
+			if payload.ModelVersion != "" {
+				modelVersion = payload.ModelVersion
+			}
 		} else {
-			apiKey, err = apikeyService.ResolveApiKey(ctx, payload.AppKey, routeValues)
+			if payload.ModelKey == "" {
+				return nil, components.ErrorParamInvalid.Sprintf("modelKey 不能为空")
+			}
+			// 连接命中时端点与协议改由连接提供（无 ModelHash 契约路径的平台连接形态）。
+			var err error
+			conn, err := llmmodelService.ResolveConnection(ctx, payload.AppKey, routeValues)
 			if err != nil {
 				return nil, err
 			}
+			if conn != nil {
+				apiKey = conn.ApiKeyValue
+				userModelApiURL = conn.BaseURL
+				connProtocol = conn.Protocol
+			} else {
+				apiKey, err = apikeyService.ResolveApiKey(ctx, payload.AppKey, routeValues)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if apiKey == "" {
+				return nil, components.ErrorApiKeyNotFound.Sprintf(payload.AppKey)
+			}
+			modelKey = payload.ModelKey
+			modelVersion = llm.ResolveModelVersion(modelKey, payload.ModelVersion)
 		}
-		if apiKey == "" {
-			return nil, components.ErrorApiKeyNotFound.Sprintf(payload.AppKey)
-		}
-		modelKey = payload.ModelKey
-		modelVersion = llm.ResolveModelVersion(modelKey, payload.ModelVersion)
 	}
 	if strings.TrimSpace(modelVersion) == "" {
 		return nil, components.ErrorModelNotSupported.Sprintf(modelKey)

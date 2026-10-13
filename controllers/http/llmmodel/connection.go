@@ -15,7 +15,7 @@ import (
 
 // CreateConnection 创建连接
 // @Summary      创建 LLM 连接
-// @Description  创建协议 + 接入地址 + API Key 的自包含连接；同一 app+路由组合不允许重复。
+// @Description  创建协议 + 接入地址 + API Key 的自包含连接；同一 app+路由+接入地址组合不允许重复（同 app+路由可多厂商连接并存）。
 // @Tags         llmmodel
 // @Accept       json
 // @Produce      json

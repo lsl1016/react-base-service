@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS `tblLlmApp` (
     `description` TEXT         NULL     COMMENT '描述',
     `platform`    VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '兼容现有业务的平台标识',
     `allow_plan`  TINYINT      NULL DEFAULT NULL COMMENT 'create_plan/Plan模式能力: NULL=跟随全局llm.react.allow_plan 0=app级强制关 1=app级强制开',
+    `bind_default_capabilities` TINYINT NOT NULL DEFAULT 1 COMMENT '是否绑定default伪app的默认能力池(工具/Skill): 1=绑定(存量行为) 0=只解析自身资源',
+    `default_model_hash` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'app默认模型(tblLlmUserModel.model_hash): 无ModelHash的run/workflow凭证解析第一优先,空=未配置走连接解析兜底',
     `status`      TINYINT      NOT NULL DEFAULT 1 COMMENT '状态: 0=禁用 1=启用',
     `created_by`  VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

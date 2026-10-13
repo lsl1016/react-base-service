@@ -68,11 +68,13 @@ func GetConnectionByID(ctx *gin.Context, id uint) (*Connection, error) {
 	return &c, nil
 }
 
-// ExistConnectionByAppAndRoute 检查 app+route 组合下是否已有连接（防重复注册）
-func ExistConnectionByAppAndRoute(ctx *gin.Context, appKey, routeValues string) (bool, error) {
+// ExistConnectionByAppRouteAndBaseURL 检查 app+route+接入地址组合下是否已有连接（防重复注册）。
+// 同 app+路由允许多个厂商连接并存（运行时按 app 默认模型或路由前缀归属解析），
+// 只有同一接入点重复注册才视为冲突。
+func ExistConnectionByAppRouteAndBaseURL(ctx *gin.Context, appKey, routeValues, baseURL string) (bool, error) {
 	var count int64
 	err := helpers.MysqlClientLLM.Model(&Connection{}).WithContext(ctx).
-		Where("app_key = ? AND route_values = ?", appKey, routeValues).
+		Where("app_key = ? AND route_values = ? AND base_url = ?", appKey, routeValues, baseURL).
 		Count(&count).Error
 	if err != nil {
 		return false, components.ErrorDbSelect.Wrap(err)
@@ -134,10 +136,13 @@ func MapConnectionStatusByIDs(ctx *gin.Context, ids []uint) (map[uint]int, error
 // FindConnectionsByAppAndRoutes 查询启用中的连接：app 精确命中 + 空 app（全局）
 // 两类候选都返回，按 route_values 前缀匹配；调用方先取 app 精确命中、再取全局兜底
 //（各取 route_values 最长者，与旧 tblLlmApiKey 解析口径一致）。
+// 同前缀长度（如同为全局 []）存在多条时按 id 升序取最早注册的，保证多厂商连接
+// 并存场景下解析结果确定可复现。
 func FindConnectionsByAppAndRoutes(ctx *gin.Context, appKey string, routePrefixes []string) ([]Connection, error) {
 	var conns []Connection
 	err := helpers.MysqlClientLLM.Model(&Connection{}).WithContext(ctx).
 		Where("app_key IN ? AND status = 1 AND route_values IN ?", []string{appKey, ""}, routePrefixes).
+		Order("CHAR_LENGTH(route_values) DESC, id ASC").
 		Find(&conns).Error
 	if err != nil {
 		return nil, components.ErrorDbSelect.Wrap(err)

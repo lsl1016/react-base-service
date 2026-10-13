@@ -536,9 +536,9 @@ const resources = {
     updatePath: '/app/update',
     // 不提供 deletePath：App 删除连带其全部资源，统一走「更多能力」里的强确认入口。
     columns: [
-      ['appKey', 'appKey'], ['name', '名称'], ['description', '描述'], ['platform', '平台'], ['createdAt', '创建时间'], ['planEnabled', 'Plan'], ['status', '状态'], ['actions', '操作'],
+      ['appKey', 'appKey'], ['name', '名称'], ['description', '描述'], ['platform', '平台'], ['createdAt', '创建时间'], ['planEnabled', 'Plan'], ['defaultModelHash', '默认模型'], ['status', '状态'], ['actions', '操作'],
     ],
-    empty: () => ({ appKey: '', name: '', description: '', platform: '', planEnabled: false, status: 1 }),
+    empty: () => ({ appKey: '', name: '', description: '', platform: '', planEnabled: false, defaultModelHash: '', status: 1 }),
     toDraft: (item) => ({ ...item }),
     toPayload: (draft) => ({
       appKey: draft.appKey,
@@ -546,11 +546,12 @@ const resources = {
       description: draft.description,
       platform: draft.platform,
       planEnabled: isPlanEnabled(draft),
+      defaultModelHash: draft.defaultModelHash || '',
       status: Number(draft.status),
     }),
     fields: (mode) => mode === 'create'
-      ? [['appKey', 'appKey'], ['name', '名称'], ['platform', '平台'], ['planEnabled', 'Plan', 'select'], ['description', '描述', 'textarea']]
-      : [['appKey', 'appKey', 'readonly'], ['name', '名称'], ['platform', '平台'], ['planEnabled', 'Plan', 'select'], ['status', '状态', 'select'], ['description', '描述', 'textarea']],
+      ? [['appKey', 'appKey'], ['name', '名称'], ['platform', '平台'], ['planEnabled', 'Plan', 'select'], ['defaultModelHash', '默认模型', 'modelSelect'], ['description', '描述', 'textarea']]
+      : [['appKey', 'appKey', 'readonly'], ['name', '名称'], ['platform', '平台'], ['planEnabled', 'Plan', 'select'], ['status', '状态', 'select'], ['defaultModelHash', '默认模型', 'modelSelect'], ['description', '描述', 'textarea']],
   },
   tool: {
     title: '工具管理',
@@ -925,6 +926,10 @@ const management = {
   mcpConnection: '',
   // 批量改状态的勾选集（存 idKey 值）：切页/重载清空，全选作用于当前筛选结果。
   selectedIds: new Set(),
+  // App 默认模型下拉选项缓存（loadDefaultModelOptions 填充）：options 供下拉分组、
+  // labels 供表格列 hash→名称映射。
+  defaultModelOptions: [],
+  defaultModelLabels: {},
   // 行详情展开集（存 idKey 值）：点击数据行展开全宽详情子行，长文本/配置 JSON 完整可读。
   expandedDetails: new Set(),
   // 表头列宽记忆：{ [资源页]: { [列key]: px } }，localStorage 持久化（rp-col-widths）。
@@ -1142,6 +1147,12 @@ const management = {
       this.items = Array.isArray(data) ? data.map(resource.toDraft) : [];
       this.setState('');
       this.renderTable();
+      // App 页表格列展示默认模型名称，需要模型→连接选项映射（异步补拉后重渲染一次）。
+      if (this.type === 'app') {
+        void this.loadDefaultModelOptions().then(() => {
+          if (this.type === 'app') this.renderTable();
+        });
+      }
     } catch (error) {
       this.items = [];
       this.setState(error.message || '加载失败', true);
@@ -1195,6 +1206,36 @@ const management = {
     this.mcpConnection = names.includes(current) ? current : '';
     select.value = this.mcpConnection;
   },
+  // App 默认模型下拉选项：全部可用用户模型按引用连接分组（自包含模型归「自包含」组）。
+  // 拉取失败不阻断表单（下拉保留当前值），可解析性校验由后端 /app/register、/app/update 兜底。
+  async loadDefaultModelOptions() {
+    let models = [];
+    let connections = [];
+    try {
+      [models, connections] = await Promise.all([
+        post('/model/list', {}),
+        post('/model/connection/list', {}).catch(() => []),
+      ]);
+    } catch {
+      models = [];
+    }
+    const connNames = new Map((connections || []).map((conn) => [Number(conn.id), conn.name || `连接#${conn.id}`]));
+    const options = [];
+    const labels = {};
+    for (const item of models || []) {
+      if (!item.modelHash || item.disabled) continue;
+      const label = item.modelName && item.modelName !== item.modelVersion
+        ? `${item.modelName} / ${item.modelVersion}`
+        : (item.modelVersion || item.modelName);
+      const group = item.connectionId
+        ? (connNames.get(Number(item.connectionId)) ?? '连接已删除')
+        : '自包含（自带 Key）';
+      options.push({ value: item.modelHash, label, group });
+      labels[item.modelHash] = `${group} · ${label}`;
+    }
+    this.defaultModelOptions = options;
+    this.defaultModelLabels = labels;
+  },
   renderValue(key, item) {
     if (key === 'actions') {
       // 内置子智能体（source=builtin）：仅提供 fork（预填创建表单，同 app 保存后覆盖内置）。
@@ -1220,6 +1261,13 @@ const management = {
       return `<span class="rp-mcp-kind-badge" title="MCP 连接：${escapeHtml(server)}">MCP·${escapeHtml(server)}</span>`;
     }
     if (key === 'routeValues') return escapeHtml(Array.isArray(item.routeValues) && item.routeValues.length ? item.routeValues.join(',') : '[]');
+    if (key === 'defaultModelHash') {
+      if (!item.defaultModelHash) return '<span class="rp-mcp-badge rp-mcp-badge-off" title="未配置：无 ModelHash 的 run 走连接解析（app+路由前缀）→ 旧 app 级 API Key 兜底">未配置</span>';
+      const label = this.defaultModelLabels?.[item.defaultModelHash];
+      return label
+        ? escapeHtml(label)
+        : `<span title="${escapeHtml(item.defaultModelHash)}">${escapeHtml(shortText(item.defaultModelHash, 24))}</span>`;
+    }
     if (key === 'config') return escapeHtml(plainValue(item.configText ?? item.config));
     return escapeHtml(plainValue(item[key]));
   },
@@ -1782,7 +1830,9 @@ const management = {
     }
     this.mode = 'create';
     this.draft = this.resource().empty();
-    this.renderModal();
+    // App 表单的默认模型下拉需要选项（按连接分组的用户模型清单）。
+    if (this.type === 'app') void this.loadDefaultModelOptions().then(() => this.renderModal());
+    else this.renderModal();
   },
   // 内置子智能体 Fork：以内置定义为模板打开创建表单（当前 app 保存后同名覆盖内置）。
   openFork(item) {
@@ -1878,6 +1928,9 @@ const management = {
         : { ...item };
       if (this.type !== resourceType) return;
       this.draft = draft;
+      // App 编辑弹窗需要默认模型选项（先加载再渲染，避免下拉空选项闪现）。
+      if (resourceType === 'app') await this.loadDefaultModelOptions();
+      if (this.type !== resourceType) return;
       this.setState('');
       this.renderModal();
     } catch (error) {
@@ -1965,6 +2018,24 @@ const management = {
       if (type === 'enumSelect') {
         const options = Array.isArray(field[3]) ? field[3] : [];
         return `<label class="rp-field"><span class="rp-field-label">${label}</span><select class="rp-control rp-control-size-default" data-field="${key}">${options.map(([optionValue, optionLabel]) => `<option value="${escapeHtml(optionValue)}" ${String(value) === String(optionValue) ? 'selected' : ''}>${escapeHtml(optionLabel)}</option>`).join('')}</select></label>`;
+      }
+      // 默认模型选择：选项为按连接分组的用户模型清单（App 管理用）；当前值不在选项中时
+      // 保留为「当前值」选项，避免模型被删/停用后编辑其他字段时静默清空配置。
+      if (type === 'modelSelect') {
+        const options = Array.isArray(this.defaultModelOptions) ? this.defaultModelOptions : [];
+        const groups = new Map();
+        for (const option of options) {
+          if (!groups.has(option.group)) groups.set(option.group, []);
+          groups.get(option.group).push(option);
+        }
+        const known = options.some((option) => String(option.value) === String(value));
+        const currentOption = value && !known
+          ? `<option value="${escapeHtml(value)}" selected>当前值：${escapeHtml(shortText(value, 24))}（模型已删除或停用）</option>`
+          : '';
+        const groupHtml = [...groups.entries()].map(([group, items]) => (
+          `<optgroup label="${escapeHtml(group)}">${items.map((option) => `<option value="${escapeHtml(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}</optgroup>`
+        )).join('');
+        return `<label class="rp-field rp-span-all"><span class="rp-field-label">${label}</span><select class="rp-control rp-control-size-default" data-field="${key}"><option value="" ${value ? '' : 'selected'}>未配置（无 ModelHash 的 run 走连接解析兜底）</option>${currentOption}${groupHtml}</select></label>`;
       }
       if (type === 'defaultSelect') {
         return `<label class="rp-field"><span class="rp-field-label">${label}</span><select class="rp-control rp-control-size-default" data-field="${key}"><option value="0" ${Number(value) === 0 ? 'selected' : ''}>否</option><option value="1" ${Number(value) === 1 ? 'selected' : ''}>是</option></select></label>`;

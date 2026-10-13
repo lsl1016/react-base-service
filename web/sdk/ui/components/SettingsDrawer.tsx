@@ -534,16 +534,24 @@ function AddConnectionRow(props: {
 
   const activePreset = () => CONNECTION_PRESETS.find((item) => item.key === preset()) ?? CONNECTION_PRESETS[0];
   const effectiveProtocol = () => activePreset().protocol;
-  const effectiveBaseUrl = () => baseUrl().trim() || activePreset().baseUrl;
 
+  // 预设切换即写入接入地址（自定义=清空），输入值始终与预设状态一致——
+  // 避免上一次表单残留的地址（如 DeepSeek）混进下一次创建。
   const applyPreset = (key: string) => {
     setPreset(key);
     const found = CONNECTION_PRESETS.find((item) => item.key === key);
-    if (found?.baseUrl) setBaseUrl(found.baseUrl);
+    setBaseUrl(found?.baseUrl ?? "");
     if (!name().trim() && found && found.key !== "custom") setName(found.label.replace(/（.*）/, ""));
   };
 
-  const canSubmit = () => name().trim() && effectiveBaseUrl() && apiKey().trim();
+  const resetForm = () => {
+    setName("");
+    setApiKey("");
+    setAppKey("");
+    applyPreset("zhipu-anthropic");
+  };
+
+  const canSubmit = () => name().trim() && baseUrl().trim() && apiKey().trim();
 
   const create = async () => {
     if (!canSubmit()) {
@@ -555,14 +563,14 @@ function AddConnectionRow(props: {
       await props.client.createConnection({
         name: name().trim(),
         protocol: effectiveProtocol(),
-        baseUrl: effectiveBaseUrl().trim(),
+        baseUrl: baseUrl().trim(),
         apiKey: apiKey().trim(),
         appKey: appKey().trim(),
         routeValues: [],
       });
       props.onFeedback("ok", "连接已创建，可点「测试连通」验证后拉取模型");
-      setName("");
-      setApiKey("");
+      // 全量重置（含接入地址/预设/作用 app），下次展开不再残留本次填写值。
+      resetForm();
       setExpanded(false);
       await props.onChanged();
     } catch (error) {
