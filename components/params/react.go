@@ -67,6 +67,14 @@ type ReactRunPayload struct {
 	// SessionTitle 显式指定新建会话的标题（定时触发工作流用「{workflow 名} {触发时间}」）；
 	// 空值回退按 UserPrompt 截取的默认标题。
 	SessionTitle string `json:"sessionTitle,omitempty"`
+	// CommandDisplay 是斜杠命令原文（"/name args"）。命令分发层展开型命令（/workflow、
+	// 自定义命令）会把 UserPrompt 替换为展开文本，同时把原文放在这里：
+	// persistUserInput 落库 content 用原文（前端气泡/历史回放展示），UserPrompt（展开文本）
+	// 进 modelMessage 入模——与 skill trigger 的展示/入模分离同构。非命令 run 为空。
+	CommandDisplay string `json:"commandDisplay,omitempty"`
+	// CommandDirective 是标记型命令的执行指令（当前仅 /compact）；
+	// 由命令分发层在 ws.go 拦截层写入，随 payload 快照进入 runtimeRequest。
+	CommandDirective *ReactCommandDirective `json:"commandDirective,omitempty"`
 }
 
 // SteerDelivery 取值（ReactRunPayload.SteerDelivery）。

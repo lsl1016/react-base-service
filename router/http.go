@@ -11,6 +11,7 @@ import (
 	"react-base-service/controllers/http/apikey"
 	"react-base-service/controllers/http/attachment"
 	"react-base-service/controllers/http/app"
+	"react-base-service/controllers/http/command"
 	"react-base-service/controllers/http/llmmodel"
 	"react-base-service/controllers/http/mcpadmin"
 	"react-base-service/controllers/http/react"
@@ -109,6 +110,8 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		reactGroup.POST("/queue/delete", react.DeleteQueueItem)
 		// 上下文容量看板（playground 悬浮卡片）：容量占用/缓存命中率/分类构成
 		reactGroup.POST("/usage/context", react.GetUsageContext)
+		// 斜杠命令目录（前端 / 菜单数据源）：聚合内置 + 自定义命令
+		reactGroup.POST("/commands/list", react.ListCommands)
 		// MCP 连接管理（查看/更新/管理 MCP 连接，见 controllers/http/react/mcp_server.go）
 		reactGroup.POST("/mcp/list", react.ListMcpServers)
 		reactGroup.POST("/mcp/detail", react.GetMcpServerDetail)
@@ -205,6 +208,16 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		skillGroup.POST("/detail", skill.GetSkillDetail)
 		skillGroup.POST("/import", skill.ImportSkill)
 		skillGroup.POST("/import_zip", skill.ImportSkillZip)
+	}
+
+	// 自定义斜杠命令管理接口（/ 唤起，展开型命令；见 docs/plan/20261013_斜杠命令支持设计方案.md）
+	commandGroup := router.Group("/command")
+	{
+		commandGroup.POST("/create", command.CreateCommand)
+		commandGroup.POST("/update", command.UpdateCommand)
+		commandGroup.POST("/delete", command.DeleteCommand)
+		commandGroup.POST("/list", command.ListAllCommands)
+		commandGroup.POST("/detail", command.GetCommandDetail)
 	}
 
 	// 子 Agent 管理接口（delegate_agent 委派的注册表；Markdown 导入见 /agent/import）

@@ -47,6 +47,7 @@ import type {
     PlanPublicView,
     PlanStepEventPayload,
     PlanViewUpdatePayload,
+    ReactCommandReceiptPayload,
     ReactEvent,
     ReactNoticeDrainedPayload,
     ReactSteerDiscardedPayload,
@@ -142,6 +143,18 @@ function steerReasonText(reason?: string): string {
       return '带附件的消息不支持引导注入';
     default:
       return reason ?? 'unknown';
+  }
+}
+
+/** 命令回执无 message 时的兜底文案。 */
+function commandReceiptResultText(result?: string): string {
+  switch (result) {
+    case 'ok':
+      return '已执行';
+    case 'rejected':
+      return '未执行';
+    default:
+      return result ?? 'unknown';
   }
 }
 
@@ -1196,6 +1209,21 @@ export class EventReducer {
             `后台任务通知已送达${readNumber(p?.count, 0) > 1 ? `（${p?.count} 条）` : ''}`,
             p?.content,
             readNumber(p?.count, 0),
+          ),
+        );
+        break;
+      }
+
+      case 'command_receipt': {
+        // 斜杠命令回执：命令分发层/引擎的就地处理结论（拒绝原因、压缩结果提示），
+        // 与 steer 回执同款渲染为系统提示条（NoticeChip），不落库回放。
+        const p = event.payload as unknown as ReactCommandReceiptPayload;
+        this.state.steps.push(
+          buildSteerNoticeStep(
+            this.state.steps.length,
+            event,
+            `/${p?.command ?? '命令'}：${p?.message ?? commandReceiptResultText(p?.result)}`,
+            p?.reason ? `reason: ${p.reason}` : undefined,
           ),
         );
         break;

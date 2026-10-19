@@ -134,6 +134,8 @@ export class SessionEventAssembler {
       case 'steer_delivery_changed':
       case 'steer_discarded':
       case 'notice_drained':
+      // 斜杠命令回执（命令分发层就地处理，服务端不落库、历史回放不出现；原样透传兜底）。
+      case 'command_receipt':
       case 'done':
       case 'error':
       case 'cancelled':

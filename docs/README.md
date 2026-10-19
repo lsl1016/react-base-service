@@ -1,6 +1,6 @@
 # react-base-service 文档索引
 
-最近更新：2026-10-05（mcp.md 对照当前实现全面校准：repo 工具集扩至 9 个、新增工作区 ws_ 动态挂载一节）
+最近更新：2026-10-13（新增 ZCode 插件与技能创建器学习、技能与插件创建器实现方案）
 
 已有文档保持原路径和内容。本索引在其上新增受管系统文档与变更记录入口。
 
@@ -35,6 +35,9 @@
 - [知识库集成、长期记忆、检索](知识库集成、长期记忆、检索.md)
 - [服务端 AI 工作台思路和讨论](服务端AI工作台思路和讨论.md)
 - [服务端 AI 工作台改造方案](服务端AI工作台改造方案.md)
+- [APP 接入方工作台设计方案](plan/20261012_APP接入方工作台设计方案.md)（面向 APP 接入方的前端工作台，含 app 级鉴权边界与 SDK UI 能力盘点）
+- [技能与插件创建器实现方案](plan/20261013_技能与插件创建器实现方案.md)（借鉴 ZCode 自举式创建器：两份内置技能 + bundle draft/validate 端点 + 四道产物治理闸门）
+- [斜杠命令支持技术方案](plan/20261013_斜杠命令支持设计方案.md)（借鉴 ZCode 命令体系 + 代码审计修正：/compact /workflow 命令语义 + 自定义命令 DB/CRUD/模板展开）
 - [定时触发工作流实现方案](定时触发工作流实现方案.md)
 - [连载侦探社评测项目方案](连载侦探社评测项目方案.md)
 - [Plan 模式 E2E 测试报告](plan模式E2E测试报告.md)
@@ -55,6 +58,7 @@
 - [OpenHands Automation 学习](openhands-automation学习.md)
 - [OpenHands SDK 学习](openhands-sdk学习.md)
 - [Pokemon Chat 学习](pokemon-chat学习.md)
+- [ZCode 插件与技能创建器学习](ZCode插件与技能创建器学习.md)（自举设计：创建器=最普通的技能/插件，无专用后端；手动交接与四态诚实汇报）
 - [RAGFlow Admin 学习](ragflow-admin学习.md)
 - [Prompt Reference](prompt-reference.md)
 

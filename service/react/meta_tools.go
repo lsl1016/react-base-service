@@ -70,7 +70,9 @@ func internalMetaToolDefinitions() []llm.ToolDefinition {
 	if conf.CustomConf.LLM.React.GraphMemory.GraphMemoryEndpointConfigured() {
 		definitions = append(definitions, graphMemoryToolDefinitions()...)
 	}
-	return definitions
+	// create_workflow / dispatch_workflow：llm.workflow.enabled × 执行器已接线
+	//（/workflow 命令的模型侧执行入口；归属取当前 run 的 app/user/route）。
+	return appendWorkflowToolDefinitions(definitions)
 }
 
 // runtimeToolDefinitions 计算一个 run 的完整工具声明集（含 delegate_agent 动态渲染），
@@ -336,6 +338,8 @@ func (s *reactEngineState) executeInternalToolContent(call llm.ToolCall, step in
 		return noToolMeta(netcap.ExecuteWebFetch(s.ctx, s.runID, call.Input))
 	case metaToolWebSearch:
 		return netcap.ExecuteWebSearch(s.ctx, s.runID, call.Input)
+	case metaToolCreateWorkflow, metaToolDispatchWorkflow:
+		return noToolMeta(s.executeWorkflowTool(call))
 	case metaToolWaitAgent:
 		return noToolMeta(s.executeWaitAgent(call, step))
 	default:

@@ -78,6 +78,9 @@ var metaToolRegistry = map[string]ToolMeta{
 	metaToolAskQuestion: {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectNone, RiskLevel: toolRiskLevelLow},
 	metaToolPythonExec:  {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSystem, RiskLevel: toolRiskLevelMedium},
 	metaToolExecuteTool: {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSystem, RiskLevel: toolRiskLevelMedium},
+	// workflow 工具：创建/触发无人值守任务（持久副作用），串行执行、medium 风险徽标。
+	metaToolCreateWorkflow:   {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSystem, RiskLevel: toolRiskLevelMedium},
+	metaToolDispatchWorkflow: {ReadOnly: false, ConcurrentSafe: false, SideEffect: toolSideEffectSystem, RiskLevel: toolRiskLevelMedium},
 }
 
 // toolMetaForName 返回内置 Meta Tool 的元数据；未登记工具返回零值（保守视为非只读、不可并发）。

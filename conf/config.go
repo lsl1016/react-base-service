@@ -121,6 +121,23 @@ type ReactRuntimeConfig struct {
 	WebFetch ReactWebFetchConfig `yaml:"web_fetch"`
 	// WebSearch 控制内置 web_search 工具（外部搜索服务适配器，当前支持 searxng）；未配置时默认关闭。
 	WebSearch ReactWebSearchConfig `yaml:"web_search"`
+	// SlashCommand 控制斜杠命令能力（/compact、/workflow 与自定义命令）；
+	// 未配置时默认关闭：ws.go 命令拦截层直通、目录 API 返回空、前端不显示命令分组。
+	SlashCommand ReactSlashCommandConfig `yaml:"slash_command"`
+}
+
+// ReactSlashCommandConfig 斜杠命令能力开关。
+type ReactSlashCommandConfig struct {
+	// Enabled 控制斜杠命令总开关；未配置默认 false。
+	Enabled *bool `yaml:"enabled"`
+}
+
+// SlashCommandEnabled 解析 slash_command.enabled：未配置默认 false。
+func (c ReactSlashCommandConfig) SlashCommandEnabled() bool {
+	if c.Enabled != nil {
+		return *c.Enabled
+	}
+	return false
 }
 
 // ReactSteeringConfig Steering 配置：guide 引导注入与 queue 排队（S2）分开关。

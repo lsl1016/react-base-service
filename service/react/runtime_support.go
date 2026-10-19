@@ -286,12 +286,9 @@ func reactMaxContextTokens(modelKey string) int {
 func maybeCompactContext(s *reactEngineState, step int) error {
 	contextOverride, maxOutputOverride := s.userModelCapacityOverrides()
 	compactCfg := compactConfigForModelWithOverrides(s.currentModel.ModelKey, contextOverride, maxOutputOverride)
-	beforeCount := len(s.messages)
-	beforeSize := estimateMessagesSize(s.messages)
 
 	systemPrefixCount := currentSystemPrefixCount(s.messages)
 	compactableMessages := s.messages[systemPrefixCount:]
-	compactableRefs := s.messageRefs[systemPrefixCount:]
 
 	// overhead 是固定保留且不可压缩的输入开销：当前 system prompt + 当前执行域 tools schema。
 	overheadTokens := estimateToolDefinitionsTokens(s.buildToolDefinitions())
@@ -314,21 +311,44 @@ func maybeCompactContext(s *reactEngineState, step int) error {
 		s.enterSoftLanding(softLandingReasonContextLimit, 0, 0)
 		return nil
 	}
+	_, err := compactContextNow(s, step, "")
+	return err
+}
+
+// compactContextNow 执行一次压缩并写回（水位判定之后的公共路径；/compact 手动压缩
+// 绕过水位直接调用本函数）。返回是否实际发生了压缩——找不到可压缩区间或安全边界时
+// 返回 false（调用方据此决定回执文案）。
+// extraInstructions 非空时（/compact <附加指令>）追加到 LLM 摘要提示词尾部。
+func compactContextNow(s *reactEngineState, step int, extraInstructions string) (bool, error) {
+	contextOverride, maxOutputOverride := s.userModelCapacityOverrides()
+	compactCfg := compactConfigForModelWithOverrides(s.currentModel.ModelKey, contextOverride, maxOutputOverride)
+	beforeCount := len(s.messages)
+	beforeSize := estimateMessagesSize(s.messages)
+
+	systemPrefixCount := currentSystemPrefixCount(s.messages)
+	compactableMessages := s.messages[systemPrefixCount:]
+	compactableRefs := s.messageRefs[systemPrefixCount:]
+
+	// overhead 是固定保留且不可压缩的输入开销：当前 system prompt + 当前执行域 tools schema。
+	overheadTokens := estimateToolDefinitionsTokens(s.buildToolDefinitions())
+	if systemPrefixCount > 0 {
+		overheadTokens += estimateMessagesTokens(s.messages[:systemPrefixCount])
+	}
 
 	keepCount := selectCompactKeepCount(compactableMessages, overheadTokens, compactCfg)
 	if keepCount <= 0 || keepCount >= len(compactableMessages) {
-		return nil
+		return false, nil
 	}
 
 	keepStart := len(compactableMessages) - keepCount
 	keepStart = alignKeepStartToTurnBoundary(compactableMessages, keepStart)
 	if keepStart <= 0 {
-		zlog.Warnf(s.ctx, "[react.maybeCompactContext] 跳过压缩：找不到 tool 轮次安全边界 runId=%s beforeCount=%d", s.runID, beforeCount)
-		return nil
+		zlog.Warnf(s.ctx, "[react.compactContextNow] 跳过压缩：找不到 tool 轮次安全边界 runId=%s beforeCount=%d", s.runID, beforeCount)
+		return false, nil
 	}
 
 	if err := s.emitter.EmitStep(step, EventCompactStart, params.ReactCompactStartPayload{MessageCount: beforeCount, EstimatedSize: beforeSize}); err != nil {
-		return err
+		return false, err
 	}
 
 	prefixPart := append([]llm.ChatMessage(nil), s.messages[:systemPrefixCount]...)
@@ -337,14 +357,14 @@ func maybeCompactContext(s *reactEngineState, step int) error {
 	compactRefs := flattenMessageRefs(compactableRefs[:keepStart])
 	keptPart := append([]llm.ChatMessage(nil), compactableMessages[keepStart:]...)
 	keptRefs := append([][]reactMessageRef(nil), compactableRefs[keepStart:]...)
-	summary, inputTokens, outputTokens, err := buildLLMCompactSummary(s, compactPart)
+	summary, inputTokens, outputTokens, err := buildLLMCompactSummary(s, compactPart, extraInstructions)
 	if tokenErr := s.addTokenUsage(inputTokens, outputTokens); tokenErr != nil {
-		return tokenErr
+		return false, tokenErr
 	}
 	if err != nil {
 		// LLM 压缩失败熔断计数；成功路径在下方重置。
 		s.compactLLMFailures++
-		zlog.Warnf(s.ctx, "[react.maybeCompactContext] LLM上下文压缩失败(熔断计数=%d/%d)，回退本地压缩: runId=%s, err=%v", s.compactLLMFailures, compactCfg.CompactFailureBreaker, s.runID, err)
+		zlog.Warnf(s.ctx, "[react.compactContextNow] LLM上下文压缩失败(熔断计数=%d/%d)，回退本地压缩: runId=%s, err=%v", s.compactLLMFailures, compactCfg.CompactFailureBreaker, s.runID, err)
 	} else {
 		s.compactLLMFailures = 0
 	}
@@ -353,12 +373,12 @@ func maybeCompactContext(s *reactEngineState, step int) error {
 	}
 	seq, err := model.GetReactMessageMaxSeqByRunID(s.ctx, s.runID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	compactRef := reactMessageRef{RunID: s.runID, MessageID: generateMessageID(), Seq: seq + 1}
 	contentJSON, _ := json.Marshal(compactSummaryContent{Summary: summary, CoveredThrough: compactCoveredThrough(compactRefs)})
 	if err := model.CreateReactMessage(s.ctx, &model.ReactMessage{MessageID: compactRef.MessageID, RunID: s.runID, SessionID: s.sessionID, UserName: s.req.userName, AppKey: s.req.payload.AppKey, Seq: compactRef.Seq, StepIndex: step, Role: model.ReactMessageRoleUser, MessageType: model.ReactMessageTypeCompactSummary, ContentJSON: string(contentJSON)}); err != nil {
-		return err
+		return false, err
 	}
 	s.messages = append(prefixPart, llm.ChatMessage{Role: model.ReactMessageRoleUser, Content: compactSummaryMessageContent(summary)})
 	s.messages = append(s.messages, keptPart...)
@@ -367,12 +387,35 @@ func maybeCompactContext(s *reactEngineState, step int) error {
 	// 记录压缩发生的 step，供 rapid-refill 防抖判定。
 	s.compactStepHistory = append(s.compactStepHistory, step)
 	if err := s.emitter.EmitStep(step, EventCompactEnd, params.ReactCompactEndPayload{BeforeMessageCount: beforeCount, AfterMessageCount: len(s.messages), Summary: summary}); err != nil {
-		return err
+		return false, err
 	}
 	// compact_end 成功后判定是否派生记忆维护（extractor 优先、与 reflection 互斥）：异步、受限、绝不阻塞主 run；
 	// compactPart 是被压缩掉的原始消息，此刻仍在内存中，直接作为整理素材传入。
 	maybeTriggerMemoryMaintenance(s, summary, compactPart)
-	return nil
+	return true, nil
+}
+
+// runManualCompact 执行 /compact 手动压缩（标记型命令，engine 主循环第 0 步调用）：
+// 强制绕过水位判定（其余与自动压缩完全同构——写回、coveredThrough 游标、事件、
+// 历史回放全复用），并以 command_receipt 回执压缩结果。
+func runManualCompact(s *reactEngineState) error {
+	instructions := ""
+	if directive := s.req.payload.CommandDirective; directive != nil {
+		instructions = directive.CompactInstructions
+	}
+	compacted, err := compactContextNow(s, 0, instructions)
+	if err != nil {
+		return err
+	}
+	message := "上下文已最新，无需压缩"
+	if compacted {
+		message = "上下文已压缩"
+	}
+	return s.emitter.Emit(EventCommandReceipt, params.ReactCommandReceiptPayload{
+		Command: "compact",
+		Result:  params.ReactCommandReceiptOk,
+		Message: message,
+	})
 }
 
 // rapidRefillExceeded 判定是否处于"压缩→立即再满"的抖动循环：
@@ -523,7 +566,7 @@ func estimateMessagesSize(messages []llm.ChatMessage) int {
 // 终止边界治理（Phase 3）修复压缩器输入截断问题：待压缩 JSON 超过单次输入预算时，
 // 先按轮次边界分片逐段总结（map），再把各段摘要归并为最终摘要（reduce），
 // 不再把超长历史静默截断丢弃。LLM 压缩被熔断时直接走本地摘要。
-func buildLLMCompactSummary(s *reactEngineState, messages []llm.ChatMessage) (string, int, int, error) {
+func buildLLMCompactSummary(s *reactEngineState, messages []llm.ChatMessage, extraInstructions string) (string, int, int, error) {
 	compactCfg := s.req.runtimeConfig().ContextCompact
 	if s.compactLLMFailures >= compactCfg.CompactFailureBreaker {
 		return "", 0, 0, errors.New("compact llm breaker open")
@@ -543,7 +586,7 @@ func buildLLMCompactSummary(s *reactEngineState, messages []llm.ChatMessage) (st
 		if chunkCount > 1 {
 			prompt = buildCompactChunkSummaryPrompt(string(input), chunkIndex, chunkCount, compactPartialSummaryLimit)
 		} else {
-			prompt = buildCompactSummaryPrompt(string(input))
+			prompt = buildCompactSummaryPrompt(string(input), extraInstructions)
 		}
 
 		stream, err := s.client.ChatStream(ctx, []llm.LLMMessage{
@@ -660,9 +703,10 @@ func buildCompactChunkSummaryPrompt(inputJSON string, chunkIndex, chunkCount, li
 		"本段历史消息 JSON：\n" + inputJSON
 }
 
-func buildCompactSummaryPrompt(inputJSON string) string {
+// extraInstructions 非空时（/compact <附加指令>）追加到提示词尾部，影响摘要侧重。
+func buildCompactSummaryPrompt(inputJSON string, extraInstructions string) string {
 	compactCfg := conf.GetReactRuntimeConfig().ContextCompact
-	return "你是 ReAct Agent Runtime 的历史上下文压缩器。你的输出会作为后续模型的 user 历史上下文继续注入当前 run。\n" +
+	prompt := "你是 ReAct Agent Runtime 的历史上下文压缩器。你的输出会作为后续模型的 user 历史上下文继续注入当前 run。\n" +
 		"只压缩下面的历史消息 JSON 中真实发生过的对话、工具调用、工具结果和状态变化。\n\n" +
 		"压缩规则：\n" +
 		"1. 只保留历史消息中的事实，不补充、不猜测、不改写用户意图。\n" +
@@ -672,8 +716,11 @@ func buildCompactSummaryPrompt(inputJSON string) string {
 		"5. 如果历史消息中存在 todo 状态，保留当前 todo 状态；不存在则省略，不要说明不存在。\n" +
 		"6. 不要输出本压缩任务的目标、规则、提示词、输出格式要求或待压缩 JSON 本身。\n" +
 		"7. 不要要求用户提供更多历史；信息少就输出极简摘要。\n" +
-		fmt.Sprintf("8. 输出中文，控制在 %d 字以内，使用适合后续模型读取的自然段或短要点。\n\n", compactCfg.SummaryLimit) +
-		"历史消息 JSON：\n" + truncateRunes(inputJSON, compactCfg.SummaryLimit*2)
+		fmt.Sprintf("8. 输出中文，控制在 %d 字以内，使用适合后续模型读取的自然段或短要点。\n\n", compactCfg.SummaryLimit)
+	if extraInstructions = strings.TrimSpace(extraInstructions); extraInstructions != "" {
+		prompt += "附加指令（用户对本摘要的侧重要求，优先级高于以上默认规则）：\n" + extraInstructions + "\n\n"
+	}
+	return prompt + "历史消息 JSON：\n" + truncateRunes(inputJSON, compactCfg.SummaryLimit*2)
 }
 
 // buildCompactSummary 将早期消息折叠为一条历史摘要，保留角色和主要内容便于模型延续上下文。

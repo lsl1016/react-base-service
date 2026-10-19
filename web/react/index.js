@@ -50,85 +50,7 @@ let disposeSQLClientTools = null;
 let sdkTheme = window.REACT_AGENT_HOST_CONFIG?.theme === 'dark' ? 'dark' : 'light';
 const feedbackByRunId = {};
 
-const loadMockAnalysisThemeOptions = async () => {
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  return [
-    {
-      id: 'budget-2026-core',
-      label: '2026 核心业务预算',
-      children: [
-        { id: 'scope-revenue', label: '收入与利润', payload: { budgetId: 202601, scopeId: 101 } },
-        { id: 'scope-retention', label: '用户留存', payload: { budgetId: 202601, scopeId: 102 } },
-      ],
-    },
-    {
-      id: 'budget-2026-growth',
-      label: '2026 增长专项预算',
-      selectable: false,
-      children: [
-        { id: 'scope-acquisition', label: '获客转化', payload: { budgetId: 202602, scopeId: 201 } },
-        { id: 'scope-disabled', label: '实验主题（暂不可用）', disabled: true, payload: { budgetId: 202602, scopeId: 202 } },
-      ],
-    },
-  ];
-};
-
-const formatMockTreeSelectionLabel = (selected) => {
-  const firstLabel = selected[0]?.path.map((item) => item.label).join(' / ') ?? '';
-  const preview = Array.from(firstLabel).slice(0, 7).join('');
-  return selected.length > 1 ? `${preview} 等${selected.length}个` : preview;
-};
-
-const formatMockTreeSelectionNodes = (selected) => {
-  const nodeIds = new Set();
-  return selected
-    .flatMap(({ path }) => path)
-    .filter((node) => {
-      if (nodeIds.has(node.id)) return false;
-      nodeIds.add(node.id);
-      return true;
-    })
-    .map((node) => node.label)
-    .join(',');
-};
-
 const quickInsertItems = [
-  {
-    id: 'analysis-theme-select',
-    label: '/按分析主题选表',
-    group: '分析主题选表',
-    description: 'Mock：按预算和分析主题选择数据范围',
-    kind: 'tree-select',
-    picker: {
-      multiple: true,
-      leafOnly: true,
-      loadOptions: loadMockAnalysisThemeOptions,
-      toShortcut: (selected) => {
-        return {
-        id: `analysis-theme-${selected.map(({ node }) => `${node.payload.budgetId}-${node.payload.scopeId}`).join('_')}`,
-        label: `主题：${formatMockTreeSelectionLabel(selected)}`,
-        group: '分析主题选表',
-        description: '已选择的 Mock 分析主题',
-        data: {
-          tag: 'user_select_analysis_theme',
-          proto: {
-           system_remider: '当用户当前选择了一些分析主题',
-           selections: formatMockTreeSelectionNodes(selected)
-          },
-        },
-      }
-      },
-      onConfirm: (selected) => console.info('[playground] tree-select confirmed', selected),
-      onCancel: (selected) => console.info('[playground] tree-select cancelled', selected),
-    },
-  },
-   {
-    id: 'user-input-table-name',
-    label: '/t快捷选表:',
-    group: 'Skills',
-    description: '输入AI能理解的库名表名，eg: default.yike_notice_action_hour',
-    data: { tag: 'skill', proto: { system_remider: '当用户使用此命令表示想要快捷选表，后续会使用自然语言跟随表名' } },
-  },
   {
     id: 'skills-create',
     label: '/创建技能',
@@ -136,20 +58,8 @@ const quickInsertItems = [
     description: '你可以使用此技能来创建一个技能。',
     data: { tag: 'skill', proto: { system_remider: '当用户使用此命令时，调用createSkill来为他的要求创建skill。' } },
   },
-  ...Array.from({ length: 10 }, (_, index) => ({
-    id: `skills-${index}`,
-    label: `/蓝鲸技能包-${index}`,
-    group: 'Skills',
-    description: `当用户提到“蓝鲸技能包-${index}”时使用。`,
-    data: { tag: 'skill', proto: { path: `/a/b/c/蓝鲸技能包-${index}.md` } },
-  })),
-  ...Array.from({ length: 10 }, (_, index) => ({
-    id: `commands-${index}`,
-    label: `/命令${index}`,
-    group: 'Commands',
-    description: `当用户提到“${index}”时使用。`,
-    data: { tag: 'command', proto: { path: `/a/b/c/${index}.md` } },
-  })),
+  // 斜杠命令（/compact、/workflow 与管理面创建的自定义命令）不再 mock：
+  // SDK 挂载后自动经 POST /react/commands/list 拉取后端目录，与本数组合并渲染「命令」分组。
 ];
 
 const parseRouteValues = (value) => value
@@ -675,6 +585,39 @@ const resources = {
     }),
     fields: (mode) => [
       ['name', '名称'], ['appKey', '归属 app', 'readonly'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['isDefault', '默认', 'defaultSelect'], ['description', '描述', 'textarea'], ['triggerCondition', '触发条件', 'textarea'], ['forbiddenCondition', '禁用条件', 'textarea'], ['executionSteps', '执行步骤', 'textarea'], ['businessContext', '业务上下文', 'textarea'], ['promptSupplement', '补充提示词', 'textarea'],
+    ],
+  },
+  // 自定义斜杠命令管理（/ 唤起，展开型命令：模板支持 $ARGUMENTS / $1 $2 占位符）。
+  command: {
+    title: '命令管理',
+    tabText: '命令',
+    addText: '新增命令',
+    idKey: 'commandKey',
+    appFilter: true,
+    listPath: '/command/list',
+    createPath: '/command/create',
+    updatePath: '/command/update',
+    deletePath: '/command/delete',
+    deleteBody: (item) => ({ commandKey: item.commandKey }),
+    columns: [
+      ['commandKey', '命令标识'], ['name', '命令名'], ['description', '描述'], ['argumentHint', '参数提示'], ['appKey', '归属 app'], ['routeValues', '适用路由'], ['status', '状态'], ['actions', '操作'],
+    ],
+    empty: () => ({
+      name: '', description: '', argumentHint: '', content: '', appKey: createTargetAppKey(), routeText: createDefaultRouteText(), status: 1,
+    }),
+    toDraft: (item) => ({ ...item, routeText: joinRouteValues(item.routeValues) }),
+    toPayload: (draft, config) => ({
+      commandKey: draft.commandKey,
+      appKey: draft.appKey || config.appKey,
+      routeValues: splitRouteText(draft.routeText),
+      name: draft.name,
+      description: draft.description,
+      argumentHint: draft.argumentHint,
+      content: draft.content,
+      status: Number(draft.status),
+    }),
+    fields: (mode) => [
+      ['name', '命令名（/name）'], ['appKey', '归属 app', 'readonly'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['argumentHint', '参数提示'], ['description', '描述'], ['content', '提示词模板（$ARGUMENTS / $1 $2）', 'textarea'],
     ],
   },
   // 「API Key 管理」页已撤除（P1 Key 双轨消除）：app 级凭证并入模型配置面板的

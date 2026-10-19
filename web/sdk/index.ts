@@ -21,6 +21,7 @@ export * from './runtime/types';
 // UI 输入
 export { parseAgentInputText, serializeAgentInputParts } from './ui/editor/types';
 export type {
+    AgentCommandQuickInsertItem,
     AgentInputPart,
     AgentInputSerializer,
     AgentQuickInsertData,

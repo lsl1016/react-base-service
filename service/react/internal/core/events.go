@@ -9,6 +9,7 @@ const (
 	EventCancelled           = "cancelled"
 	EventClientToolUseEnd    = "client_tool_use_end"
 	EventClientToolUseStart  = "client_tool_use_start"
+	EventCommandReceipt      = "command_receipt"
 	EventCompactEnd          = "compact_end"
 	EventCompactStart        = "compact_start"
 	EventContentDelta        = "content_delta"

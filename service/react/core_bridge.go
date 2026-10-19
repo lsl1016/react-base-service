@@ -43,6 +43,8 @@ const (
 	metaToolGraphMemoryWrite  = core.MetaToolGraphMemoryWrite
 	metaToolWebFetch          = core.MetaToolWebFetch
 	metaToolWebSearch         = core.MetaToolWebSearch
+	metaToolCreateWorkflow    = core.MetaToolCreateWorkflow
+	metaToolDispatchWorkflow  = core.MetaToolDispatchWorkflow
 )
 
 func isInternalMetaTool(name string) bool { return core.IsInternalMetaTool(name) }
@@ -193,6 +195,7 @@ const (
 	EventClientToolUseEnd    = core.EventClientToolUseEnd
 	EventCompactStart        = core.EventCompactStart
 	EventCompactEnd          = core.EventCompactEnd
+	EventCommandReceipt      = core.EventCommandReceipt
 	EventModelFallback       = core.EventModelFallback
 	EventModelRetry          = core.EventModelRetry
 	EventSoftLanding         = core.EventSoftLanding

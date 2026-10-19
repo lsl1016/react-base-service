@@ -3,9 +3,10 @@ llm:
   # 模型目录：每类模型的默认版本与上下文上限（供 LLM 客户端解析模型能力）
   models:
     claude:
-      default_version: "glm-4.6"
+      # 该端点实际指向 DeepSeek Anthropic 兼容网关（连接层注册），上游只接受
+      # deepseek-flash / deepseek-v4-pro；版本名须与其一致，否则 400 invalid model。
+      default_version: "deepseek-flash"
       max_context_tokens: 1000000
-      # GLM 的 Anthropic 兼容面支持 thinking 参数；显式声明后思考程度三态才会真正下发。
       supports_thinking: true
     deepseek:
       versions: ["deepseek-flash", "deepseek-v4-pro"]
@@ -28,6 +29,10 @@ llm:
       enabled: true
       queue: true
       queue_auto_drain: true
+    # 斜杠命令能力（/compact、/workflow 与自定义命令）：未配置默认关闭
+    #（ws.go 命令拦截层直通、目录 API 返回空、前端不显示命令分组）。
+    slash_command:
+      enabled: true
     # 请求未传 maxSteps 时的默认最大推理轮次。maxSteps 只是防御性最后闸门：
     # 正常终止由软着陆/预算/超时等明确边界承担（见 docs/plan/20260925_AgentLoop终止边界与循环治理优化方案.md）。
     max_steps: 200
@@ -53,12 +58,15 @@ llm:
     models:
       default:
         model_key: "claude"
-        model_version: "glm-4.6"
-        display_name: "GLM 4.6 (Anthropic 协议)"
+        model_version: "deepseek-flash"
+        display_name: "DeepSeek Flash (Anthropic 协议)"
       available:
         - model_key: "claude"
-          model_version: "glm-4.6"
-          display_name: "GLM 4.6 (Anthropic 协议)"
+          model_version: "deepseek-flash"
+          display_name: "DeepSeek Flash (Anthropic 协议)"
+        - model_key: "claude"
+          model_version: "deepseek-v4-pro"
+          display_name: "DeepSeek V4 Pro (Anthropic 协议)"
       mutual_failover: false
     # 历史上下文自动压缩：高水位触发、低水位目标。
     context_compact:

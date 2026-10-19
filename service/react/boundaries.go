@@ -50,6 +50,9 @@ const (
 	softLandingReasonContextLimit   = "context_limit"
 	terminationReasonExhausted      = "finish_exhausted"
 	terminationReasonBudgetExceeded = "finish_budget_exhausted"
+	// terminationReasonManualCompact /compact 手动压缩 run 的收尾原因：
+	// 第 0 步强制压缩后直接结束，不进入模型对话轮。
+	terminationReasonManualCompact = "manual_compact"
 )
 
 // softLandingAllowedTools 是软着陆收尾窗口内允许执行的工具：只读/记录类操作。

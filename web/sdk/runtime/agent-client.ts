@@ -39,7 +39,7 @@
  *   WS 细块只用于实时 UI，thought/content 完成后再写入本地 events[]
  *   WS 重连后检查 seq 连续性，不连续则在 run 终态后全量拉取
  */
-import type { ApiResponse, CheckModelConnectivityReq, ChatFileUpload, ConfigSchemaResp, ConnectionItem, ConnectionModelsResp, ContextCompactSettingResp, CreateConnectionReq, CreateUserModelReq, ReactModelInfo, ReactModelsResp, ReactEvent, UpdateConnectionReq, UpdateContextCompactSettingReq, UpdateUserModelReq, UserModelItem, VendorModelsResp } from '../protocol/types';
+import type { ApiResponse, CheckModelConnectivityReq, ChatFileUpload, CommandCatalogResp, ConfigSchemaResp, ConnectionItem, ConnectionModelsResp, ContextCompactSettingResp, CreateConnectionReq, CreateUserModelReq, ReactModelInfo, ReactModelsResp, ReactEvent, UpdateConnectionReq, UpdateContextCompactSettingReq, UpdateUserModelReq, UserModelItem, VendorModelsResp } from '../protocol/types';
 import { SessionManager } from '../session/session-manager';
 import type { AsyncTaskItem, HistoryEvent, QueueDeleteParams, QueueListParams, QueueListResp, QueueMutateResp, QueueReorderParams, QueueUpdateParams, SessionListParams, SessionListResp } from '../session/types';
 import type { SessionMeta } from '../storage/event-ledger';
@@ -328,6 +328,14 @@ export class AgentClient {
   /** 厂商模型目录（厂商枚举 key + 可选版本列表）。 */
   async listVendorModels(): Promise<VendorModelsResp> {
     return this.sessionManager.listVendorModels();
+  }
+
+  /** 斜杠命令目录（内置 + 自定义命令；appKey/routeValues 缺省用客户端配置）。 */
+  async listCommands(params?: { appKey?: string; routeValues?: string[] }): Promise<CommandCatalogResp> {
+    return this.sessionManager.listCommands({
+      appKey: params?.appKey ?? this.config.appKey,
+      routeValues: params?.routeValues ?? this.config.routeValues ?? [],
+    });
   }
 
   /** 模型配置面板参数 schema（声明式 min/max/step/default）。 */

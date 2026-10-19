@@ -107,6 +107,15 @@ func executeReactLoop(ctx *gin.Context, runCtx context.Context, req *runtimeRequ
 
 	maxSteps := normalizeMaxSteps(req.payload.MaxSteps)
 	for step := 0; step < maxSteps; step++ {
+		// /compact 手动压缩 run（标记型命令）：第 0 步强制压缩后直接收尾，不进入模型
+		// 对话轮——压缩本身由压缩管线内的摘要 LLM 调用承担，压缩结果以 compact_start/end
+		// 分隔线 + command_receipt 回执呈现；消息太少压缩不了时同样收尾并回执提示。
+		if directive := req.payload.CommandDirective; directive != nil && directive.ForceCompact {
+			if err := runManualCompact(state); err != nil {
+				return err
+			}
+			return state.finish(req.payload.UserPrompt, terminationReasonManualCompact)
+		}
 		// Q1（runtime-command-active-loop 对齐）：从第二个模型步起，每次迭代顶部吸收
 		// 后台任务完成通知，合并为一条 model-only user 消息拼进当前轮请求——不新开 turn。
 		if step > 0 {

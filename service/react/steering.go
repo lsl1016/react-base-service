@@ -25,6 +25,7 @@ import (
 	"react-base-service/components"
 	"react-base-service/components/params"
 	model "react-base-service/models/llm"
+	commandService "react-base-service/service/command"
 
 	"react-base-service/golib/zlog"
 
@@ -55,6 +56,10 @@ const (
 	steerReasonSoftLanding     = "soft_landing"      // 软着陆收尾窗口内不再接收 guide
 	steerReasonAttachments     = "attachments_unsupported"
 	steerReasonUserPreferQueue = "user_preferred_queue" // 客户端显式要求排队（SteerDelivery=queue）
+	// steerReasonSlashCommand 斜杠命令不参与准入：guide 注入或排队晋升都会丢失命令语义
+	//（展开文本被当普通消息注入、标记指令随 payload 重建丢失或错用）。
+	// 同连接路径已在 ws.go 拦截层用 command_receipt 明确拒绝，这里是多连接竞态的最后防线。
+	steerReasonSlashCommand = "slash_command_unsupported"
 )
 
 const (
@@ -308,6 +313,11 @@ func SteerSession(ctx *gin.Context, sessionID string, payload params.ReactRunPay
 // 返回的回执由调用方决定投递方式（WS 事件 / steerReceiptError 穿透）。
 // 账本行同时保存原始 run 请求快照（payload_json），供 queue 晋升/自动续跑时重建 run 请求。
 func admitSteeringInputTx(ctx *gin.Context, tx *gorm.DB, sessionID string, activeRun *model.ReactRun, payload params.ReactRunPayload, hasAttachments bool) (SteerReceipt, error) {
+	// 斜杠命令不参与准入（跨连接 run 冲突路径的兜底）：命令改写过的 payload
+	//（CommandDisplay/CommandDirective 非空）或未改写的已知命令名一律明确拒绝。
+	if payload.CommandDisplay != "" || payload.CommandDirective != nil || isKnownSlashCommandText(payload.UserPrompt) {
+		return SteerReceipt{Kind: steerReceiptRejected, Reason: steerReasonSlashCommand, RunID: activeRun.RunID}, nil
+	}
 	decision := steerAdmissionDecision(steerAdmissionInput{
 		ActiveRunState: activeRun.State,
 		SoftLanding:    isRunSoftLanding(activeRun.RunID),
@@ -610,4 +620,11 @@ func isRunSoftLanding(runID string) bool {
 	}
 	flag, ok := value.(*atomic.Bool)
 	return ok && flag.Load()
+}
+
+// isKnownSlashCommandText 词法级判断 userPrompt 首 token 是否已知命令（内置或保留名）。
+// 纯内存判定（无 DB 访问），供准入兜底；自定义命令经 CommandDisplay 标记识别。
+func isKnownSlashCommandText(userPrompt string) bool {
+	name, _, ok := commandService.SplitCommand(userPrompt)
+	return ok && commandService.IsKnownCommandName(name)
 }

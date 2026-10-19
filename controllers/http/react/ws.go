@@ -197,10 +197,17 @@ func handleWSMessage(ctx *gin.Context, connCtx context.Context, write reactServi
 	switch strings.TrimSpace(msg.Type) {
 	case reactService.EventRun:
 		if runMsgCh != nil {
-			// Steering S1：run 活跃不再硬拒绝——新用户消息走准入（guide/queue/明确拒绝），
-			// 回执以 steer_guided/steer_queued/steer_rejected 事件下发；Steering 未开启时保持
-			// 历史错误事件行为。
+			// 斜杠命令在 run 活跃期一律拒绝（不排队：排队晋升会丢失命令语义），
+			// 普通消息继续走 Steering S1 准入（guide/queue/明确拒绝）。
+			if rejectSlashCommandWhileRunActive(ctx, write, msg) {
+				return runMsgCh, runDone
+			}
 			reactService.HandleWSSteer(ctx, write, msg)
+			return runMsgCh, runDone
+		}
+		// 空闲会话：命令拦截层（解析/回执/payload 改写）位于 startWSRun 之前；
+		// 非命令消息零改写直通。
+		if applySlashCommand(ctx, write, &msg) {
 			return runMsgCh, runDone
 		}
 		return startWSRun(ctx, connCtx, write, msg)

@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 // JSONSchema 是 Business Tool inputSchema 使用的 JSON Schema 子集表示。
@@ -13,7 +14,7 @@ import (
 type JSONSchema map[string]any
 
 // ValidateJSONSchemaValue 校验值是否满足工具入参使用的 JSON Schema 子集。
-// 当前支持 object/array/string/number/integer/boolean/null、required、properties、items、enum、minLength 和 additionalProperties。
+// 当前支持 object/array/string/number/integer/boolean/null、required、properties、items、enum、minLength、additionalProperties，以及 oneOf/anyOf 组合分支。
 func ValidateJSONSchemaValue(schema JSONSchema, value any) error {
 	return validateSchemaAt(schema, value, "$")
 }
@@ -21,6 +22,14 @@ func ValidateJSONSchemaValue(schema JSONSchema, value any) error {
 func validateSchemaAt(schema JSONSchema, value any, path string) error {
 	if len(schema) == 0 {
 		return fmt.Errorf("%s schema is empty", path)
+	}
+	// oneOf/anyOf 组合分支：MCP 工具常用 oneOf 表达"字符串或数组"这类多形态字段。
+	// 任一分支通过即通过（oneOf 严格语义要求"恰好一个"匹配，这里按 anyOf 宽松处理，
+	// 避免分支偶有重叠时误杀合法入参）；全不通过时拼出各分支错误，供模型自我纠正。
+	for _, keyword := range []string{"oneOf", "anyOf"} {
+		if rawBranches, exists := schema[keyword]; exists {
+			return validateSchemaBranches(rawBranches, value, path, keyword)
+		}
 	}
 	typeName, _ := schema["type"].(string)
 	if typeName == "" {
@@ -113,6 +122,28 @@ func validateSchemaAt(schema JSONSchema, value any, path string) error {
 		return fmt.Errorf("%s has unsupported schema type %q", path, typeName)
 	}
 	return nil
+}
+
+// validateSchemaBranches 校验 oneOf/anyOf 组合分支，返回 nil 表示任一分支通过。
+func validateSchemaBranches(rawBranches any, value any, path string, keyword string) error {
+	branches, ok := asSlice(rawBranches)
+	if !ok || len(branches) == 0 {
+		return fmt.Errorf("%s schema.%s must be non-empty array", path, keyword)
+	}
+	branchErrs := make([]string, 0, len(branches))
+	for _, branch := range branches {
+		branchSchema, ok := asStringMap(branch)
+		if !ok {
+			branchErrs = append(branchErrs, "branch must be schema object")
+			continue
+		}
+		if err := validateSchemaAt(JSONSchema(branchSchema), value, path); err != nil {
+			branchErrs = append(branchErrs, err.Error())
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("%s must match one of %s branches: %s", path, keyword, strings.Join(branchErrs, "; "))
 }
 
 func containsJSONValue(values []any, target any) bool {

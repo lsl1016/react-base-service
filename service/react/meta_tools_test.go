@@ -158,7 +158,7 @@ func TestNormalizeExecuteToolInputRejectsInvalidJSONString(t *testing.T) {
 }
 
 func TestBuildCompactSummaryPromptAvoidsHandoffTemplate(t *testing.T) {
-	prompt := buildCompactSummaryPrompt(`[{"role":"user","content":"帮我查下订单表有哪些"}]`)
+	prompt := buildCompactSummaryPrompt(`[{"role":"user","content":"帮我查下订单表有哪些"}]`, "")
 
 	for _, forbidden := range []string{"当前任务目标：", "用户明确要求：", "已完成事项：", "后续需要继续的点："} {
 		if strings.Contains(prompt, forbidden) {

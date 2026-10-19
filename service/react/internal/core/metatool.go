@@ -45,12 +45,17 @@ const (
 	MetaToolWebFetch = "web_fetch"
 	// MetaToolWebSearch 联网检索（WP4 网络能力，SearXNG）。
 	MetaToolWebSearch = "web_search"
+	// MetaToolCreateWorkflow 创建无人值守 workflow 定义（/workflow 命令的执行入口；
+	// llm.workflow.enabled 且执行器接线时注册，归属取当前 run 的 app/user/route）。
+	MetaToolCreateWorkflow = "create_workflow"
+	// MetaToolDispatchWorkflow 手动触发一次 workflow run（workflow 已创建后的立即执行入口）。
+	MetaToolDispatchWorkflow = "dispatch_workflow"
 )
 
 // IsInternalMetaTool 判断工具名是否属于 Runtime 内置 Meta Tool，内置工具不走外部工具注册表。
 func IsInternalMetaTool(name string) bool {
 	switch name {
-	case MetaToolListTools, MetaToolGetTool, MetaToolExecuteTool, MetaToolListSkills, MetaToolGetSkill, MetaToolReadToolResult, MetaToolInspectData, MetaToolPythonExec, MetaToolTodoWrite, MetaToolAskQuestion, MetaToolDisplayFiles, MetaToolResolveAsyncTask, MetaToolGetAsyncTask, MetaToolReadAttachment, MetaToolInspectAttachment, MetaToolCreatePlan, MetaToolDelegateAgent, MetaToolSendMessage, MetaToolLoadRuntimeCode, MetaToolMemoryList, MetaToolMemoryRead, MetaToolMemoryWrite, MetaToolGraphMemorySearch, MetaToolGraphMemoryWrite, MetaToolWebFetch, MetaToolWaitAgent, MetaToolWebSearch:
+	case MetaToolListTools, MetaToolGetTool, MetaToolExecuteTool, MetaToolListSkills, MetaToolGetSkill, MetaToolReadToolResult, MetaToolInspectData, MetaToolPythonExec, MetaToolTodoWrite, MetaToolAskQuestion, MetaToolDisplayFiles, MetaToolResolveAsyncTask, MetaToolGetAsyncTask, MetaToolReadAttachment, MetaToolInspectAttachment, MetaToolCreatePlan, MetaToolDelegateAgent, MetaToolSendMessage, MetaToolLoadRuntimeCode, MetaToolMemoryList, MetaToolMemoryRead, MetaToolMemoryWrite, MetaToolGraphMemorySearch, MetaToolGraphMemoryWrite, MetaToolWebFetch, MetaToolWaitAgent, MetaToolWebSearch, MetaToolCreateWorkflow, MetaToolDispatchWorkflow:
 		return true
 	default:
 		return false

@@ -574,6 +574,7 @@ export interface PlanStepEventPayload {
  * - Steering（运行中消息准入）：steer_guided | steer_queued | steer_rejected（准入回执）
  *              steer_drained（guide/队列项/显式发送项注入模型轮） | steer_delivery_changed（guide 降级排队）
  *              steer_discarded（未消费输入结算作废）
+ * - 斜杠命令：command_receipt（命令回执——拒绝原因 / 压缩结果提示等，渲染为系统提示条）
  * - 通知邮箱：notice_drained（后台任务完成通知被吸收进当前模型轮）
  * - 终态事件：done | error | cancelled（三选一，标记 run 结束）
  * - 心跳：heartbeat（服务端每 20s 发送，用于保活）
@@ -603,6 +604,7 @@ export type EventType =
   | 'steer_drained'
   | 'steer_delivery_changed'
   | 'steer_discarded'
+  | 'command_receipt'
   | 'notice_drained'
   | 'done'
   | 'error'
@@ -770,6 +772,37 @@ export interface ReactNoticeDrainedPayload {
   messageId: string;
   count: number;
   content?: string;
+}
+
+/** command_receipt 事件 payload：斜杠命令回执（就地处理结论，不落库回放）
+ *  ——拒绝原因（run_active/unknown_command）、/compact 压缩结果提示等，渲染为系统提示条。 */
+export interface ReactCommandReceiptPayload {
+  /** 命令名（别名归一前用户输入的原名） */
+  command: string;
+  /** ok / rejected / error */
+  result: string;
+  /** rejected 时的原因：run_active / unknown_command / command_disabled */
+  reason?: string;
+  /** 给用户的提示文案 */
+  message?: string;
+}
+
+// ─── 斜杠命令目录 ────────────────────────────────────────────────────
+
+/** 命令目录单条命令（POST /react/commands/list 响应项） */
+export interface CommandCatalogItem {
+  name: string;
+  description: string;
+  argumentHint?: string;
+  /** builtin | custom */
+  source: string;
+  /** 前端浮层分组名 */
+  group: string;
+}
+
+/** 命令目录响应 */
+export interface CommandCatalogResp {
+  commands: CommandCatalogItem[];
 }
 
 export interface ClientToolUseStartPayload {

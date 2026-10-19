@@ -51,7 +51,26 @@ export interface AgentQuickInsertTreeSelectItem<Payload = any> {
   picker: AgentQuickInsertTreePicker<Payload>;
 }
 
-export type AgentQuickInsertItem = AgentQuickInsertShortcutItem | AgentQuickInsertTreeSelectItem;
+// 斜杠命令项（后端命令目录下发，docs/plan/20261013_斜杠命令支持设计方案.md §4.7）：
+// 选中后插入 "/name " 纯文本（不是 ShortcutNode 标签），回车原文上送、由后端命令分发层解析。
+// 已知退化：纯文本不参与 parseAgentInputText 反解析，跨会话历史输入补全退化为纯 text part。
+export interface AgentCommandQuickInsertItem {
+  id: string;
+  label: string;
+  group: string;
+  description: string;
+  kind: 'command';
+  command: {
+    name: string;
+    argumentHint?: string;
+    source?: 'builtin' | 'custom';
+  };
+}
+
+export type AgentQuickInsertItem =
+  | AgentQuickInsertShortcutItem
+  | AgentQuickInsertTreeSelectItem
+  | AgentCommandQuickInsertItem;
 
 export type AgentInputSerializer = (parts: AgentInputPart[]) => string;
 
@@ -115,7 +134,8 @@ function createShortcutPart(item: AgentQuickInsertShortcutItem): Extract<AgentIn
 
 function buildSerializedCandidates(items: AgentQuickInsertItem[]) {
   return items
-    .filter((item): item is AgentQuickInsertShortcutItem => item.kind !== 'tree-select')
+    // 仅快捷节点项参与序列化反解析（tree-select 无序列化形态、command 是纯文本无 chip）。
+    .filter((item): item is AgentQuickInsertShortcutItem => item.kind !== 'tree-select' && item.kind !== 'command')
     .map((item) => ({ item, token: serializeShortcutPart(createShortcutPart(item)) }))
     .sort((a, b) => b.token.length - a.token.length);
 }

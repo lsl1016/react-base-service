@@ -10,7 +10,7 @@ import { render } from "solid-js/web";
 import type { AgentClient } from "../runtime/agent-client";
 import type { RunFeedbackPayload, RunFeedbackState } from "../runtime/types";
 import { AgentPanel, type AgentAfterSendMeta, type AgentStartBlockContext } from "./components/AgentPanel";
-import type { AgentInputSerializer, AgentQuickInsertItem } from "./editor/types";
+import type { AgentCommandQuickInsertItem, AgentInputSerializer, AgentQuickInsertItem } from "./editor/types";
 import type { AgentInputCommand } from "./input-api";
 import type { AgentUIEventHandler } from "./events";
 import { AgentUIThemeProvider, type AgentUITheme } from "./theme";
@@ -33,6 +33,12 @@ export interface MountAgentUIOptions {
   placeholder?: string;
   /** / 快捷输入候选项 */
   quickInsertItems?: AgentQuickInsertItem[];
+  /**
+   * 斜杠命令目录自动拉取，默认 true：挂载后经 client.listCommands() 拉取后端命令目录
+   * （内置 + 自定义命令），与 quickInsertItems 合并渲染为「命令」分组；
+   * 失败静默降级为无命令分组。传 false 关闭（宿主完全自管候选项）。
+   */
+  commands?: boolean;
   /** 输入片段转最终发送文本 */
   serializeInput?: AgentInputSerializer;
   /** 点击关闭按钮的回调（不传则不显示关闭按钮） */
@@ -106,11 +112,43 @@ export function mountAgentUI(
 ): AgentUIHandle {
   const [feedbackByRunId, setFeedbackByRunId] = createSignal<Record<string, RunFeedbackState>>({});
   const [theme, setTheme] = createSignal<AgentUITheme>(options.theme ?? 'light');
+  const [commandItems, setCommandItems] = createSignal<AgentCommandQuickInsertItem[]>([]);
   const feedbackEnabled = !options.readOnly && (options.feedback ?? true);
   let disposed = false;
   let activeSessionId: string | null = null;
   let inputCommand: AgentInputCommand | null = null;
   let feedbackLoadVersion = 0;
+
+  // 斜杠命令目录：挂载后拉取一次（失败静默降级为空），与宿主 quickInsertItems 合并渲染。
+  if (options.commands !== false && !options.readOnly) {
+    void (async () => {
+      try {
+        const resp = await client.listCommands();
+        if (disposed) return;
+        setCommandItems(
+          (resp?.commands ?? []).map((entry) => ({
+            id: `command:${entry.source}:${entry.name}`,
+            label: `/${entry.name}`,
+            group: entry.group || (entry.source === 'custom' ? '自定义命令' : '命令'),
+            description: entry.argumentHint ? `${entry.description}（${entry.argumentHint}）` : entry.description,
+            kind: 'command' as const,
+            command: {
+              name: entry.name,
+              argumentHint: entry.argumentHint,
+              source: entry.source === 'custom' ? ('custom' as const) : ('builtin' as const),
+            },
+          })),
+        );
+      } catch {
+        // 目录拉取失败不阻塞 UI：无命令分组即可（插件渲染条件按合计非空判定）。
+      }
+    })();
+  }
+
+  const mergedQuickInsertItems = (): AgentQuickInsertItem[] => [
+    ...(options.quickInsertItems ?? []),
+    ...commandItems(),
+  ];
 
   const setFeedbackMap = (map: Record<string, RunFeedbackState>) => {
     setFeedbackByRunId(map ?? {});
@@ -191,7 +229,7 @@ export function mountAgentUI(
             showSidebar={options.showSidebar}
             attachmentUpload={options.attachmentUpload}
             placeholder={options.placeholder}
-            quickInsertItems={options.quickInsertItems}
+            quickInsertItems={mergedQuickInsertItems()}
             serializeInput={options.serializeInput}
             onClose={options.onClose}
             onClean={options.onClean}

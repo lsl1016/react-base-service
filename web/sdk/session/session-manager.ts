@@ -12,7 +12,7 @@
  *
  * 构造函数接受可选的 fetch 函数注入，方便测试时 mock。
  */
-import type { ApiResponse, CheckModelConnectivityReq, ConfigSchemaResp, ConnectionItem, ConnectionModelsResp, ContextCompactSettingResp, CreateConnectionReq, CreateUserModelReq, PlanExecutionDetailResp, PlanStepEventsResp, UpdateConnectionReq, UpdateContextCompactSettingReq, UpdateUserModelReq, UserModelItem, VendorModelsResp } from '../protocol/types';
+import type { ApiResponse, CheckModelConnectivityReq, CommandCatalogResp, ConfigSchemaResp, ConnectionItem, ConnectionModelsResp, ContextCompactSettingResp, CreateConnectionReq, CreateUserModelReq, PlanExecutionDetailResp, PlanStepEventsResp, UpdateConnectionReq, UpdateContextCompactSettingReq, UpdateUserModelReq, UserModelItem, VendorModelsResp } from '../protocol/types';
 import type {
   AsyncTaskListParams,
   AsyncTaskListResp,
@@ -203,6 +203,11 @@ export class SessionManager {
   /** 更新上下文压缩策略（字段级覆盖，写后本进程立即生效）→ POST /setting/context/update */
   async updateContextSetting(params: UpdateContextCompactSettingReq): Promise<ContextCompactSettingResp> {
     return this.postAt<ContextCompactSettingResp>('/setting/context/update', params as unknown as Record<string, unknown>);
+  }
+
+  /** 斜杠命令目录（前端 / 菜单数据源：内置 + 自定义命令）→ POST /react/commands/list */
+  async listCommands(params: { appKey: string; routeValues?: string[] }): Promise<CommandCatalogResp> {
+    return this.post<CommandCatalogResp>('/commands/list', params as unknown as Record<string, unknown>);
   }
 
   private async get<T>(url: string): Promise<T> {

@@ -5,6 +5,7 @@ import (
 	"react-base-service/service/asynctask"
 	"react-base-service/service/mcpclient"
 	"react-base-service/service/mcpgateway"
+	"react-base-service/service/react"
 	"react-base-service/service/setting"
 	"react-base-service/service/workflow"
 
@@ -22,7 +23,9 @@ func Commands(rootCmd *cobra.Command, engine *gin.Engine) {
 // MCP 客户端按配置拉起子进程并同步工具注册表，未配置时为空操作；
 // MCP 服务端网关启用时启动调用审计异步落库；
 // 运行时设置先加载一次 DB 覆盖快照再按 TTL 周期刷新；
-// 定时触发工作流按 llm.workflow.enabled 启动 cron 调度器，关闭时空转）。
+// 定时触发工作流按 llm.workflow.enabled 启动 cron 调度器，关闭时空转；
+// workflow 工具执行器接线（create_workflow/dispatch_workflow 内置工具，方向 workflow→react，
+// react 侧以 hook 解耦，此处完成注册））。
 func Tasks(engine *gin.Engine) {
 	asynctask.Start(engine)
 	mcpclient.Bootstrap(engine)
@@ -33,6 +36,7 @@ func Tasks(engine *gin.Engine) {
 	}
 	setting.Bootstrap()
 	workflow.Start(engine)
+	react.RegisterWorkflowToolExecutor(workflow.ExecuteReactWorkflowTool)
 }
 
 // StopTasks 停止随 HTTP 服务启动的后台任务。

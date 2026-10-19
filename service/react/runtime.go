@@ -433,7 +433,7 @@ func createReactRunContext(ctx *gin.Context, req *runtimeRequest) (string, strin
 		}
 		return model.UpdateReactSessionBySessionIDWithDB(ctx, tx, sessionID, map[string]any{
 			"last_run_id":  runID,
-			"last_message": trimRunLastMessage(req.payload.UserPrompt),
+			"last_message": trimRunLastMessage(req.displayContent()),
 		})
 	})
 	if err != nil {
@@ -809,10 +809,11 @@ func validateReactSessionContext(session *model.ReactSession, userName, appKey, 
 
 // createReactSession 在当前事务中创建新的 ReAct 会话，并返回最终落库的 sessionID。
 func createReactSession(ctx *gin.Context, tx *gorm.DB, sessionID string, req *runtimeRequest) (string, error) {
-	// SessionTitle 供后台触发方（定时工作流）显式命名会话；普通入口仍按提示词截取。
+	// SessionTitle 供后台触发方（定时工作流）显式命名会话；普通入口仍按提示词截取
+	//（命令展开型 run 按命令原文截取，与气泡展示一致）。
 	title := strings.TrimSpace(req.payload.SessionTitle)
 	if title == "" {
-		title = buildSessionTitle(req.payload.UserPrompt)
+		title = buildSessionTitle(req.displayContent())
 	}
 	session := &model.ReactSession{
 		SessionID:   sessionID,
@@ -830,10 +831,20 @@ func createReactSession(ctx *gin.Context, tx *gorm.DB, sessionID string, req *ru
 	return sessionID, nil
 }
 
+// displayContent 返回本 run 用户输入的展示文本：命令展开型 run（/workflow、自定义命令）
+// 显示命令原文（CommandDisplay），普通 run 显示 UserPrompt。入模文本一律是 UserPrompt
+//（展开后），与 skill trigger 的展示/入模分离同构。
+func (req *runtimeRequest) displayContent() string {
+	if display := strings.TrimSpace(req.payload.CommandDisplay); display != "" {
+		return display
+	}
+	return req.payload.UserPrompt
+}
+
 // persistUserInput 将用户本轮输入写入消息表，作为 run 的第一条可审计消息。
 func persistUserInput(ctx *gin.Context, tx *gorm.DB, req *runtimeRequest, runID, sessionID string) error {
 	content := map[string]any{
-		"content":        req.payload.UserPrompt,
+		"content":        req.displayContent(),
 		"controlContext": json.RawMessage(req.payload.ControlContext),
 		"llmContext":     json.RawMessage(req.payload.LLMContext),
 		"attachments":    req.attachments,

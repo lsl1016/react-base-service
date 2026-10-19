@@ -53,6 +53,8 @@ var reservedToolNames = map[string]struct{}{
 	"graph_memory_search":   {},
 	"graph_memory_write":    {},
 	"submit_step_result":    {},
+	"create_workflow":       {},
+	"dispatch_workflow":     {},
 }
 
 // IsReservedToolName 判断工具名是否为内置 Meta Tool 保留名。

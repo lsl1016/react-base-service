@@ -24,6 +24,7 @@ import { useAgentUITheme } from '../theme';
 import { $createShortcutNode, $isShortcutNode } from './ShortcutNode';
 import { TreeSelectPicker, type TreeSelectPickerHandle } from './TreeSelectPicker';
 import type {
+  AgentCommandQuickInsertItem,
   AgentQuickInsertItem,
   AgentQuickInsertShortcutItem,
   AgentQuickInsertTreeSelectItem,
@@ -176,11 +177,26 @@ type PendingSlashSelection =
   | { type: 'previousAfterCollapse'; group: string };
 
 function getSearchText(item: AgentQuickInsertItem): string {
-  const values = item.kind === 'tree-select' ? [] : Object.values(item.data.proto).map(String);
+  // 命令项没有 data.proto，搜索文本取 label/命令名/argumentHint/分组/描述。
+  const values =
+    item.kind === 'tree-select' || item.kind === 'command'
+      ? item.kind === 'command'
+        ? [`/${item.command.name}`, item.command.argumentHint ?? '']
+        : []
+      : Object.values(item.data.proto).map(String);
   return [item.label, item.group, item.description, ...values].join(' ').toLowerCase();
 }
 
 export function dedupeShortcutItems(items: AgentQuickInsertShortcutItem[]): AgentQuickInsertShortcutItem[] {
+  const ids = new Set<string>();
+  return items.filter((item) => {
+    if (ids.has(item.id)) return false;
+    ids.add(item.id);
+    return true;
+  });
+}
+
+function dedupeQuickInsertItems(items: AgentQuickInsertItem[]): AgentQuickInsertItem[] {
   const ids = new Set<string>();
   return items.filter((item) => {
     if (ids.has(item.id)) return false;
@@ -364,20 +380,49 @@ export function SlashCommandPlugin(props: SlashCommandPluginProps) {
     setActiveIndex((index) => (index + delta + length) % length);
   };
 
-  const insertItems = (items: AgentQuickInsertShortcutItem[]) => {
+  const insertItems = (items: AgentQuickInsertItem[]) => {
     const current = trigger();
-    const uniqueItems = dedupeShortcutItems(items);
+    const uniqueItems = dedupeQuickInsertItems(items);
     if (!current || !uniqueItems.length) return;
     let didInsert = false;
 
+    // 命令项：插入 "/name " 纯文本（不是 ShortcutNode 标签）——回车后原文上送，
+    // 由后端命令分发层按首 token 解析执行。shortcut 替换与 text 触发两条路径都要覆盖。
+    if (uniqueItems[0].kind === 'command') {
+      const commandItems = uniqueItems.filter(
+        (item): item is AgentCommandQuickInsertItem => item.kind === 'command',
+      );
+      const commandText = `${commandItems.map((item) => `/${item.command.name}`).join(' ')} `;
+      props.editor.update(() => {
+        const node = $getNodeByKey(current.nodeKey);
+        if (current.type === 'shortcut') {
+          if (!$isShortcutNode(node)) return;
+          const textNode = $createTextNode(commandText);
+          node.replace(textNode);
+          textNode.selectEnd();
+          didInsert = true;
+          return;
+        }
+        if (!$isTextNode(node)) return;
+        node.spliceText(current.startOffset, current.endOffset - current.startOffset, commandText, true);
+        didInsert = true;
+      });
+      if (didInsert) {
+        close();
+        restoreEditorFocus();
+      }
+      return;
+    }
+
+    const shortcutItems = uniqueItems as AgentQuickInsertShortcutItem[];
     props.editor.update(() => {
       const node = $getNodeByKey(current.nodeKey);
 
       if (current.type === 'shortcut') {
         if (!$isShortcutNode(node)) return;
-        let cursor: LexicalNode = $createShortcutNode(uniqueItems[0]);
+        let cursor: LexicalNode = $createShortcutNode(shortcutItems[0]);
         node.replace(cursor);
-        uniqueItems.slice(1).forEach((item) => {
+        shortcutItems.slice(1).forEach((item) => {
           const separator = $createTextNode(' ');
           cursor.insertAfter(separator);
           const shortcut = $createShortcutNode(item);
@@ -396,12 +441,12 @@ export function SlashCommandPlugin(props: SlashCommandPluginProps) {
       node.spliceText(current.startOffset, current.endOffset - current.startOffset, '', true);
       const selection = $getSelection();
       if (!$isRangeSelection(selection)) return;
-      const nodes = uniqueItems.flatMap((item) => [$createShortcutNode(item), $createTextNode(' ')]);
+      const nodes = shortcutItems.flatMap((item) => [$createShortcutNode(item), $createTextNode(' ')]);
       selection.insertNodes(nodes);
       didInsert = true;
     });
 
-    if (didInsert) props.onInsert?.(uniqueItems);
+    if (didInsert) props.onInsert?.(shortcutItems);
     close();
     restoreEditorFocus();
   };

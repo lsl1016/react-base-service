@@ -71,3 +71,6 @@ react-base-service
 .agents/
 
 /minio-data/
+
+# 本地浏览器自动化缓存（browser-use 会话数据，勿入库）
+/.tmp-browser/
