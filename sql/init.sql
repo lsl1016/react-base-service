@@ -898,6 +898,7 @@ CREATE TABLE IF NOT EXISTS `tblLlmChannelConfig` (
     `default_app_key`     VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '新会话默认app',
     `default_route_values` VARCHAR(512) NOT NULL DEFAULT '[]' COMMENT '新会话默认路由(JSON数组,建联后粘滞)',
     `default_user_name`   VARCHAR(64)  NOT NULL DEFAULT '' COMMENT 'M1单用户身份映射(渠道消息归属的userName)',
+    `allowed_users`       VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '接入白名单(JSON字符串数组,Telegram数字user/chat ID或@username/飞书open_id/chat_id,空=不限)',
     `created_by`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
     `updated_by`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '更新人',
     `created_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -942,3 +943,6 @@ CREATE TABLE IF NOT EXISTS `tblLlmChannelMessage` (
     INDEX `idx_session` (`session_id`),
     INDEX `idx_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多渠道网关消息绑定表(续聊路由依据)';
+
+-- 存量环境增量（Telegram 增强第一批：白名单）：已建过 tblLlmChannelConfig 的库执行
+-- ALTER TABLE `tblLlmChannelConfig` ADD COLUMN `allowed_users` VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '接入白名单(JSON字符串数组,空=不限)' AFTER `default_user_name`;

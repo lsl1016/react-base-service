@@ -39,8 +39,13 @@ type InboundMessage struct {
 	// ParentMessageID 非空表示本条是对某条消息的回复（飞书 parent_id）；
 	// 命中消息绑定表时走续聊路由。
 	ParentMessageID string
-	// Text 是归一化文本。
+	// Text 是归一化文本（Callback 时即按钮携带的作答文本）。
 	Text string
+	// IsCallback 为 true 表示按钮回调（inline keyboard 点击）而非普通文本消息；
+	// 走 handleInbound 分支 0 与文本作答同路，HITL 组装零改动。
+	IsCallback bool
+	// CallbackToolUseID 是按钮回调指向的交互 ID（callback_data 携带），过期点击校验用。
+	CallbackToolUseID string
 }
 
 // PushAddr 是出站寻址：投递到哪个 chat、以哪条消息为回复锚点。
@@ -66,3 +71,49 @@ type Channel interface {
 
 // MessageHandler 是入站消息回调；实现方自行决定同步或异步处理。
 type MessageHandler func(ctx context.Context, msg InboundMessage)
+
+// ---------------------------------------------------------------------------
+// 可选渠道能力接口：渠道按传输能力实现，网关层类型断言后启用对应增强
+// （未实现的渠道行为不变，M1 基线兼容）。
+// ---------------------------------------------------------------------------
+
+// InteractivePayload 是带按钮组的出站交互（ask_question 选项 / 危险确认）。
+type InteractivePayload struct {
+	// Text 是交互正文（题面/确认说明），与纯文本推送同构。
+	Text string
+	// Rows 是按钮行（每行一组横排按钮）。
+	Rows [][]InteractiveButton
+}
+
+// InteractiveButton 是一枚交互按钮；CallbackData 由网关侧编码（hitl callback_data）。
+type InteractiveButton struct {
+	Text         string
+	CallbackData string
+}
+
+// InteractivePusher 可选能力：支持按钮交互推送（Telegram inline keyboard）。
+// 按钮点击由渠道归一化为 IsCallback 的 InboundMessage 回流（callback_data 带
+// toolUseId + 作答文本），进 handleInbound 分支 0，HITL 组装零改动；
+// 飞书交互卡片（M3）将来同模式复用。
+type InteractivePusher interface {
+	PushInteractive(ctx context.Context, addr PushAddr, iv InteractivePayload) (messageID string, err error)
+}
+
+// MessageEditor 可选能力：编辑已推送消息（Telegram editMessageText）。
+// 网关在 run 启动时先投「⏳ 正在处理…」占位消息，终态原位替换为结果，减少消息噪音。
+type MessageEditor interface {
+	EditText(ctx context.Context, chatID, messageID, text string) error
+}
+
+// LongTextSplitter 可选能力：PushText 内部对超长文本自动分片发送
+// （Telegram 单条 4096 上限）。实现该接口的渠道网关层跳过 push_max_runes 截断
+// （截断会破坏分片语义）。
+type LongTextSplitter interface {
+	SplitsLongText() bool
+}
+
+// channelSplitsLongText 判断渠道是否自行分片长文本。
+func channelSplitsLongText(ch Channel) bool {
+	s, ok := ch.(LongTextSplitter)
+	return ok && s.SplitsLongText()
+}

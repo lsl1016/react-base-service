@@ -5,6 +5,8 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"regexp"
 	"strings"
 
 	"react-base-service/components"
@@ -26,6 +28,9 @@ type CreateChannelReq struct {
 	DefaultAppKey      string   `json:"defaultAppKey"`
 	DefaultRouteValues []string `json:"defaultRouteValues"`
 	DefaultUserName    string   `json:"defaultUserName"`
+	// AllowedUsers 接入白名单（Telegram 数字 user/chat ID 或 @username；飞书 open_id/chat_id）；
+	// 空清单 = 不限（bot 公开可搜索，建议配置）。
+	AllowedUsers []string `json:"allowedUsers"`
 }
 
 type UpdateChannelReq struct {
@@ -38,6 +43,8 @@ type UpdateChannelReq struct {
 	DefaultAppKey      *string  `json:"defaultAppKey"`
 	DefaultRouteValues []string `json:"defaultRouteValues"`
 	DefaultUserName    *string  `json:"defaultUserName"`
+	// AllowedUsers nil=不修改，空数组=清空白名单（恢复不限）。
+	AllowedUsers []string `json:"allowedUsers"`
 }
 
 type DeleteChannelReq struct {
@@ -54,6 +61,7 @@ type ChannelResp struct {
 	DefaultAppKey      string   `json:"defaultAppKey"`
 	DefaultRouteValues []string `json:"defaultRouteValues"`
 	DefaultUserName    string   `json:"defaultUserName"`
+	AllowedUsers       []string `json:"allowedUsers"`
 	CreatedAt          string   `json:"createdAt"`
 	UpdatedAt          string   `json:"updatedAt"`
 }
@@ -94,6 +102,11 @@ func CreateChannel(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf("defaultUserName 不能为空（M1 单用户身份映射）"))
 		return
 	}
+	allowedJSON, err := marshalAllowedUsers(req.AllowedUsers)
+	if err != nil {
+		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf("%v", err))
+		return
+	}
 
 	routeJSON := marshalRouteValues(req.DefaultRouteValues)
 	row := &model.ChannelConfig{
@@ -106,6 +119,7 @@ func CreateChannel(ctx *gin.Context) {
 		DefaultAppKey:      strings.TrimSpace(req.DefaultAppKey),
 		DefaultRouteValues: routeJSON,
 		DefaultUserName:    strings.TrimSpace(req.DefaultUserName),
+		AllowedUsers:       allowedJSON,
 		CreatedBy:          helpers.GetUserName(ctx),
 		UpdatedBy:          helpers.GetUserName(ctx),
 	}
@@ -171,6 +185,14 @@ func UpdateChannel(ctx *gin.Context) {
 			return
 		}
 		updates["default_user_name"] = strings.TrimSpace(*req.DefaultUserName)
+	}
+	if req.AllowedUsers != nil {
+		allowedJSON, err := marshalAllowedUsers(req.AllowedUsers)
+		if err != nil {
+			components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf("%v", err))
+			return
+		}
+		updates["allowed_users"] = allowedJSON
 	}
 	if err := model.UpdateChannelConfigByChannelID(ctx, req.ChannelID, updates); err != nil {
 		components.RenderJsonFail(ctx, err)
@@ -294,6 +316,39 @@ func marshalRouteValues(values []string) string {
 	return string(out)
 }
 
+// allowedUserPattern 白名单条目字符集：字母/数字/@/_/-/.（Telegram 数字 ID 与 @username、
+// 飞书 open_id/chat_id 的公共超集），单条 ≤64 字符。
+var allowedUserPattern = regexp.MustCompile(`^[A-Za-z0-9@_\-\.]{1,64}$`)
+
+// marshalAllowedUsers 归一化并序列化白名单（JSON 字符串数组；空/空白条目剔除）。
+func marshalAllowedUsers(entries []string) (string, error) {
+	normalized := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if !allowedUserPattern.MatchString(entry) {
+			return "", fmt.Errorf("白名单条目非法: %q（允许字母/数字/@/_/-/.，≤64 字符）", entry)
+		}
+		normalized = append(normalized, entry)
+	}
+	out, err := json.Marshal(normalized)
+	if err != nil {
+		return "[]", nil
+	}
+	return string(out), nil
+}
+
+// unmarshalAllowedUsers 解析白名单回显；空/非法配置返回空数组。
+func unmarshalAllowedUsers(raw string) []string {
+	entries := []string{}
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &entries)
+	}
+	return entries
+}
+
 func toChannelResp(row *model.ChannelConfig) ChannelResp {
 	routeValues := []string{}
 	_ = json.Unmarshal([]byte(row.DefaultRouteValues), &routeValues)
@@ -307,6 +362,7 @@ func toChannelResp(row *model.ChannelConfig) ChannelResp {
 		DefaultAppKey:      row.DefaultAppKey,
 		DefaultRouteValues: routeValues,
 		DefaultUserName:    row.DefaultUserName,
+		AllowedUsers:       unmarshalAllowedUsers(row.AllowedUsers),
 		CreatedAt:          row.CreatedAt.Format("2006-01-02 15:04:05"),
 		UpdatedAt:          row.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}

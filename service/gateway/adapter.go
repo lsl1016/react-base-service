@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,8 @@ type imAdapter struct {
 	pending *pendingInteraction
 	// runID 从事件流捕获，组装上行消息与绑定记录用。
 	runID string
+	// placeholderMessageID 是本轮的占位消息 ID（渠道支持编辑时）；终态原位编辑替换。
+	placeholderMessageID string
 
 	replies chan string
 	done    chan struct{}
@@ -127,6 +130,40 @@ func (a *imAdapter) pushedTerminal() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.terminalPushed
+}
+
+// setPlaceholder 记录占位消息 ID（渠道支持编辑时，终态原位替换为结果）。
+func (a *imAdapter) setPlaceholder(messageID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.placeholderMessageID = messageID
+}
+
+// editPlaceholder 用新文本原位编辑占位消息；无占位或编辑失败返回 false。
+func (a *imAdapter) editPlaceholder(text string) bool {
+	a.mu.Lock()
+	placeholder := a.placeholderMessageID
+	a.mu.Unlock()
+	if placeholder == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return a.gw.editText(ctx, a.channelID, a.chatID, placeholder, text) == nil
+}
+
+// notify 过程性通知：优先原位编辑占位消息（不产生新消息噪音），失败回退推送。
+func (a *imAdapter) notify(text string) {
+	if a.editPlaceholder(text) {
+		return
+	}
+	_, _ = a.pushText(text)
+}
+
+// notifyIfPlaceholder 仅在有占位消息时原位编辑收尾（取消等原本静默的收敛，
+// 无占位的渠道保持不推送，避免改变 M1 行为）。
+func (a *imAdapter) notifyIfPlaceholder(text string) {
+	a.editPlaceholder(text)
 }
 
 // deliverReply 把 IM 侧回复文本投给 reader；无等待者时进入有界缓冲（丢弃最旧）。
@@ -227,7 +264,68 @@ func (a *imAdapter) onAskQuestion(payload params.ReactToolUseStartPayload) {
 	a.mu.Lock()
 	a.pending = &pendingInteraction{ToolUseID: payload.ToolUseID, Kind: "ask", Questions: parsed.Questions}
 	a.mu.Unlock()
+	// 渠道支持按钮交互（Telegram inline keyboard）时题面带按钮推送；
+	// 点击回流为 IsCallback 的 InboundMessage，与文本作答同路组装（见 handleInbound 分支 0）。
+	if rows := askQuestionButtonRows(payload.ToolUseID, parsed.Questions); len(rows) > 0 && a.tryPushInteractive(sb.String(), rows) {
+		return
+	}
 	a.pushText(sb.String())
+}
+
+// askQuestionButtonRows 为首个问题构造按钮行（M1 线性作答只支持第一问的选项）；
+// 每个选项一枚按钮（值=序号文本），末尾附「跳过」。无选项/选项过多/callback_data
+// 超长时返回 nil，退纯文本作答。
+func askQuestionButtonRows(toolUseID string, questions []askQuestionItemView) [][]InteractiveButton {
+	if len(questions) == 0 {
+		return nil
+	}
+	q := questions[0]
+	if len(q.Options) == 0 || len(q.Options) > 8 {
+		return nil
+	}
+	rows := make([][]InteractiveButton, 0, len(q.Options)+1)
+	for i, opt := range q.Options {
+		data := encodeHitlCallbackData(toolUseID, strconv.Itoa(i+1))
+		if len(data) > telegramCallbackDataLimit {
+			return nil
+		}
+		rows = append(rows, []InteractiveButton{{
+			Text:         fmt.Sprintf("%d. %s", i+1, truncateForButtonLabel(opt.Label)),
+			CallbackData: data,
+		}})
+	}
+	if data := encodeHitlCallbackData(toolUseID, "跳过"); len(data) <= telegramCallbackDataLimit {
+		rows = append(rows, []InteractiveButton{{Text: "跳过", CallbackData: data}})
+	}
+	return rows
+}
+
+// truncateForButtonLabel 按钮文案截断（Telegram 按钮无硬限制，保显示整洁）。
+func truncateForButtonLabel(label string) string {
+	if runes := []rune(label); len(runes) > 32 {
+		return string(runes[:32]) + "…"
+	}
+	return label
+}
+
+// tryPushInteractive 渠道实现 InteractivePusher 时推送带按钮的消息；成功返回 true。
+func (a *imAdapter) tryPushInteractive(text string, rows [][]InteractiveButton) bool {
+	ch := a.gw.manager.Get(a.channelID)
+	if ch == nil {
+		return false
+	}
+	pusher, ok := ch.(InteractivePusher)
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	id, err := pusher.PushInteractive(ctx, PushAddr{
+		ChannelID:      a.channelID,
+		ChatID:         a.chatID,
+		ReplyMessageID: a.replyAnchorMessageID,
+	}, InteractivePayload{Text: text, Rows: rows})
+	return err == nil && id != ""
 }
 
 // onToolConfirm 把危险操作确认推成 IM 消息并登记等待。
@@ -246,6 +344,18 @@ func (a *imAdapter) onToolConfirm(payload params.ReactToolConfirmRequestPayload)
 	a.mu.Lock()
 	a.pending = &pendingInteraction{ToolUseID: payload.ToolUseID, Kind: "confirm"}
 	a.mu.Unlock()
+	// 危险确认带「允许/拒绝」按钮（值走 isApprovalText 白名单语义，与文本作答同路）。
+	allowData := encodeHitlCallbackData(payload.ToolUseID, "允许")
+	denyData := encodeHitlCallbackData(payload.ToolUseID, "拒绝")
+	if len(allowData) <= telegramCallbackDataLimit && len(denyData) <= telegramCallbackDataLimit {
+		rows := [][]InteractiveButton{{ 
+			{Text: "✅ 允许", CallbackData: allowData},
+			{Text: "⛔️ 拒绝", CallbackData: denyData},
+		}}
+		if a.tryPushInteractive(sb.String(), rows) {
+			return
+		}
+	}
 	a.pushText(sb.String())
 }
 
@@ -274,9 +384,20 @@ func (a *imAdapter) pushTerminal(isError bool) {
 		text = answer
 	}
 
-	messageID, err := a.pushText(text)
-	if err != nil || messageID == "" {
-		return
+	// 终态优先原位编辑占位消息（一条消息承载完整结果，消息绑定记占位 ID）；
+	// 无占位/编辑失败（如超长）回退推送（分片渠道自动拆条）。
+	messageID := ""
+	if a.editPlaceholder(text) {
+		a.mu.Lock()
+		messageID = a.placeholderMessageID
+		a.mu.Unlock()
+	}
+	if messageID == "" {
+		var err error
+		messageID, err = a.pushText(text)
+		if err != nil || messageID == "" {
+			return
+		}
 	}
 	_ = a.recordBinding(&model.ChannelMessage{
 		ChannelID: a.channelID,
@@ -288,10 +409,14 @@ func (a *imAdapter) pushTerminal(isError bool) {
 }
 
 // pushText 推送到本 chat（带回复锚点）；失败只记日志不重试（旁路通知语义）。
+// 渠道自行分片长文本（LongTextSplitter，如 Telegram 4096）时不再截断；
+// 其余渠道维持 push_max_runes 截断兜底（飞书文本上限宽，截断是防御性收敛）。
 func (a *imAdapter) pushText(text string) (string, error) {
-	maxRunes := conf.CustomConf.LLM.Gateway.GatewayPushMaxRunes()
-	if runes := []rune(text); len(runes) > maxRunes {
-		text = string(runes[:maxRunes]) + "\n\n…(内容过长已截断，完整结果见会话)"
+	if !channelSplitsLongText(a.gw.manager.Get(a.channelID)) {
+		maxRunes := conf.CustomConf.LLM.Gateway.GatewayPushMaxRunes()
+		if runes := []rune(text); len(runes) > maxRunes {
+			text = string(runes[:maxRunes]) + "\n\n…(内容过长已截断，完整结果见会话)"
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

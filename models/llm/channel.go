@@ -40,6 +40,9 @@ type ChannelConfig struct {
 	DefaultAppKey      string `json:"defaultAppKey" gorm:"column:default_app_key;not null;default:''"`
 	DefaultRouteValues string `json:"defaultRouteValues" gorm:"column:default_route_values;not null;default:'[]'"`
 	DefaultUserName    string `json:"defaultUserName" gorm:"column:default_user_name;not null;default:''"`
+	// AllowedUsers 是接入白名单（JSON 字符串数组）：Telegram 存数字 user/chat ID 或
+	// @username，飞书存 open_id/chat_id；空 = 不限制（bot 公开可搜索，建议配置）。
+	AllowedUsers string `json:"allowedUsers" gorm:"column:allowed_users;not null;default:''"`
 	CreatedBy          string `json:"createdBy" gorm:"column:created_by;not null;default:''"`
 	UpdatedBy          string `json:"updatedBy" gorm:"column:updated_by;not null;default:''"`
 	CreatedAt          time.Time `json:"createdAt" gorm:"column:created_at"`
@@ -147,6 +150,41 @@ func BindChannelSession(ctx *gin.Context, row *ChannelSession) error {
 		return components.ErrorDbInsert.Wrap(err)
 	}
 	return nil
+}
+
+// RebindChannelSession 改绑：/new 强制新会话时把既有映射行更新到新会话
+// （快照字段一并按当前渠道配置刷新，保留行 ID 与创建时间）。
+func RebindChannelSession(ctx *gin.Context, row *ChannelSession) error {
+	tx := helpers.MysqlClientLLM.Model(&ChannelSession{}).WithContext(ctx).
+		Where("channel_id = ? AND chat_id = ?", row.ChannelID, row.ChatID).
+		Updates(map[string]interface{}{
+			"session_id":     row.SessionID,
+			"user_name":      row.UserName,
+			"app_key":        row.AppKey,
+			"route_values":   row.RouteValues,
+			"session_type":   row.SessionType,
+			"last_message":   row.LastMessage,
+			"last_active_at": row.LastActiveAt,
+		})
+	if tx.Error != nil {
+		return components.ErrorDbUpdate.Wrap(tx.Error)
+	}
+	return nil
+}
+
+// ListChannelSessionsByChat 列出该聊天的会话映射（最近活跃优先；/sessions 命令用）。
+func ListChannelSessionsByChat(ctx *gin.Context, channelID, chatID string, limit int) ([]ChannelSession, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 5
+	}
+	var rows []ChannelSession
+	err := helpers.MysqlClientLLM.Model(&ChannelSession{}).WithContext(ctx).
+		Where("channel_id = ? AND chat_id = ?", channelID, chatID).
+		Order("last_active_at DESC").Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return rows, nil
 }
 
 func TouchChannelSessionActive(ctx *gin.Context, id uint, lastMessage string) error {

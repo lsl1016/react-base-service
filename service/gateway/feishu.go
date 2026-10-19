@@ -54,6 +54,12 @@ func (f *feishuChannel) Start(ctx context.Context, handler MessageHandler) error
 		if inbound == nil {
 			return nil
 		}
+		// 白名单（allowed_users）：候选 open_id/chat_id 任一命中放行；空清单不限。
+		// 拒绝时静默记日志（飞书侧主动发消息给陌生人体验差，且无必要）。
+		if allowed := parseAllowedUsers(f.cfg.AllowedUsers); !channelAllowsSender(allowed, inbound.UserID, inbound.ChatID) {
+			zlog.Warnf(nil, "[gateway.feishu] 渠道 %s 白名单外消息已拒绝: chat=%s user=%s", f.cfg.ChannelID, inbound.ChatID, inbound.UserID)
+			return nil
+		}
 		// SDK 要求 OnMessage 快速返回；run 编排在网关侧 goroutine 进行。
 		// msgCtx 随回调返回可能被取消，异步侧一律用独立 context。
 		go handler(context.Background(), *inbound)

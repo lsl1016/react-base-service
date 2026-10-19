@@ -638,9 +638,9 @@ const resources = {
       ['channelId', '渠道标识'], ['kind', '类型'], ['name', '名称'], ['appID', 'App ID / @username'], ['appSecretMasked', 'Secret / Token'], ['enabled', '状态'], ['defaultAppKey', '默认 app'], ['defaultUserName', '归属用户'], ['actions', '操作'],
     ],
     empty: () => ({
-      kind: 'feishu', name: '', appID: '', appSecretDraft: '', enabled: 0, defaultAppKey: '', routeText: '', defaultUserName: '',
+      kind: 'feishu', name: '', appID: '', appSecretDraft: '', enabled: 0, defaultAppKey: '', routeText: '', defaultUserName: '', allowedUsersText: '',
     }),
-    toDraft: (item) => ({ ...item, appSecretDraft: '', routeText: joinRouteValues(item.defaultRouteValues) }),
+    toDraft: (item) => ({ ...item, appSecretDraft: '', routeText: joinRouteValues(item.defaultRouteValues), allowedUsersText: (item.allowedUsers || []).join('\n') }),
     toPayload: (draft, config) => ({
       channelId: draft.channelId,
       kind: draft.kind || 'feishu',
@@ -651,6 +651,7 @@ const resources = {
       defaultAppKey: draft.defaultAppKey || '',
       defaultRouteValues: splitRouteText(draft.routeText),
       defaultUserName: draft.defaultUserName || '',
+      allowedUsers: String(draft.allowedUsersText || '').split(/[\s,，]+/).map((s) => s.trim()).filter(Boolean),
     }),
     fields: (mode) => [
       ...(mode === 'edit' ? [['channelId', '渠道标识', 'readonly']] : []),
@@ -662,6 +663,7 @@ const resources = {
       ['defaultAppKey', '默认 app（新会话路由，建联后粘滞）'],
       ['defaultUserName', '归属用户名（M1 单用户映射）'],
       ['routeText', '默认路由（逗号分隔）'],
+      ['allowedUsersText', '白名单（用户/群 ID 或 @username，换行或逗号分隔；留空 = 不限制）', 'textarea'],
     ],
   },
   // 「API Key 管理」页已撤除（P1 Key 双轨消除）：app 级凭证并入模型配置面板的
