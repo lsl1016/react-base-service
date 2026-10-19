@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	model "react-base-service/models/llm"
+
+	"react-base-service/golib/zlog"
 )
 
 // Manager 管理渠道实例生命周期：从 tblLlmChannelConfig 加载启用的渠道，
@@ -24,6 +26,8 @@ func newManager(handler MessageHandler) *Manager {
 }
 
 // Start 加载启用的渠道配置并全部拉起。没有任何可用渠道时返回 nil（空转，不报错）。
+// 单个渠道启动失败只记日志、不阻断其余渠道（如 Telegram 无代理时飞书照常可用）；
+// 失败渠道可经配置保存触发的 Reload 重试。
 func (m *Manager) Start(ctx context.Context) error {
 	ginCtx := newGatewayGinContext()
 	configs, err := model.ListChannelConfigs(ginCtx, true)
@@ -34,7 +38,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	defer m.mu.Unlock()
 	for _, cfg := range configs {
 		if _, err := m.startLocked(ctx, &cfg); err != nil {
-			return err
+			zlog.Errorf(nil, "[gateway] 渠道启动失败(跳过,可重载重试): channel=%s kind=%s err=%v", cfg.ChannelID, cfg.Kind, err)
 		}
 	}
 	return nil
