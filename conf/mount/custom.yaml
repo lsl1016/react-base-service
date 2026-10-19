@@ -189,6 +189,17 @@ llm:
       max_followup_rounds: 1
       transcript_chars: 24000
 
+  # 多渠道接入网关：IM 收发 + 跨端投递 + 同一会话续聊（见 docs/多渠道接入网关与跨端续聊实现方案.md）。
+  # enabled=false 时不拉起渠道连接（渠道配置管理接口仍可用）；渠道凭证在 tblLlmChannelConfig 表
+  # （管理面板「渠道」tab 维护），此处只有进程级开关与推送策略。
+  # 前置：执行 sql/init.sql 中三张 gateway 表建表；飞书应用开启长连接事件订阅 + im.message.receive_v1。
+  gateway:
+    enabled: true
+    # 终态结果推送到 IM 的单条消息截断上限（rune 数；0=默认 4000）
+    push_max_runes: 4000
+    # IM 端 ask_question/危险确认等待回复的超时秒数（0=默认 600）
+    hitl_timeout_sec: 600
+
 # MCP 客户端：kind=repo 走 stdio 适配器白名单（可执行文件部署于 bin/，env 注入子进程）；
 # kind=http 走手写 Streamable HTTP；kind=http_sdk 走官方 MCP Go SDK（modelcontextprotocol/go-sdk）实现。
 # HTTP 两种均无鉴权；endpoint 仅允许公网 http/https（拒绝环回/私网/保留地址）；

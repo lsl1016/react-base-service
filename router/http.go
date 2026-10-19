@@ -12,6 +12,7 @@ import (
 	"react-base-service/controllers/http/attachment"
 	"react-base-service/controllers/http/app"
 	"react-base-service/controllers/http/command"
+	gatewayCtl "react-base-service/controllers/http/gateway"
 	"react-base-service/controllers/http/llmmodel"
 	"react-base-service/controllers/http/mcpadmin"
 	"react-base-service/controllers/http/react"
@@ -245,6 +246,17 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		// 检索代码和工作区开关（全局设置，无 app 维度——内置工具不按 app 隔离）
 		settingGroup.POST("/workspace/get", setting.GetWorkspaceSetting)
 		settingGroup.POST("/workspace/update", setting.UpdateWorkspaceSetting)
+	}
+
+	// 多渠道接入网关管理接口（llm.gateway.enabled 控制连接拉起；配置管理始终可用，
+	// 见 docs/多渠道接入网关与跨端续聊实现方案.md §5.4）
+	gatewayGroup := router.Group("/gateway")
+	{
+		gatewayGroup.POST("/channel/create", gatewayCtl.CreateChannel)
+		gatewayGroup.POST("/channel/update", gatewayCtl.UpdateChannel)
+		gatewayGroup.POST("/channel/delete", gatewayCtl.DeleteChannel)
+		gatewayGroup.POST("/channel/list", gatewayCtl.ListChannels)
+		gatewayGroup.POST("/session/list", gatewayCtl.ListSessions)
 	}
 
 	// Tool 管理接口

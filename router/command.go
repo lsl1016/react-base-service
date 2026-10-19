@@ -3,6 +3,7 @@ package router
 import (
 	"react-base-service/conf"
 	"react-base-service/service/asynctask"
+	gatewayService "react-base-service/service/gateway"
 	"react-base-service/service/mcpclient"
 	"react-base-service/service/mcpgateway"
 	"react-base-service/service/react"
@@ -37,6 +38,9 @@ func Tasks(engine *gin.Engine) {
 	setting.Bootstrap()
 	workflow.Start(engine)
 	react.RegisterWorkflowToolExecutor(workflow.ExecuteReactWorkflowTool)
+	// 多渠道接入网关：llm.gateway.enabled 时按 tblLlmChannelConfig 拉起渠道长连接；
+	// 关闭时空转（渠道配置管理接口仍可用）。
+	gatewayService.Start(engine)
 }
 
 // StopTasks 停止随 HTTP 服务启动的后台任务。
@@ -46,4 +50,5 @@ func StopTasks() {
 	mcpclient.Shutdown()
 	mcpgateway.Shutdown()
 	setting.Shutdown()
+	gatewayService.Stop()
 }

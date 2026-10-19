@@ -620,6 +620,50 @@ const resources = {
       ['name', '命令名（/name）'], ['appKey', '归属 app', 'readonly'], ['routeText', '适用路由（逗号分隔）'], ['status', '状态', 'select'], ['argumentHint', '参数提示'], ['description', '描述'], ['content', '提示词模板（$ARGUMENTS / $1 $2）', 'textarea'],
     ],
   },
+  // 多渠道接入网关（M1 飞书）：渠道配置 CRUD（凭证 + 默认路由快照）；
+  // 变更后后端自动热重载渠道连接，见 docs/多渠道接入网关与跨端续聊实现方案.md。
+  channel: {
+    title: '接入渠道管理',
+    tabText: '渠道',
+    itemName: '渠道',
+    addText: '新增渠道',
+    idKey: 'channelId',
+    listPath: '/gateway/channel/list',
+    createPath: '/gateway/channel/create',
+    updatePath: '/gateway/channel/update',
+    deletePath: '/gateway/channel/delete',
+    deleteBody: (item) => ({ channelId: item.channelId }),
+    modalNote: '飞书前置：开发者后台开启「事件与回调 → 使用长连接接收」，订阅 im.message.receive_v1，具备 im:message 发消息权限；服务端需 llm.gateway.enabled。保存后自动热重载渠道连接。归属用户名是该渠道消息归属的 userName（M1 单用户映射，M2 换身份绑定表）。',
+    columns: [
+      ['channelId', '渠道标识'], ['kind', '类型'], ['name', '名称'], ['appID', 'App ID'], ['appSecretMasked', 'App Secret'], ['enabled', '状态'], ['defaultAppKey', '默认 app'], ['defaultUserName', '归属用户'], ['actions', '操作'],
+    ],
+    empty: () => ({
+      kind: 'feishu', name: '', appID: '', appSecretDraft: '', enabled: 0, defaultAppKey: '', routeText: '', defaultUserName: '',
+    }),
+    toDraft: (item) => ({ ...item, appSecretDraft: '', routeText: joinRouteValues(item.defaultRouteValues) }),
+    toPayload: (draft, config) => ({
+      channelId: draft.channelId,
+      kind: draft.kind || 'feishu',
+      name: draft.name,
+      appID: draft.appID,
+      appSecret: draft.appSecretDraft || '',
+      enabled: Number(draft.enabled),
+      defaultAppKey: draft.defaultAppKey || '',
+      defaultRouteValues: splitRouteText(draft.routeText),
+      defaultUserName: draft.defaultUserName || '',
+    }),
+    fields: (mode) => [
+      ...(mode === 'edit' ? [['channelId', '渠道标识', 'readonly']] : []),
+      ['kind', '类型', 'enumSelect', [['feishu', '飞书（M1）']]],
+      ['name', '名称'],
+      ['enabled', '状态', 'select'],
+      ['appID', 'App ID'],
+      ['appSecretDraft', 'App Secret', 'password'],
+      ['defaultAppKey', '默认 app（新会话路由，建联后粘滞）'],
+      ['defaultUserName', '归属用户名（M1 单用户映射）'],
+      ['routeText', '默认路由（逗号分隔）'],
+    ],
+  },
   // 「API Key 管理」页已撤除（P1 Key 双轨消除）：app 级凭证并入模型配置面板的
   // 「连接与密钥」（tblLlmConnection，协议+地址+Key，无 ModelHash run 按 app+路由
   // 解析、优先于旧 tblLlmApiKey）；后端 /apikey/* 路由保留作为契约兼容层。

@@ -77,6 +77,12 @@ llm:
       max_parallel: 1        # 同一轮多个 delegate_agent 调用的并行上限（1=串行，需要稳定 HITL 保持 1）
       default_max_steps: 8   # agent 未配置 max_steps 时子 run 的步数上限
       max_depth: 2           # 委派嵌套深度上限（子 Agent 再委派），防递归失控
+    # 多渠道接入网关（飞书收发 + 续聊）：表见 sql/init.sql 三张 gateway 表；
+    # 渠道凭证经管理面板「渠道」tab（tblLlmChannelConfig）维护，此处只有进程开关与推送策略。
+    gateway:
+      enabled: false
+      push_max_runes: 4000   # 终态推送 IM 的单条截断上限（rune 数）
+      hitl_timeout_sec: 600  # IM 端 ask_question/危险确认等待超时秒数
     # 内置 web_fetch 工具：URL 抓取 → 正文提取 → 按预算回填；未配置默认关闭。
     web_fetch:
       enabled: true

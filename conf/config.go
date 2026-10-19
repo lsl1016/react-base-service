@@ -709,6 +709,34 @@ type LLMConfig struct {
 	React              ReactRuntimeConfig           `yaml:"react"`
 	ModelWhitelist     []string                     `yaml:"model_whitelist"`
 	Workflow           WorkflowConfig               `yaml:"workflow"`
+	Gateway            GatewayConfig                `yaml:"gateway"`
+}
+
+// GatewayConfig 控制多渠道接入网关（IM 收发 + 跨端投递 + 同一会话续聊，
+// 见 docs/多渠道接入网关与跨端续聊实现方案.md）。enabled=false 时不启动渠道管理器；
+// 渠道凭证在 tblLlmChannelConfig 表，此处只有进程级开关与推送策略。
+type GatewayConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// PushMaxRunes 是终态结果推送到 IM 的单条消息截断上限（超长截断并附会话提示）；0=用默认值。
+	PushMaxRunes int `yaml:"push_max_runes"`
+	// HitlTimeoutSec 是 IM 端 ask_question/危险确认等待回复的超时；0=用默认值（复用 WS 口径的量级）。
+	HitlTimeoutSec int `yaml:"hitl_timeout_sec"`
+}
+
+// GatewayPushMaxRunes 归一化推送截断上限。
+func (c GatewayConfig) GatewayPushMaxRunes() int {
+	if c.PushMaxRunes <= 0 {
+		return 4000
+	}
+	return c.PushMaxRunes
+}
+
+// GatewayHitlTimeout 归一化 HITL 等待超时。
+func (c GatewayConfig) GatewayHitlTimeout() int {
+	if c.HitlTimeoutSec <= 0 {
+		return 600
+	}
+	return c.HitlTimeoutSec
 }
 
 // ModelCatalog 模型目录（每类模型下可包含多个版本）

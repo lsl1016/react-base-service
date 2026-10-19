@@ -43,6 +43,10 @@ var ErrorDbSelect = base.Error{
 	ErrNo:  3100002,
 	ErrMsg: "db get error: %s",
 }
+var ErrorDbDelete = base.Error{
+	ErrNo:  3100003,
+	ErrMsg: "db delete error: %s",
+}
 
 var ErrorRedisGet = base.Error{
 	ErrNo:  3200000,

@@ -883,3 +883,62 @@ CREATE TABLE IF NOT EXISTS `tblLlmCommand` (
     INDEX `idx_app_route` (`app_key`, `route_values`(255)),
     INDEX `idx_app_status` (`app_key`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM自定义斜杠命令表';
+
+
+-- 多渠道接入网关三表（见 docs/多渠道接入网关与跨端续聊实现方案.md §5.3；M1 飞书渠道）
+-- 渠道配置表：一个渠道 = 一个 IM 机器人应用；默认路由快照是新会话五元组的来源，建联后粘滞
+CREATE TABLE IF NOT EXISTS `tblLlmChannelConfig` (
+    `id`                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `channel_id`          VARCHAR(64)  NOT NULL COMMENT '渠道唯一标识(gwch_+UUID)',
+    `kind`                VARCHAR(16)  NOT NULL COMMENT '渠道类型: feishu',
+    `name`                VARCHAR(128) NOT NULL DEFAULT '' COMMENT '展示名',
+    `app_id`              VARCHAR(64)  NOT NULL DEFAULT '' COMMENT 'IM开放平台应用ID',
+    `app_secret`          VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'IM开放平台应用密钥(管理面回显打码)',
+    `enabled`             TINYINT      NOT NULL DEFAULT 0 COMMENT '状态: 0=停用 1=启用(启用才拉起长连接)',
+    `default_app_key`     VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '新会话默认app',
+    `default_route_values` VARCHAR(512) NOT NULL DEFAULT '[]' COMMENT '新会话默认路由(JSON数组,建联后粘滞)',
+    `default_user_name`   VARCHAR(64)  NOT NULL DEFAULT '' COMMENT 'M1单用户身份映射(渠道消息归属的userName)',
+    `created_by`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
+    `updated_by`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '更新人',
+    `created_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted_at`          BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
+    UNIQUE KEY `uk_channel_id` (`channel_id`),
+    INDEX `idx_kind_enabled` (`kind`, `enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多渠道网关渠道配置表';
+
+-- 平台会话映射表：一个 IM 聊天绑定一个 ReAct 会话；五元组快照在首次绑定时写入并粘滞(方案D3)，
+-- 续聊按快照构造 payload，保证归属校验恒通过、渠道配置后续变更不影响存量会话
+CREATE TABLE IF NOT EXISTS `tblLlmChannelSession` (
+    `id`              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `channel_id`      VARCHAR(64)  NOT NULL COMMENT '渠道标识(tblLlmChannelConfig.channel_id)',
+    `chat_id`         VARCHAR(64)  NOT NULL COMMENT '平台会话标识(飞书chat_id)',
+    `session_id`      VARCHAR(64)  NOT NULL COMMENT 'ReAct会话ID',
+    `user_name`       VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '五元组快照:用户名',
+    `app_key`         VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '五元组快照:app',
+    `route_values`    VARCHAR(512) NOT NULL DEFAULT '[]' COMMENT '五元组快照:路由(JSON数组)',
+    `session_type`    VARCHAR(16)  NOT NULL DEFAULT 'chat' COMMENT '五元组快照:会话类型',
+    `last_message`    VARCHAR(512) NOT NULL DEFAULT '' COMMENT '最近一条入站消息摘要(展示)',
+    `last_active_at`  DATETIME     NULL COMMENT '最近活跃时刻',
+    `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted_at`      BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
+    UNIQUE KEY `uk_channel_chat` (`channel_id`, `chat_id`),
+    INDEX `idx_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多渠道网关平台会话映射表';
+
+-- 消息绑定表(续聊的钥匙)：投递到 IM 的每条结果消息记录 平台messageID ↔ ReAct会话 的对应关系；
+-- 用户在 IM 回复该消息时按 parent messageID 命中绑定续进原会话；按 created_at 做 TTL 清理
+CREATE TABLE IF NOT EXISTS `tblLlmChannelMessage` (
+    `id`         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `channel_id` VARCHAR(64) NOT NULL COMMENT '渠道标识',
+    `chat_id`    VARCHAR(64) NOT NULL COMMENT '平台会话标识',
+    `message_id` VARCHAR(64) NOT NULL COMMENT '平台消息ID(投递产物)',
+    `session_id` VARCHAR(64) NOT NULL COMMENT 'ReAct会话ID',
+    `run_id`     VARCHAR(64) NOT NULL DEFAULT '' COMMENT '产生该消息的run',
+    `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `deleted_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
+    UNIQUE KEY `uk_channel_message` (`channel_id`, `message_id`),
+    INDEX `idx_session` (`session_id`),
+    INDEX `idx_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多渠道网关消息绑定表(续聊路由依据)';
