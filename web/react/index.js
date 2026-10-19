@@ -633,9 +633,9 @@ const resources = {
     updatePath: '/gateway/channel/update',
     deletePath: '/gateway/channel/delete',
     deleteBody: (item) => ({ channelId: item.channelId }),
-    modalNote: '飞书前置：开发者后台开启「事件与回调 → 使用长连接接收」，订阅 im.message.receive_v1，具备 im:message 发消息权限；服务端需 llm.gateway.enabled。保存后自动热重载渠道连接。归属用户名是该渠道消息归属的 userName（M1 单用户映射，M2 换身份绑定表）。',
+    modalNote: '飞书前置：开发者后台开启「事件与回调 → 使用长连接接收」，订阅 im.message.receive_v1，具备 im:message 发消息权限。Telegram：@BotFather /newbot 发放的 Bot Token 填入 App Secret（App ID 可选存 @username）；国内网络需进程级 HTTPS_PROXY 代理。服务端需 llm.gateway.enabled；保存后自动热重载渠道连接。归属用户名是该渠道消息归属的 userName（M1 单用户映射，M2 换身份绑定表）。',
     columns: [
-      ['channelId', '渠道标识'], ['kind', '类型'], ['name', '名称'], ['appID', 'App ID'], ['appSecretMasked', 'App Secret'], ['enabled', '状态'], ['defaultAppKey', '默认 app'], ['defaultUserName', '归属用户'], ['actions', '操作'],
+      ['channelId', '渠道标识'], ['kind', '类型'], ['name', '名称'], ['appID', 'App ID / @username'], ['appSecretMasked', 'Secret / Token'], ['enabled', '状态'], ['defaultAppKey', '默认 app'], ['defaultUserName', '归属用户'], ['actions', '操作'],
     ],
     empty: () => ({
       kind: 'feishu', name: '', appID: '', appSecretDraft: '', enabled: 0, defaultAppKey: '', routeText: '', defaultUserName: '',
@@ -654,11 +654,11 @@ const resources = {
     }),
     fields: (mode) => [
       ...(mode === 'edit' ? [['channelId', '渠道标识', 'readonly']] : []),
-      ['kind', '类型', 'enumSelect', [['feishu', '飞书（M1）']]],
+      ['kind', '类型', 'enumSelect', [['feishu', '飞书'], ['telegram', 'Telegram']]],
       ['name', '名称'],
       ['enabled', '状态', 'select'],
-      ['appID', 'App ID'],
-      ['appSecretDraft', 'App Secret', 'password'],
+      ['appID', 'App ID（飞书必填；Telegram 可选 @username）'],
+      ['appSecretDraft', 'App Secret / Bot Token', 'password'],
       ['defaultAppKey', '默认 app（新会话路由，建联后粘滞）'],
       ['defaultUserName', '归属用户名（M1 单用户映射）'],
       ['routeText', '默认路由（逗号分隔）'],

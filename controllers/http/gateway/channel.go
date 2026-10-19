@@ -20,7 +20,7 @@ import (
 type CreateChannelReq struct {
 	Kind               string   `json:"kind" binding:"required"`
 	Name               string   `json:"name" binding:"required"`
-	AppID              string   `json:"appID" binding:"required"`
+	AppID              string   `json:"appID"`
 	AppSecret          string   `json:"appSecret" binding:"required"`
 	Enabled            int      `json:"enabled"`
 	DefaultAppKey      string   `json:"defaultAppKey"`
@@ -79,8 +79,15 @@ func CreateChannel(ctx *gin.Context) {
 		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf(err.Error()))
 		return
 	}
-	if req.Kind != model.ChannelKindFeishu {
-		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf("kind 仅支持 %s（M1）", model.ChannelKindFeishu))
+	if req.Kind != model.ChannelKindFeishu && req.Kind != model.ChannelKindTelegram {
+		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf("kind 仅支持 %s / %s", model.ChannelKindFeishu, model.ChannelKindTelegram))
+		return
+	}
+	// 按渠道类型校验凭证形态：
+	//   飞书——AppID/AppSecret 成对（开放平台自建应用）；
+	//   Telegram——单个 Bot Token 存 AppSecret，AppID 可选存 @username。
+	if req.Kind == model.ChannelKindFeishu && strings.TrimSpace(req.AppID) == "" {
+		components.RenderJsonFail(ctx, components.ErrorParamInvalid.Sprintf("飞书渠道 appID 不能为空"))
 		return
 	}
 	if strings.TrimSpace(req.DefaultUserName) == "" {

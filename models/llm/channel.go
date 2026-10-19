@@ -12,9 +12,10 @@ import (
 	"gorm.io/plugin/soft_delete"
 )
 
-// 渠道类型词汇（M1：飞书；QQ/钉钉按方案 M2 及以后扩展）。
+// 渠道类型词汇（M1：飞书；M2：Telegram；钉钉/QQ 见方案 §5.5）。
 const (
-	ChannelKindFeishu = "feishu"
+	ChannelKindFeishu   = "feishu"
+	ChannelKindTelegram = "telegram"
 )
 
 // ChannelConfig 是多渠道网关的渠道配置：一个渠道 = 一个 IM 机器人应用（如一个飞书自建应用）。

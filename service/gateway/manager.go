@@ -91,6 +91,8 @@ func buildChannel(cfg *model.ChannelConfig) (Channel, error) {
 	switch cfg.Kind {
 	case model.ChannelKindFeishu:
 		return newFeishuChannel(cfg), nil
+	case model.ChannelKindTelegram:
+		return newTelegramChannel(cfg), nil
 	default:
 		return nil, fmt.Errorf("不支持的渠道类型: %s", cfg.Kind)
 	}
