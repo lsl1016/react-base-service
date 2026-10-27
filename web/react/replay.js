@@ -2,6 +2,8 @@ const agentRoot = document.getElementById('replay-agent-root');
 const replayState = document.getElementById('replay-state');
 const replayTitle = document.getElementById('replay-title');
 const replayFromStartButton = document.getElementById('replay-from-start');
+const replaySkipToEndButton = document.getElementById('replay-skip-to-end');
+const replayProgress = document.getElementById('replay-progress');
 const themeButton = document.getElementById('toggle-replay-theme');
 const baseUrl = `${location.origin}/react-base-service/react`;
 
@@ -103,12 +105,27 @@ const applyTheme = (theme) => {
   themeButton.setAttribute('aria-pressed', String(dark));
 };
 
-const setPlaying = (playing) => {
+const setPlaying = (playing, progressText) => {
   replayFromStartButton.disabled = playing || !replayResponse;
   replayFromStartButton.textContent = playing ? '播放中…' : '从头播放';
+  replaySkipToEndButton.hidden = !playing;
+  if (playing && progressText) {
+    replayProgress.textContent = progressText;
+    replayProgress.hidden = false;
+  } else {
+    replayProgress.hidden = true;
+  }
 };
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+// 播放节奏约束（TEST-REPORT-2026-10-27 D-5）：逐事件 applyEvent+setState 全量重渲染，
+// 大会话要 6~7 分钟且大 markdown 段会长时间冻结。改为按帧分片批处理：
+// 整段播放收敛到 ≤50 个渲染帧（每帧批量应用若干事件后只渲染一次，实测单帧渲染
+// 成本随会话内容增长到 ~1s，帧数再高只是拉长总时长），帧间保留可感知的推进节奏；
+// 进度实时显示，并随时可"跳到结尾"一次到位（replayEvents）。
+const PLAYBACK_MAX_FRAMES = 50;
+const PLAYBACK_FRAME_BUDGET_MS = 2500;
 
 const playFromStart = async () => {
   if (!replayResponse || !replayClient) return;
@@ -117,14 +134,21 @@ const playFromStart = async () => {
   const reducer = new window.AgentWebSDK.EventReducer();
   replayClient.setReducer(reducer);
   const events = replayResponse.events;
-  const interval = Math.max(16, Math.min(120, Math.round(12000 / Math.max(events.length, 1))));
-  setPlaying(true);
+  const total = Math.max(events.length, 1);
+  const frames = Math.min(total, PLAYBACK_MAX_FRAMES);
+  const batch = Math.max(1, Math.ceil(total / frames));
+  const interval = Math.max(16, Math.min(60, Math.round(PLAYBACK_FRAME_BUDGET_MS / frames)));
+  setPlaying(true, `0/${total}`);
 
   try {
-    for (const event of events) {
+    for (let applied = 0; applied < events.length; applied += batch) {
       if (version !== playbackVersion) return;
-      reducer.applyEvent(event);
+      const end = Math.min(applied + batch, events.length);
+      for (let index = applied; index < end; index += 1) {
+        reducer.applyEvent(events[index]);
+      }
       replayClient.setState(withReplayIdentity(reducer.getState()));
+      setPlaying(true, `${end}/${total}`);
       await delay(interval);
     }
 
@@ -134,6 +158,17 @@ const playFromStart = async () => {
   } finally {
     if (version === playbackVersion) setPlaying(false);
   }
+};
+
+// 跳到结尾：废弃在播循环，一次性重放全部事件直达终态。
+const skipToEnd = () => {
+  if (!replayResponse || !replayClient) return;
+  playbackVersion += 1;
+  const reducer = new window.AgentWebSDK.EventReducer();
+  reducer.replayEvents(replayResponse.events);
+  replayClient.setReducer(reducer);
+  replayClient.setState(withReplayIdentity(reducer.getState()));
+  setPlaying(false);
 };
 
 const showError = (error) => {
@@ -177,6 +212,7 @@ const loadReplay = async () => {
 };
 
 replayFromStartButton.addEventListener('click', () => void playFromStart());
+replaySkipToEndButton.addEventListener('click', () => skipToEnd());
 themeButton.addEventListener('click', () => applyTheme(currentTheme === 'dark' ? 'light' : 'dark'));
 
 void loadReplay().catch(showError);
