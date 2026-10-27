@@ -73,11 +73,16 @@ func ExecuteWebSearch(ctx *gin.Context, runID string, input json.RawMessage) (st
 		maxResults = 20
 	}
 
-	results, err := searxngSearch(ctx.Request.Context(), cfg, query, maxResults)
+	results, unresponsive, err := searxngSearch(ctx.Request.Context(), cfg, query, maxResults)
 	if err != nil {
 		return "", nil, true, fmt.Errorf("web_search 检索失败: %v", err)
 	}
 	if len(results) == 0 {
+		// 区分"确实没有结果"与"检索引擎集体不可用"（TEST-REPORT-2026-10-27 D-4）：
+		// 后者提示引擎故障，避免模型把基础设施问题误判成信息不存在而提前放弃。
+		if len(unresponsive) > 0 {
+			return fmt.Sprintf("web_search 本次无结果，但检索引擎不可用（%s），空结果未必代表没有相关信息；建议稍后原样重试一次，或换更通用的关键词。", strings.Join(unresponsive, "、")), nil, false, nil
+		}
 		return fmt.Sprintf("web_search 未找到与 %q 相关的结果。建议换关键词、拆短查询或改用英文重试。", query), nil, false, nil
 	}
 	rendered := renderWebSearchResults(query, results)
@@ -94,11 +99,13 @@ type webSearchResult struct {
 }
 
 // searxngSearch 调用 SearXNG JSON API：GET {base}/search?q=...&format=json&language=zh-CN。
-func searxngSearch(ctx context.Context, cfg conf.ReactWebSearchConfig, query string, maxResults int) ([]webSearchResult, error) {
+// 第二返回值是本次未响应的引擎名清单（SearXNG unresponsive_engines），供空结果时区分
+// "没有相关信息"与"引擎故障"。
+func searxngSearch(ctx context.Context, cfg conf.ReactWebSearchConfig, query string, maxResults int) ([]webSearchResult, []string, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	searchURL, err := url.Parse(base + "/search")
 	if err != nil {
-		return nil, fmt.Errorf("base_url 非法: %v", err)
+		return nil, nil, fmt.Errorf("base_url 非法: %v", err)
 	}
 	params := searchURL.Query()
 	params.Set("q", query)
@@ -110,7 +117,7 @@ func searxngSearch(ctx context.Context, cfg conf.ReactWebSearchConfig, query str
 	defer cancel()
 	httpReq, err := http.NewRequestWithContext(requestCtx, http.MethodGet, searchURL.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	if key := strings.TrimSpace(cfg.APIKey); key != "" {
@@ -118,30 +125,38 @@ func searxngSearch(ctx context.Context, cfg conf.ReactWebSearchConfig, query str
 	}
 	resp, err := webFetchHTTPClient().Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("搜索服务返回状态 %d（自建 SearXNG 需在 settings.yml 开启 json format）", resp.StatusCode)
+		return nil, nil, fmt.Errorf("搜索服务返回状态 %d（自建 SearXNG 需在 settings.yml 开启 json format）", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, webFetchMaxDownloadBytes))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return parseSearxngResponse(body, maxResults)
 }
 
-// parseSearxngResponse 解析 SearXNG JSON 响应（{results:[{title,url,content}]}），纯函数便于单测。
-func parseSearxngResponse(body []byte, maxResults int) ([]webSearchResult, error) {
+// parseSearxngResponse 解析 SearXNG JSON 响应（{results:[{title,url,content}],
+// unresponsive_engines:[[name,error],...]}），纯函数便于单测。
+func parseSearxngResponse(body []byte, maxResults int) ([]webSearchResult, []string, error) {
 	var payload struct {
 		Results []struct {
 			Title   string `json:"title"`
 			URL     string `json:"url"`
 			Content string `json:"content"`
 		} `json:"results"`
+		Unresponsive [][2]string `json:"unresponsive_engines"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("搜索服务响应解析失败: %v", err)
+		return nil, nil, fmt.Errorf("搜索服务响应解析失败: %v", err)
+	}
+	unresponsive := make([]string, 0, len(payload.Unresponsive))
+	for _, item := range payload.Unresponsive {
+		if item[0] != "" {
+			unresponsive = append(unresponsive, item[0])
+		}
 	}
 	results := make([]webSearchResult, 0, maxResults)
 	for _, item := range payload.Results {
@@ -159,7 +174,7 @@ func parseSearxngResponse(body []byte, maxResults int) ([]webSearchResult, error
 			break
 		}
 	}
-	return results, nil
+	return results, unresponsive, nil
 }
 
 // renderWebSearchResults 把结果渲染为模型可读清单（纯函数便于单测）。

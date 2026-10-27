@@ -15,9 +15,12 @@ func TestParseSearxngResponse(t *testing.T) {
 		{"title":"结果三","url":"","content":"缺链接应丢弃"},
 		{"title":"结果四","url":"https://a.example/4","content":"很长很长很长"}
 	]}`)
-	results, err := parseSearxngResponse(body, 10)
+	results, unresponsive, err := parseSearxngResponse(body, 10)
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
+	}
+	if len(unresponsive) != 0 {
+		t.Fatalf("无 unresponsive_engines 时应为空: %v", unresponsive)
 	}
 	if len(results) != 2 {
 		t.Fatalf("应保留 2 条有效结果: %+v", results)
@@ -27,13 +30,28 @@ func TestParseSearxngResponse(t *testing.T) {
 	}
 
 	// maxResults 截断
-	results, err = parseSearxngResponse(body, 1)
+	results, _, err = parseSearxngResponse(body, 1)
 	if err != nil || len(results) != 1 {
 		t.Fatalf("maxResults 截断不符: n=%d, err=%v", len(results), err)
 	}
 	// 非法 JSON
-	if _, err := parseSearxngResponse([]byte(`{bad`), 5); err == nil {
+	if _, _, err := parseSearxngResponse([]byte(`{bad`), 5); err == nil {
 		t.Fatalf("非法 JSON 应报错")
+	}
+}
+
+// TestParseSearxngResponseUnresponsive：引擎不可用清单解析（D-4 空结果归因）。
+func TestParseSearxngResponseUnresponsive(t *testing.T) {
+	body := []byte(`{"results":[],"unresponsive_engines":[["brave","too many requests"],["duckduckgo","CAPTCHA"]]}`)
+	results, unresponsive, err := parseSearxngResponse(body, 10)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("应无结果: %+v", results)
+	}
+	if len(unresponsive) != 2 || unresponsive[0] != "brave" || unresponsive[1] != "duckduckgo" {
+		t.Fatalf("unresponsive 解析不符: %v", unresponsive)
 	}
 }
 
