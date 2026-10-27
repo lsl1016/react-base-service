@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +19,8 @@ import (
 	"react-base-service/helpers"
 	model "react-base-service/models/llm"
 	core "react-base-service/service/react/internal/core"
+	netcap "react-base-service/service/react/internal/netcap"
+	"react-base-service/service/skillchatfile"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -33,10 +34,12 @@ const (
 	pythonExecInputSourceAttachment = "attachment"
 	pythonExecInputSourceHTTP       = "http"
 
-	// python 侧 multi-transport 输入的传输方式。
-	pythonExecKindInline  = "inline"
-	pythonExecKindCosRef  = "cos_ref"
-	pythonExecKindHTTPRef = "http_ref"
+	// pythonExecInputMaxSourceBytes 是单个 attachment/http 输入源预取并解码后的上限；
+	// 沙箱请求体硬上限 8MB，单源预取控制在 6MB 内，为 python 字段与 JSON 转义留余量。
+	pythonExecInputMaxSourceBytes = 6 * 1024 * 1024
+	// pythonExecInputMaxTotalBytes 是全部输入序列化后的总量上限，超限直接报错回给模型，
+	// 避免请求发到沙箱才被 400 拒绝。
+	pythonExecInputMaxTotalBytes = 7 * 1024 * 1024
 )
 
 type pythonExecInput struct {
@@ -440,10 +443,11 @@ func pythonExecArtifactContentType(artifactType, name string) string {
 	return "application/octet-stream"
 }
 
-// resolvePythonExecData 构造 python 沙箱的 multi-transport 输入信封：
-// { "transport":"multi", "inputs": { alias: { kind:"inline"|"cos_ref", ... } } }。
-// 内联值来源（tool_result/raw_json/text/expr）走 inline；附件（attachment）由后端根据 fileId
-// 解析出 COS 路径，走 cos_ref 交沙箱读取，模型只需按 fileId 引用附件。
+// resolvePythonExecData 把全部输入源解析为平铺的 alias→value JSON，直接作为沙箱脚本的 stdin
+// 输入容器（与工具描述的契约一致：脚本 json.loads(sys.stdin.read()) 后按 inputs[alias] 取值）。
+// 沙箱自 P0-1 网络硬隔离后不可出网，attachment（COS）与 http（远端 URL）一律由引擎侧
+// 预取并解码为 UTF-8 文本后内联，不再下发 multi-transport 信封（沙箱从未实现解包，
+// 曾导致所有带 inputs 的脚本首调 KeyError，见 TEST-REPORT-2026-10-27 D-1）。
 func resolvePythonExecData(rc RunContext, req pythonExecInput) (string, error) {
 	inputs := make(map[string]interface{}, len(req.Inputs))
 	for alias, source := range req.Inputs {
@@ -451,25 +455,26 @@ func resolvePythonExecData(rc RunContext, req pythonExecInput) (string, error) {
 		if alias == "" {
 			return "", fmt.Errorf("python_exec input alias is required")
 		}
-		descriptor, err := resolvePythonExecInputSource(rc, alias, source)
+		value, err := resolvePythonExecInputSource(rc, alias, source)
 		if err != nil {
 			return "", err
 		}
-		inputs[alias] = descriptor
+		inputs[alias] = value
 	}
-	envelope := map[string]interface{}{
-		"transport": "multi",
-		"inputs":    inputs,
-	}
-	data, err := json.Marshal(envelope)
+	data, err := json.Marshal(inputs)
 	if err != nil {
 		return "", err
+	}
+	if len(data) > pythonExecInputMaxTotalBytes {
+		return "", fmt.Errorf("python_exec 输入序列化后共 %d 字节，超过 %d 字节上限；请减少输入内容（大文件建议拆分或改用 read_attachment 分页读取要点后自行构造分析数据）", len(data), pythonExecInputMaxTotalBytes)
 	}
 	return string(data), nil
 }
 
-// resolvePythonExecInputSource 把单个输入源解析成 multi-transport 输入描述符。
-func resolvePythonExecInputSource(rc RunContext, alias string, source pythonExecInputSource) (map[string]interface{}, error) {
+// resolvePythonExecInputSource 把单个输入源解析为脚本内 inputs[alias] 直接可用的值：
+// tool_result/raw_json → JSON 值；text/expr → 字符串；attachment → 附件全文文本（引擎侧取数）；
+// http → 远端文本（引擎侧代取，复用 web_fetch 的 SSRF 防护与大小上限）。
+func resolvePythonExecInputSource(rc RunContext, alias string, source pythonExecInputSource) (interface{}, error) {
 	source.Type = strings.ToLower(strings.TrimSpace(source.Type))
 	source.Ref = strings.TrimSpace(source.Ref)
 	source.FileID = strings.TrimSpace(source.FileID)
@@ -486,20 +491,12 @@ func resolvePythonExecInputSource(rc RunContext, alias string, source pythonExec
 		if !ok {
 			return nil, fmt.Errorf("python_exec input %s tool result ref not found or expired", alias)
 		}
-		value, err := decodePythonExecJSONValue([]byte(content), alias)
-		if err != nil {
-			return nil, err
-		}
-		return inlineInput(value), nil
+		return decodePythonExecJSONValue([]byte(content), alias)
 	case pythonExecInputSourceRawJSON:
 		if len(bytes.TrimSpace(source.Value)) == 0 {
 			return nil, fmt.Errorf("python_exec input %s value is required", alias)
 		}
-		value, err := decodePythonExecJSONValue(source.Value, alias)
-		if err != nil {
-			return nil, err
-		}
-		return inlineInput(value), nil
+		return decodePythonExecJSONValue(source.Value, alias)
 	case pythonExecInputSourceText, pythonExecInputSourceExpr:
 		if len(bytes.TrimSpace(source.Value)) == 0 {
 			return nil, fmt.Errorf("python_exec input %s value is required", alias)
@@ -508,35 +505,34 @@ func resolvePythonExecInputSource(rc RunContext, alias string, source pythonExec
 		if err := json.Unmarshal(source.Value, &text); err != nil {
 			return nil, fmt.Errorf("python_exec input %s value must be a JSON string: %w", alias, err)
 		}
-		return inlineInput(text), nil
+		return text, nil
 	case pythonExecInputSourceAttachment:
 		return resolvePythonExecAttachmentInput(rc, alias, source.FileID)
 	case pythonExecInputSourceHTTP:
-		return resolvePythonExecHTTPInput(alias, source.URL)
+		return resolvePythonExecHTTPInput(rc, alias, source.URL)
 	default:
 		return nil, fmt.Errorf("python_exec input %s unsupported source type: %s", alias, source.Type)
 	}
 }
 
-// resolvePythonExecHTTPInput 产出 http_ref 输入交沙箱自动拉取；URL 来自模型，做基本合法性校验。
-func resolvePythonExecHTTPInput(alias, rawURL string) (map[string]interface{}, error) {
+// resolvePythonExecHTTPInput 引擎侧代取远端文本（http 输入源）。URL 来自模型，走 web_fetch
+// 同源的 SSRF 防护（拒绝内网/环回）与文本类 Content-Type 校验；内容受单源大小上限约束。
+func resolvePythonExecHTTPInput(rc RunContext, alias, rawURL string) (interface{}, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return nil, fmt.Errorf("python_exec input %s url is required", alias)
 	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, fmt.Errorf("python_exec input %s url must be a valid http(s) URL", alias)
+	text, err := netcap.FetchRawText(rc.RunCtx, rawURL, pythonExecInputMaxSourceBytes)
+	if err != nil {
+		return nil, fmt.Errorf("python_exec input %s http 源获取失败: %w", alias, err)
 	}
-	return map[string]interface{}{
-		"kind": pythonExecKindHTTPRef,
-		"url":  rawURL,
-	}, nil
+	return text, nil
 }
 
-// resolvePythonExecAttachmentInput 按 fileId 解析出附件的 COS 路径，产出 cos_ref 输入交沙箱读取。
-// 后端只做 fileId→cosPath 的解析（含归属校验），不下载文件内容；charset 作为解码提示随行。
-func resolvePythonExecAttachmentInput(rc RunContext, alias, fileID string) (map[string]interface{}, error) {
+// resolvePythonExecAttachmentInput 引擎侧下载附件并解码为 UTF-8 文本注入（attachment 输入源）：
+// 沙箱网络隔离后无法自行读取 COS，这里按 fileId 解析记录（含归属与状态校验）后预取内容。
+// 超过单源上限的附件直接报错并给出替代路径，避免序列化后才在总量校验失败。
+func resolvePythonExecAttachmentInput(rc RunContext, alias, fileID string) (interface{}, error) {
 	if fileID == "" {
 		return nil, fmt.Errorf("python_exec input %s fileId is required", alias)
 	}
@@ -544,17 +540,43 @@ func resolvePythonExecAttachmentInput(rc RunContext, alias, fileID string) (map[
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{
-		"kind":     pythonExecKindCosRef,
-		"cosPath":  record.CosURI,
-		"charset":  record.Charset,
-		"fileName": record.FileName,
-		"ext":      record.Ext,
-	}, nil
+	if record.Size > pythonExecInputMaxSourceBytes {
+		return nil, fmt.Errorf("python_exec input %s 附件 %s 大小 %d 字节超过单输入 %d 字节上限；请改用 read_attachment 分页读取要点，或让用户拆分文件", alias, fileID, record.Size, pythonExecInputMaxSourceBytes)
+	}
+	text, err := downloadDecodeAttachmentText(rc, record)
+	if err != nil {
+		return nil, err
+	}
+	if len(text) > pythonExecInputMaxSourceBytes {
+		return nil, fmt.Errorf("python_exec input %s 附件 %s 解码后 %d 字节超过单输入 %d 字节上限", alias, fileID, len(text), pythonExecInputMaxSourceBytes)
+	}
+	return text, nil
 }
 
-func inlineInput(payload interface{}) map[string]interface{} {
-	return map[string]interface{}{"kind": pythonExecKindInline, "payload": payload}
+// downloadDecodeAttachmentText 下载附件内容并按记录 charset 解码为 UTF-8 文本。
+func downloadDecodeAttachmentText(rc RunContext, record *model.ChatFileRecord) (string, error) {
+	if err := helpers.EnsureCos(); err != nil {
+		return "", fmt.Errorf("python_exec 输入附件初始化 COS 失败: %w", err)
+	}
+	if helpers.CosClient == nil {
+		return "", fmt.Errorf("python_exec 输入附件 COS 客户端不可用")
+	}
+	data, err := helpers.CosClient.DownloadData(rc.GinCtx.Request.Context(), record.CosKey)
+	if err != nil {
+		return "", fmt.Errorf("python_exec 输入附件下载失败: %s", fileIDOf(record))
+	}
+	text, err := skillchatfile.DecodeChatFileToUTF8(data, record.Charset)
+	if err != nil {
+		return "", fmt.Errorf("python_exec 输入附件内容解码失败: %s", fileIDOf(record))
+	}
+	return text, nil
+}
+
+func fileIDOf(record *model.ChatFileRecord) string {
+	if record == nil {
+		return ""
+	}
+	return record.FileID
 }
 
 func decodePythonExecJSONValue(raw []byte, alias string) (interface{}, error) {

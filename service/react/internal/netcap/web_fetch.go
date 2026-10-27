@@ -66,16 +66,11 @@ func ExecuteWebFetch(ctx *gin.Context, runID string, input json.RawMessage) (str
 	if rawURL == "" {
 		return "", true, fmt.Errorf("url is required")
 	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return "", true, fmt.Errorf("web_fetch 仅支持完整的 http/https URL: %s", rawURL)
+	parsed, err := validateWebFetchURL(rawURL)
+	if err != nil {
+		return "", true, err
 	}
-	if host, _, splitErr := net.SplitHostPort(parsed.Host); splitErr == nil {
-		parsed.Host = host
-	}
-	if isPrivateHost(parsed.Hostname()) {
-		return "", true, fmt.Errorf("web_fetch 拒绝访问内网/环回地址: %s", parsed.Hostname())
-	}
+	_ = parsed
 
 	// 取运行时生效配置（合并管理面板「运行时配置」的 DB 覆盖，与工具注册门控同口径）。
 	cfg := conf.GetReactRuntimeConfig().WebFetch
@@ -119,6 +114,62 @@ func ExecuteWebFetch(ctx *gin.Context, runID string, input json.RawMessage) (str
 	webFetchCachePut(rawURL, content)
 	zlog.Infof(ctx, "[React.WebFetch] 抓取完成: runId=%s, url=%s, runes=%d", runID, rawURL, utf8.RuneCountInString(content))
 	return content, false, nil
+}
+
+// validateWebFetchURL 校验抓取目标：仅 http/https、拒绝内网/环回地址字面量。
+func validateWebFetchURL(rawURL string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return nil, fmt.Errorf("web_fetch 仅支持完整的 http/https URL: %s", rawURL)
+	}
+	if host, _, splitErr := net.SplitHostPort(parsed.Host); splitErr == nil {
+		parsed.Host = host
+	}
+	if isPrivateHost(parsed.Hostname()) {
+		return nil, fmt.Errorf("web_fetch 拒绝访问内网/环回地址: %s", parsed.Hostname())
+	}
+	return parsed, nil
+}
+
+// FetchRawText 为 python_exec 的 http 输入源代取远端文本：复用 web_fetch 的 SSRF 防护、
+// 文本类 Content-Type 校验与共享客户端，但不做 HTML 正文提取（数据 URL 需要原始内容），
+// 也不落缓存。沙箱 P0-1 网络硬隔离后不可自行出网，远端数据一律由引擎侧代取后内联。
+func FetchRawText(ctx context.Context, rawURL string, maxBytes int64) (string, error) {
+	if _, err := validateWebFetchURL(rawURL); err != nil {
+		return "", err
+	}
+	if maxBytes <= 0 {
+		maxBytes = webFetchMaxDownloadBytes
+	}
+	cfg := conf.GetReactRuntimeConfig().WebFetch
+	fetchCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.EffectiveTimeoutSec())*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("URL 非法: %v", err)
+	}
+	httpReq.Header.Set("User-Agent", "react-base-service-webfetch/1.0")
+	httpReq.Header.Set("Accept", "text/plain,application/json,text/csv,*/*;q=0.5")
+	resp, err := webFetchHTTPClient().Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("目标返回非 2xx 状态: %d", resp.StatusCode)
+	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	if !isWebFetchSupportedContent(contentType) {
+		return "", fmt.Errorf("不支持的内容类型: %s（仅支持文本类数据）", contentType)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("读取响应失败: %v", err)
+	}
+	if int64(len(body)) > maxBytes {
+		return "", fmt.Errorf("内容超过 %d 字节上限", maxBytes)
+	}
+	return string(body), nil
 }
 
 // webFetchHTTPClient 返回共享抓取客户端：禁用 cookie、限制重定向次数，不跟随到内网的跳转由字面量检查兜底。

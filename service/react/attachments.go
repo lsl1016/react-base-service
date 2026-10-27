@@ -116,7 +116,7 @@ func renderAttachmentManifest(snapshots []reactAttachmentSnapshot) string {
 	sb.WriteString(strings.Join([]string{
 		"使用方式（按任务类型选择，不看文件大小）：",
 		"· 需要理解、总结、改写、翻译或逐行判断文件内容 → 调 read_attachment(fileId) 读入内容（内容较大时自动返回预览，可用 read_tool_result 翻页）。",
-		"· 需要统计、聚合、过滤、连表、计算等数据处理 → 用 python_exec，在 inputs 中以 {type:\"attachment\", fileId} 引用该文件分析。",
+		"· 需要统计、聚合、过滤、连表、计算等数据处理 → 用 python_exec，在 inputs 中以 {type:\"attachment\", fileId} 引用该文件分析（单个附件内容上限 6MB，超限会报错并提示替代方案）。",
 		"· 拿不准 csv 的列名/结构、要先搞清楚再写分析代码 → 调 inspect_attachment(fileId) 获取列结构、样例行和行数。",
 		"</attachments>",
 	}, "\n"))
