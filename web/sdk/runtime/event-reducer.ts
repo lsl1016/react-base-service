@@ -333,13 +333,19 @@ function isFullTodoWriteToolCall(toolCall: ToolCallState): boolean {
   return name === 'todowrite' && toolCall.input.merge === false;
 }
 
-function syncLatestTodoCardItems(state: AgentState): void {
+// syncLatestTodoCardItemsForRun 把最新 todo 状态回写到"完整写"卡片（merge=false 的 todo_write）。
+// event.runId 存在时只匹配该 run 自己的步骤——多 Agent 会话中父/子 run 各有独立清单，
+// 跨 run 不互相覆盖（TEST-REPORT-2026-10-27 D-3）；runId 缺失（历史事件兼容）时回退旧行为，
+// 回写全局最近一张完整卡片。
+function syncLatestTodoCardItemsForRun(state: AgentState, runId: string | undefined, todos: TodoItem[]): void {
   for (let stepIndex = state.steps.length - 1; stepIndex >= 0; stepIndex -= 1) {
-    const toolCalls = state.steps[stepIndex].toolCalls;
+    const step = state.steps[stepIndex];
+    if (runId !== undefined && (step.runId ?? '') !== runId) continue;
+    const toolCalls = step.toolCalls;
     for (let toolIndex = toolCalls.length - 1; toolIndex >= 0; toolIndex -= 1) {
       const toolCall = toolCalls[toolIndex];
       if (!isFullTodoWriteToolCall(toolCall)) continue;
-      toolCall.todoItems = state.todos.map((todo) => ({ ...todo }));
+      toolCall.todoItems = todos.map((todo) => ({ ...todo }));
       return;
     }
   }
@@ -606,6 +612,12 @@ export class EventReducer {
   private listeners = new Set<(_state: AgentState) => void>();
   /** toolUseId → { stepIndex, toolIndex }，用于 tool_use_end 时快速定位对应的 ToolCallState */
   private toolCallIndex = new Map<string, { stepIndex: number; toolIndex: number }>();
+  /**
+   * runId → 该 run 的 todo 状态。多 Agent 会话中父/子 run 各有独立清单，
+   * todo_update 只允许回写同 run 的卡片，避免父任务的更新覆盖子代理的 todo 卡片
+   * （TEST-REPORT-2026-10-27 D-3：曾用单一全局 todos 回写"最近一张完整卡片"导致串道）。
+   */
+  private todosByRun = new Map<string, TodoItem[]>();
 
   constructor(initial?: Partial<AgentState>) {
     this.state = { ...createInitialState(), ...initial };
@@ -714,6 +726,7 @@ export class EventReducer {
     this.state = createInitialState();
     this.state.connected = currentConnected;
     this.toolCallIndex.clear();
+    this.todosByRun.clear();
     for (const event of events) {
       this.reduceEvent(event);
     }
@@ -1233,10 +1246,22 @@ export class EventReducer {
         const p = event.payload as unknown as TodoUpdatePayload;
         if (p) {
           const items = readTodoItems(p);
-          this.state.todos = readTodoMerge(p)
-            ? mergeTodoItems(this.state.todos, items)
-            : replaceTodoItems(items);
-          syncLatestTodoCardItems(this.state);
+          let next: TodoItem[];
+          if (event.runId === undefined) {
+            // 历史事件无 runId：沿用全局 todos 基线与全局最近完整卡片回写（旧行为）。
+            next = readTodoMerge(p)
+              ? mergeTodoItems(this.state.todos, items)
+              : replaceTodoItems(items);
+          } else {
+            // merge 基线取本 run 自己的状态；服务端 todo_update 携带全量快照，正常路径是 replace。
+            const base = this.todosByRun.get(event.runId) ?? [];
+            next = readTodoMerge(p)
+              ? mergeTodoItems(base, items)
+              : replaceTodoItems(items);
+            this.todosByRun.set(event.runId, next);
+          }
+          this.state.todos = next.map((todo) => ({ ...todo }));
+          syncLatestTodoCardItemsForRun(this.state, event.runId, next);
         }
         break;
       }

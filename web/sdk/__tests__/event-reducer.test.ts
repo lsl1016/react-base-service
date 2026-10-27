@@ -1270,4 +1270,59 @@ describe('EventReducer - user and error steps', () => {
     expect(state.steps[0].content).toBe('网络连接失败');
     expect(state.steps[0].runId).toBe('run_123');
   });
+
+  // TEST-REPORT-2026-10-27 D-3 回归：多 Agent 会话中父 run 后续的 todo 更新
+  // 不得覆盖子 run 的 todo 卡片（曾因全局单一 todos 回写"最近一张完整卡片"串道）。
+  it('should keep child agent todo card isolated from parent todo updates', () => {
+    const reducer = new EventReducer();
+    const parentTodos = [
+      { id: 'search', content: '联网搜索', status: 'completed' },
+      { id: 'verify', content: '委派核验', status: 'in_progress' },
+      { id: 'sandbox', content: '词频统计', status: 'pending' },
+      { id: 'memory', content: '写入记忆', status: 'pending' },
+      { id: 'report', content: '汇总简报', status: 'pending' },
+    ];
+    const childTodos = [
+      { id: 'fetch_known_sources', content: '并行抓取来源', status: 'in_progress' },
+      { id: 'summarize', content: '汇总核验结论', status: 'pending' },
+    ];
+
+    // 父 run：完整写卡片 A + 状态更新。
+    reducer.applyEvent({
+      type: 'tool_use_start', seq: 1, stepIndex: 0, runId: 'run_parent',
+      payload: { toolUseId: 'tool_parent', toolName: 'todo_write', toolInput: { merge: false, todos: parentTodos } },
+    } as ReactEvent);
+    reducer.applyEvent({
+      type: 'todo_update', seq: 2, stepIndex: 0, runId: 'run_parent',
+      payload: { todoState: { items: parentTodos } },
+    } as ReactEvent);
+
+    // 子 run（agentPath=main/researcher）：完整写卡片 B + 状态更新。
+    reducer.applyEvent({
+      type: 'tool_use_start', seq: 3, stepIndex: 0, runId: 'run_child', agentPath: 'main/researcher',
+      payload: { toolUseId: 'tool_child', toolName: 'todo_write', toolInput: { merge: false, todos: childTodos } },
+    } as ReactEvent);
+    reducer.applyEvent({
+      type: 'todo_update', seq: 4, stepIndex: 0, runId: 'run_child', agentPath: 'main/researcher',
+      payload: { todoState: { items: [{ ...childTodos[0], status: 'completed' }, { ...childTodos[1], status: 'in_progress' }] } },
+    } as ReactEvent);
+
+    // 父 run 后续推进到全部完成（真实故障里这一步把子卡片覆盖成了父清单）。
+    const parentAllDone = parentTodos.map((todo) => ({ ...todo, status: 'completed' }));
+    reducer.applyEvent({
+      type: 'todo_update', seq: 5, stepIndex: 0, runId: 'run_parent',
+      payload: { todoState: { items: parentAllDone } },
+    } as ReactEvent);
+
+    const steps = reducer.getState().steps;
+    const cardA = steps.flatMap((s) => s.toolCalls).find((tc) => tc.toolUseId === 'tool_parent');
+    const cardB = steps.flatMap((s) => s.toolCalls).find((tc) => tc.toolUseId === 'tool_child');
+
+    expect(cardA?.todoItems).toHaveLength(5);
+    expect(cardA?.todoItems.every((todo) => todo.status === 'completed')).toBe(true);
+    expect(cardB?.todoItems).toHaveLength(2);
+    expect(cardB?.todoItems.map((todo) => todo.content)).toEqual(['并行抓取来源', '汇总核验结论']);
+    expect(cardB?.todoItems[0].status).toBe('completed');
+    expect(cardB?.todoItems[1].status).toBe('in_progress');
+  });
 });
