@@ -34,6 +34,9 @@ type RegistryTool struct {
 	InputSchema map[string]any
 	// OutputSchema 是服务器声明的结构化输出 schema（MCP 2025-06-18 起可选），无则为 nil。
 	OutputSchema map[string]any
+	// ReadOnlyHint 是服务器声明的 MCP ToolAnnotations.readOnlyHint：HTTP 连接的工具
+	// 也据此写 config.readOnly（@readonly 同轮并发与只读子代理依赖它），与 repo kind 判定取或。
+	ReadOnlyHint bool
 }
 
 // ToolConfigJSON 生成写入 tblLlmTool.config 的 JSON（tool_type=mcp）。
@@ -524,7 +527,7 @@ func upsertRegistryTool(ctx *gin.Context, appKey, server string, tool RegistryTo
 	if description == "" {
 		description = fmt.Sprintf("MCP tool %s/%s", server, tool.Tool)
 	}
-	configJSON, err := ToolConfigJSON(server, tool.Tool, tool.InputSchema, tool.OutputSchema, serverKindReadOnly(server))
+	configJSON, err := ToolConfigJSON(server, tool.Tool, tool.InputSchema, tool.OutputSchema, serverKindReadOnly(server) || tool.ReadOnlyHint)
 	if err != nil {
 		return err
 	}
@@ -564,7 +567,7 @@ func upsertRegistryTool(ctx *gin.Context, appKey, server string, tool RegistryTo
 		Name:        name,
 		Description: description,
 		ToolType:    "mcp",
-		AppKey:   appKey,
+		AppKey:      appKey,
 		RouteValues: "[]",
 		Config:      configJSON,
 		Status:      1,

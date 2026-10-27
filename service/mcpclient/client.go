@@ -1,7 +1,7 @@
 // Package mcpclient 实现 MCP stdio 客户端：把配置声明的 MCP 服务器作为子进程拉起，
 // 完成 initialize 握手后代理 tools/list 与 tools/call，并把工具清单同步进
 // tblLlmTool 注册表（tool_type=mcp），从而复用 ReAct 运行时的两段式工具加载
-//（get_tool → execute_tool）。传输与注册均无鉴权，仅限本机受信环境。
+// （get_tool → execute_tool）。传输与注册均无鉴权，仅限本机受信环境。
 //
 // 安全模型：可执行文件走代码内适配器白名单（kind → 字面量命令，按 GOOS 固定路径），
 // 配置只能选择 kind 与注入环境变量，不接收任意 command/args；子进程以参数列表启动，
@@ -277,6 +277,9 @@ func (c *Client) ListTools() ([]RegistryTool, error) {
 			Description  string         `json:"description"`
 			InputSchema  map[string]any `json:"inputSchema"`
 			OutputSchema map[string]any `json:"outputSchema"`
+			Annotations  *struct {
+				ReadOnlyHint *bool `json:"readOnlyHint"`
+			} `json:"annotations"`
 		} `json:"tools"`
 	}
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -293,6 +296,7 @@ func (c *Client) ListTools() ([]RegistryTool, error) {
 			Description:  tool.Description,
 			InputSchema:  tool.InputSchema,
 			OutputSchema: tool.OutputSchema,
+			ReadOnlyHint: tool.Annotations != nil && tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint,
 		})
 	}
 	return tools, nil

@@ -8,9 +8,9 @@ import (
 
 func TestValidateEndpoint_SchemeAndHost(t *testing.T) {
 	cases := []struct {
-		name    string
+		name     string
 		endpoint string
-		wantErr string
+		wantErr  string
 	}{
 		{"空", "", "empty"},
 		{"非http协议", "ftp://1.2.3.4/mcp", "http/https"},
@@ -28,8 +28,8 @@ func TestValidateEndpoint_SchemeAndHost(t *testing.T) {
 
 func TestValidateEndpoint_IPLiteral(t *testing.T) {
 	cases := []struct {
-		ip      string
-		public  bool
+		ip     string
+		public bool
 	}{
 		{"8.8.8.8", true},
 		{"1.1.1.1", true},
@@ -40,13 +40,13 @@ func TestValidateEndpoint_IPLiteral(t *testing.T) {
 		{"169.254.1.1", false},
 		{"0.0.0.0", false},
 		{"224.0.0.1", false},
-		{"100.64.1.1", false},   // CGNAT
-		{"192.0.2.1", false},    // TEST-NET
-		{"240.0.0.1", false},    // 保留段
-		{"::1", false},          // IPv6 环回
-		{"fe80::1", false},      // IPv6 链路本地
-		{"fd00::1", false},      // IPv6 ULA
-		{"2001:db8::1", false},  // IPv6 文档段
+		{"100.64.1.1", false},  // CGNAT
+		{"192.0.2.1", false},   // TEST-NET
+		{"240.0.0.1", false},   // 保留段
+		{"::1", false},         // IPv6 环回
+		{"fe80::1", false},     // IPv6 链路本地
+		{"fd00::1", false},     // IPv6 ULA
+		{"2001:db8::1", false}, // IPv6 文档段
 	}
 	for _, tc := range cases {
 		t.Run(tc.ip, func(t *testing.T) {

@@ -22,10 +22,10 @@ import (
 // allowPrivate=true 仅限本机开发环境经 mcp.allow_private_endpoint 显式开启）。
 // 自定义 headers 会附加到每个请求（如 Authorization），但不会覆盖协议自身管理的头。
 type HTTPClient struct {
-	name        string
-	endpoint    string
-	timeout     time.Duration
-	headers     map[string]string
+	name         string
+	endpoint     string
+	timeout      time.Duration
+	headers      map[string]string
 	allowPrivate bool
 	// validated 是已通过校验的端点，仅限包内测试注入（绕过 SSRF 校验直连 httptest）；
 	// 生产构造路径 NewHTTPClient 不设置，withSession 始终走 validateEndpointOpts。
@@ -104,6 +104,9 @@ func (c *HTTPClient) ListTools() ([]RegistryTool, error) {
 				Description  string         `json:"description"`
 				InputSchema  map[string]any `json:"inputSchema"`
 				OutputSchema map[string]any `json:"outputSchema"`
+				Annotations  *struct {
+					ReadOnlyHint *bool `json:"readOnlyHint"`
+				} `json:"annotations"`
 			} `json:"tools"`
 		}
 		if err := json.Unmarshal(result, &payload); err != nil {
@@ -119,6 +122,7 @@ func (c *HTTPClient) ListTools() ([]RegistryTool, error) {
 				Description:  tool.Description,
 				InputSchema:  tool.InputSchema,
 				OutputSchema: tool.OutputSchema,
+				ReadOnlyHint: tool.Annotations != nil && tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint,
 			})
 		}
 		return nil

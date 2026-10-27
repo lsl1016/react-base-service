@@ -71,6 +71,7 @@ func (c *SDKClient) ListTools() ([]RegistryTool, error) {
 				Description:  tool.Description,
 				InputSchema:  normalizeSDKSchema(tool.InputSchema),
 				OutputSchema: normalizeSDKOutputSchema(tool.OutputSchema),
+				ReadOnlyHint: tool.Annotations != nil && tool.Annotations.ReadOnlyHint,
 			})
 		}
 		return nil

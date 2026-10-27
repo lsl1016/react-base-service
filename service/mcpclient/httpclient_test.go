@@ -27,9 +27,9 @@ func newTestHTTPClient(t *testing.T, server *httptest.Server) *HTTPClient {
 // initialize 签发会话头；tools/list 走 JSON 响应；tools/call 走 SSE 流响应；
 // 业务请求会记录并断言是否携带了会话头。
 type mcpTestServer struct {
-	mu            sync.Mutex
-	sessionSeen   string // 最近一次业务请求携带的 Mcp-Session-Id
-	callHandler   func(args map[string]any) (string, bool)
+	mu          sync.Mutex
+	sessionSeen string // 最近一次业务请求携带的 Mcp-Session-Id
+	callHandler func(args map[string]any) (string, bool)
 }
 
 func (s *mcpTestServer) handler(w http.ResponseWriter, r *http.Request) {
