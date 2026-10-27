@@ -22,14 +22,28 @@ type wsEventWriter struct {
 	conn *reactService.WSConn
 	seq  int
 	mu   sync.Mutex
+	// detached 为 true 表示连接已断、事件流无处可写（D-2 断连软脱管）：
+	// Write 丢弃事件并返回成功，让 run 继续执行到自然终态、消息照常落库；
+	// 否则引擎会把写失败当成运行错误终止 run（实测曾把已完成的任务判成 error: client disconnected）。
+	detached bool
 }
 
 func (w *wsEventWriter) Write(event params.ReactEvent) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.seq++
+	if w.detached {
+		return nil
+	}
 	event.Seq = w.seq
 	return w.conn.WriteEvent(event)
+}
+
+// Detach 把写入端切换为丢弃模式；连接读侧终结（客户端断开/关闭帧）时调用。
+func (w *wsEventWriter) Detach() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.detached = true
 }
 
 type wsReadResult struct {
@@ -59,7 +73,11 @@ func WS(ctx *gin.Context) {
 
 	writer := &wsEventWriter{conn: conn}
 
-	connCtx, connCancel := context.WithCancelCause(ctx.Request.Context())
+	// connCtx 显式脱离 HTTP Request.Context()：实测客户端 TCP 断开时 Request.Context()
+	// 会被取消（即使连接已 hijack），若 run 挂在其上会在断连瞬间被连坐取消（D-2）。
+	// 挂到 Background 后 run 生命周期由自身收敛（终态/超时/取消 API），handler 等待
+	// runDone 期间连接生命周期仍覆盖 run 全程；服务重启的残留 run 由启动期清理兜底。
+	connCtx, connCancel := context.WithCancelCause(context.Background())
 	defer connCancel(nil)
 	heartbeatDone := make(chan struct{})
 	defer close(heartbeatDone)
@@ -88,8 +106,14 @@ func WS(ctx *gin.Context) {
 					}
 					logWSDiagnostic(ctx, "read_end", connectionAttemptID, conn, fields)
 				}
-				connCancel(reactService.ErrReactClientDisconnected)
+				// D-2 断连软脱管：不再以 ErrReactClientDisconnected 取消 connCtx——
+				// 活跃 run 继续执行到自然终态（finished/cancelled/timeout），事件写降级为丢弃，
+				// 消息持久化照常；依赖前端交互的工具（ask_question / 危险确认 / Client Tool）
+				// 因 runMsgCh 关闭按既有路径失败收敛。handler 阻塞等 runDone 后退出，
+				// hijacked 连接生命周期仍覆盖 run 全程。
 				if runMsgCh != nil {
+					writer.Detach()
+					metrics.RunsDetachedTotal.Inc()
 					close(runMsgCh)
 					runMsgCh = nil
 				}

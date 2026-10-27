@@ -20,6 +20,12 @@ var (
 		Help: "Current active react runs.",
 	})
 
+	// RunsDetachedTotal 断连软脱管计数：客户端断开时仍在执行的 run 数（这些 run 会继续跑到自然终态）。
+	RunsDetachedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "react_runs_detached_total",
+		Help: "Total react runs that kept executing after client disconnect (soft-detach).",
+	})
+
 	// RunsTotal run 终态计数（status: finished/error/cancelled/expired）。
 	RunsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "react_runs_total",
