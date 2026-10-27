@@ -622,9 +622,11 @@ const resources = {
   },
   // 多渠道接入网关（M1 飞书）：渠道配置 CRUD（凭证 + 默认路由快照）；
   // 变更后后端自动热重载渠道连接，见 docs/多渠道接入网关与跨端续聊实现方案.md。
+  // hiddenTab：不占右侧管理标签行，入口在「更多能力」面板（open-channel-mgmt）。
   channel: {
     title: '接入渠道管理',
     tabText: '渠道',
+    hiddenTab: true,
     itemName: '渠道',
     addText: '新增渠道',
     idKey: 'channelId',
@@ -668,9 +670,11 @@ const resources = {
   },
   // M2 身份绑定：平台用户（Telegram 数字 ID / 飞书 open_id）→ 基座 userName；
   // 入站身份解析按此覆盖渠道默认归属；跨端投递按 userName 把终态结果扇出到其他渠道聊天。
+  // hiddenTab：同渠道，入口在「更多能力」面板（open-identity-mgmt）。
   identity: {
     title: '身份绑定管理',
     tabText: '身份绑定',
+    hiddenTab: true,
     itemName: '身份绑定',
     addText: '新增绑定',
     idKey: 'identityId',
@@ -857,18 +861,6 @@ const resources = {
     toDraft: (item) => ({ ...item }),
     columns: [],
   },
-  // P3 workspace 运行视图：活跃 worktree 只读清单（run 终态即释放，空列表为正常态）。
-  workspace: {
-    title: '代码工作区',
-    tabText: '工作区',
-    idKey: 'runId',
-    cardList: true,
-    cardKind: 'workspace',
-    noCreate: true,
-    listPath: '/react/workspace/active',
-    toDraft: (item) => ({ ...item }),
-    columns: [],
-  },
   // 运行时配置：custom.yaml 策略的在线覆盖面板（DB 覆盖 > yaml > 默认；写后新 run 生效）。
   // 加载与渲染按 settingCards 定义展开为多张卡片，不再走通用 listPath。
   runtimeSetting: {
@@ -964,17 +956,15 @@ const management = {
     } catch {
       this.columnWidths = {};
     }
-    $('management-tabs').innerHTML = Object.entries(resources).map(([key, resource]) => (
-      `<button class="rp-button rp-management-tab" data-type="${key}" type="button">${resource.tabText ?? resource.title.replace('管理', '')}</button>`
-    )).join('');
+    $('management-tabs').innerHTML = Object.entries(resources)
+      .filter(([, resource]) => !resource.hiddenTab)
+      .map(([key, resource]) => (
+        `<button class="rp-button rp-management-tab" data-type="${key}" type="button">${resource.tabText ?? resource.title.replace('管理', '')}</button>`
+      )).join('');
     $('management-tabs').addEventListener('click', (event) => {
       const button = event.target.closest('[data-type]');
       if (!button) return;
-      this.type = button.dataset.type;
-      this.mcpConnection = '';
-      this.expandedDetails.clear();
-      this.renderShell();
-      this.reload();
+      this.switchType(button.dataset.type);
     });
     $('management-keyword').addEventListener('input', () => this.renderTable());
     $('management-status').addEventListener('change', () => this.renderTable());
@@ -1052,6 +1042,15 @@ const management = {
     this.renderShell();
   },
   resource() { return resources[this.type]; },
+  // 切换右侧管理面板资源页：标签行点击与「更多能力」里的渠道/身份绑定入口共用。
+  switchType(type) {
+    if (!resources[type]) return;
+    this.type = type;
+    this.mcpConnection = '';
+    this.expandedDetails.clear();
+    this.renderShell();
+    this.reload();
+  },
   // 表头列宽拖拽：pointer capture 把后续 move/up 都锁定在手柄上（拖出窗口也不丢事件），
   // 实时改 th.style.width（table-layout:fixed 下即刻生效）；松手按资源页+列 key 记忆
   // 宽度并落 localStorage；拖拽期间全局锁定光标与选区。
@@ -1303,10 +1302,6 @@ const management = {
     }
     if (resource.cardKind === 'bundle') {
       this.renderBundleCards();
-      return;
-    }
-    if (resource.cardKind === 'workspace') {
-      this.renderWorkspaceCards();
       return;
     }
     if (resource.cardKind === 'mcpapp') {
@@ -1619,29 +1614,6 @@ const management = {
         <div class="rp-mcp-card-body">
           ${item.description ? `<div class="rp-mcp-bound">${escapeHtml(item.description)}</div>` : ''}
           <div class="rp-mcp-bound">安装人：${escapeHtml(item.installedBy || '-')} · ${escapeHtml(item.installedAt || '')}</div>
-        </div>
-      </div>`).join('');
-    this.visibleItems = rows;
-  },
-  // P3 workspace 运行视图：活跃 worktree 只读卡片。
-  renderWorkspaceCards() {
-    const rows = this.filteredItems();
-    const container = $('management-cards');
-    if (!rows.length) {
-      container.innerHTML = '<div class="rp-mcp-empty">当前没有活跃的代码工作区（run 结束即释放，空列表为正常态）</div>';
-      this.visibleItems = rows;
-      return;
-    }
-    container.innerHTML = rows.map((item, index) => `
-      <div class="rp-mcp-card" data-index="${index}">
-        <div class="rp-mcp-card-head">
-          <span class="rp-mcp-name">${escapeHtml(item.service)}${item.env ? `（${escapeHtml(item.env)}）` : ''}</span>
-          <span class="rp-mcp-kind">${escapeHtml(shortText(item.commit, 10))}</span>
-          <span class="rp-mcp-endpoint" title="${escapeHtml(item.path)}">${escapeHtml(shortText(item.path, 44))}</span>
-          <span class="rp-mcp-toolcount">${escapeHtml(item.tools || '')}</span>
-        </div>
-        <div class="rp-mcp-card-body">
-          <div class="rp-mcp-bound">runId：${escapeHtml(item.runId)} · app：${escapeHtml(item.appKey)} · 挂载于 ${escapeHtml(item.loadedAt ? String(item.loadedAt).replace('T', ' ').slice(0, 19) : '-')}</div>
         </div>
       </div>`).join('');
     this.visibleItems = rows;
@@ -2560,6 +2532,9 @@ deleteAppConfirmInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') confirmDeleteApp();
 });
 openReplayLink.addEventListener('click', openReplayModal);
+// 渠道/身份绑定入口：切换右侧管理面板到对应资源页（不占标签行，见 resources.*.hiddenTab）。
+$('open-channel-mgmt').addEventListener('click', () => management.switchType('channel'));
+$('open-identity-mgmt').addEventListener('click', () => management.switchType('identity'));
 replayModalClose.addEventListener('click', closeReplayModal);
 replayModalCancel.addEventListener('click', closeReplayModal);
 replayModalConfirm.addEventListener('click', confirmReplay);
