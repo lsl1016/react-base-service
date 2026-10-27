@@ -137,6 +137,9 @@ export interface Step {
   contentComplete: boolean;
   /** 该步骤是否代表错误（error 或 cancelled 事件） */
   isError?: boolean;
+  /** run 终态标记：error 终态事件写入该 run 最后一个步骤（回放时据此感知失败的 run） */
+  terminalStatus?: 'error';
+  terminalMessage?: string;
   /** 仅 role='compact' 时有值：上下文压缩的展示信息 */
   compact?: {
     /** 压缩前消息数（实时事件有值，历史回放可能为 0） */

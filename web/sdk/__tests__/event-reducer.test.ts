@@ -1273,6 +1273,40 @@ describe('EventReducer - user and error steps', () => {
 
   // TEST-REPORT-2026-10-27 D-3 回归：多 Agent 会话中父 run 后续的 todo 更新
   // 不得覆盖子 run 的 todo 卡片（曾因全局单一 todos 回写"最近一张完整卡片"串道）。
+  // TEST-REPORT-2026-10-27 D-6 回归：error 终态事件给对应 run 最后一个步骤落终态标记，
+  // 回放中失败的 run 不再隐形；子 Agent 的 error 标记落子泳道自己的步骤。
+  it('should mark run terminal status on error events per runId', () => {
+    const reducer = new EventReducer();
+    reducer.applyEvent({ type: 'content_start', seq: 1, stepIndex: 0, runId: 'run_a' });
+    reducer.applyEvent({ type: 'content_end', seq: 2, stepIndex: 0, runId: 'run_a', payload: { content: '回答A' } } as ReactEvent);
+    reducer.applyEvent({ type: 'content_start', seq: 3, stepIndex: 0, runId: 'run_b', agentPath: 'main/researcher' });
+    reducer.applyEvent({ type: 'content_end', seq: 4, stepIndex: 0, runId: 'run_b', agentPath: 'main/researcher', payload: { content: '回答B' } } as ReactEvent);
+
+    // 子 run error → 只标记子 run 的最后步骤
+    reducer.applyEvent({
+      type: 'error', seq: 5, runId: 'run_b', agentPath: 'main/researcher',
+      payload: { errNo: 1, errMsg: 'tool budget exceeded' },
+    } as ReactEvent);
+    let steps = reducer.getState().steps;
+    let stepA = steps.find((item) => item.runId === 'run_a');
+    let stepB = steps.find((item) => item.runId === 'run_b');
+    expect(stepA?.terminalStatus).toBeUndefined();
+    expect(stepB?.terminalStatus).toBe('error');
+    expect(stepB?.terminalMessage).toBe('tool budget exceeded');
+
+    // 外层 run error → 标记外层最后步骤
+    reducer.applyEvent({
+      type: 'error', seq: 6, runId: 'run_a',
+      payload: { errNo: 6000102, errMsg: 'client disconnected' },
+    } as ReactEvent);
+    steps = reducer.getState().steps;
+    stepA = steps.find((item) => item.runId === 'run_a');
+    stepB = steps.find((item) => item.runId === 'run_b');
+    expect(stepA?.terminalStatus).toBe('error');
+    expect(stepA?.terminalMessage).toBe('client disconnected');
+    expect(stepB?.terminalMessage).toBe('tool budget exceeded');
+  });
+
   it('should keep child agent todo card isolated from parent todo updates', () => {
     const reducer = new EventReducer();
     const parentTodos = [

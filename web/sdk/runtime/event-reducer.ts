@@ -333,6 +333,19 @@ function isFullTodoWriteToolCall(toolCall: ToolCallState): boolean {
   return name === 'todowrite' && toolCall.input.merge === false;
 }
 
+// markRunTerminal 把 run 终态标记写到该 run 最后一个步骤上：不往聊天流插报错消息
+// （实时侧产品决策不变），但回放/实时都能在对应 run 末尾看到轻量终态提示，
+// 避免失败的 run 在历史回放中完全隐形（TEST-REPORT-2026-10-27 D-6）。
+function markRunTerminal(state: AgentState, runId: string | undefined, status: 'error', message?: string): void {
+  for (let stepIndex = state.steps.length - 1; stepIndex >= 0; stepIndex -= 1) {
+    const step = state.steps[stepIndex];
+    if (runId && step.runId && step.runId !== runId) continue;
+    step.terminalStatus = status;
+    step.terminalMessage = message;
+    return;
+  }
+}
+
 // syncLatestTodoCardItemsForRun 把最新 todo 状态回写到"完整写"卡片（merge=false 的 todo_write）。
 // event.runId 存在时只匹配该 run 自己的步骤——多 Agent 会话中父/子 run 各有独立清单，
 // 跨 run 不互相覆盖（TEST-REPORT-2026-10-27 D-3）；runId 缺失（历史事件兼容）时回退旧行为，
@@ -1371,8 +1384,9 @@ export class EventReducer {
       case 'error': {
         const p = event.payload as unknown as ErrorPayload;
         if (event.agentPath) {
-          // 子 Agent run 失败：收敛其卡片并记日志，不打断外层 run 状态。
+          // 子 Agent run 失败：收敛其卡片、给子泳道末尾落终态标记，不打断外层 run 状态。
           this.settlePendingToolCalls(event.runId);
+          markRunTerminal(this.state, event.runId, 'error', p?.errMsg);
           if (p?.errMsg) {
             console.warn('[AgentClient] sub-agent run failed:', p.errMsg);
           }
@@ -1380,6 +1394,7 @@ export class EventReducer {
         }
         this.settlePendingToolCalls();
         this.state.status = 'error';
+        markRunTerminal(this.state, event.runId, 'error', p?.errMsg);
         this.applyContextOnlyStats(p?.contextUsedTokens, p?.maxContextTokens);
         // run 失败不再往聊天流插报错消息：后端 errMsg 是原始错误串，对用户没有
         // 可操作性；断连失败更是会在任意一次全量回放中被重建出来，展示它等于把

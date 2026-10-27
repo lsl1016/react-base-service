@@ -457,6 +457,25 @@
   }
 }
 
+// run 终态提示（D-6）：error 终态的 run 在其最后一个步骤末尾的轻量一行提示，
+// 弱化样式避免打断阅读，但保证历史回放中失败的 run 可被感知。
+.agent-ui-run-terminal {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: $agent-ui-error;
+  background: rgba(225, 29, 72, 0.06);
+  border: 1px solid rgba(225, 29, 72, 0.18);
+
+  .agent-ui-run-terminal-icon {
+    font-size: 12px;
+  }
+}
+
 .agent-ui-next-button {
   @include agent-ui-button-reset;
   display: inline-flex;

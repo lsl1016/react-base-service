@@ -117,6 +117,17 @@ function getStepIdentity(step: Step, index: number): string {
   return `${step.runId || 'run'}:${step.index}:${step.role}:${index}`;
 }
 
+// getSectionTerminal 取该 run 分节末尾的终态标记（D-6：error 终态的 run 在回放/实时中可见）。
+function getSectionTerminal(section: MessageSection): { status: NonNullable<Step['terminalStatus']>; message?: string } | undefined {
+  for (let index = section.items.length - 1; index >= 0; index -= 1) {
+    const item = section.items[index];
+    if (item.kind === 'step' && item.step.terminalStatus) {
+      return { status: item.step.terminalStatus, message: item.step.terminalMessage };
+    }
+  }
+  return undefined;
+}
+
 function sectionHasAssistant(section: MessageSection): boolean {
   return section.items.some((item) => item.kind === 'step');
 }
@@ -371,6 +382,16 @@ export function MessageList(props: MessageListProps) {
                   onCodeCopy={props.onCodeCopy}
                   onCodeSelectionCopy={props.onCodeSelectionCopy}
                 />
+
+                {/* run 终态提示：error 终态的 run 在分节末尾给出轻量标记（D-6） */}
+                <Show when={getSectionTerminal(section())}>
+                  {(terminal) => (
+                    <div class="agent-ui-run-terminal" role="status">
+                      <span class="agent-ui-run-terminal-icon" aria-hidden="true">⚠</span>
+                      <span>本轮运行异常终止{terminal().message ? `：${terminal().message}` : ''}</span>
+                    </div>
+                  )}
+                </Show>
 
                 <For each={nativePlansForRun(section().runId)}>
                   {(plan) => (

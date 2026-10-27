@@ -57,6 +57,12 @@ function LaneStep(props: { step: Step } & Omit<AgentLaneViewProps, 'steps' | 'is
           <Show when={step().content}>
             <ContentBlock content={step().content} complete={step().contentComplete} />
           </Show>
+          <Show when={step().terminalStatus}>
+            <div class="agent-ui-run-terminal" role="status">
+              <span class="agent-ui-run-terminal-icon" aria-hidden="true">⚠</span>
+              <span>本轮运行异常终止{step().terminalMessage ? `：${step().terminalMessage}` : ''}</span>
+            </div>
+          </Show>
         </div>
       </Show>
     </Show>
