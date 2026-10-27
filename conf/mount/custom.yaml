@@ -199,6 +199,10 @@ llm:
     push_max_runes: 4000
     # IM 端 ask_question/危险确认等待回复的超时秒数（0=默认 600）
     hitl_timeout_sec: 600
+    # 跨端投递（M2）：run 终态结果推给同一 userName 绑定的其他渠道聊天（回复即续聊）
+    cross_delivery: true
+    # 会话回放页地址（投递消息附 ?sessionId= 链接；空=不附链接）
+    replay_base_url: "http://127.0.0.1:8080/react-base-service/react/replay.html"
 
 # MCP 客户端：kind=repo 走 stdio 适配器白名单（可执行文件部署于 bin/，env 注入子进程）；
 # kind=http 走手写 Streamable HTTP；kind=http_sdk 走官方 MCP Go SDK（modelcontextprotocol/go-sdk）实现。

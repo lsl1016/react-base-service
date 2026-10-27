@@ -721,6 +721,12 @@ type GatewayConfig struct {
 	PushMaxRunes int `yaml:"push_max_runes"`
 	// HitlTimeoutSec 是 IM 端 ask_question/危险确认等待回复的超时；0=用默认值（复用 WS 口径的量级）。
 	HitlTimeoutSec int `yaml:"hitl_timeout_sec"`
+	// CrossDelivery 跨端投递开关：run 终态结果推给同一 userName 绑定的其他渠道聊天
+	//（发起渠道正常回复之外的多端扇出；投递消息带会话引用，回复即续聊）。
+	CrossDelivery bool `yaml:"cross_delivery"`
+	// ReplayBaseURL 是会话回放页地址（投递消息携带 ?sessionId= 链接，指向 web/react/replay.html）；
+	// 空 = 投递消息不附链接（仅会话短 ID）。
+	ReplayBaseURL string `yaml:"replay_base_url"`
 }
 
 // GatewayPushMaxRunes 归一化推送截断上限。

@@ -257,6 +257,11 @@ func InitLLMRouter(router *gin.RouterGroup) {
 		gatewayGroup.POST("/channel/delete", gatewayCtl.DeleteChannel)
 		gatewayGroup.POST("/channel/list", gatewayCtl.ListChannels)
 		gatewayGroup.POST("/session/list", gatewayCtl.ListSessions)
+		// M2 身份绑定（平台用户 → 基座 userName；入站身份解析 + 跨端投递寻址）
+		gatewayGroup.POST("/identity/create", gatewayCtl.CreateIdentity)
+		gatewayGroup.POST("/identity/update", gatewayCtl.UpdateIdentity)
+		gatewayGroup.POST("/identity/delete", gatewayCtl.DeleteIdentity)
+		gatewayGroup.POST("/identity/list", gatewayCtl.ListIdentities)
 	}
 
 	// Tool 管理接口

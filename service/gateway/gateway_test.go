@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"react-base-service/components/params"
+	"react-base-service/conf"
 	model "react-base-service/models/llm"
 	react "react-base-service/service/react"
 
+	"github.com/gin-gonic/gin"
 	larktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
 
@@ -28,6 +31,7 @@ type fakeChannel struct {
 	texts   []string
 	msgID   string
 	pushErr error
+	lastID  string // 最近一次推送返回的平台消息 ID（e2e 绑定断言用）
 }
 
 func (f *fakeChannel) Kind() string      { return "fake" }
@@ -44,10 +48,12 @@ func (f *fakeChannel) PushText(ctx context.Context, addr PushAddr, text string) 
 	}
 	f.pushes = append(f.pushes, addr)
 	f.texts = append(f.texts, text)
-	if f.msgID == "" {
-		return "om_fake_" + time.Now().Format("150405.000000000"), nil
+	id := f.msgID
+	if id == "" {
+		id = "om_fake_" + time.Now().Format("150405.000000000")
 	}
-	return f.msgID, nil
+	f.lastID = id
+	return id, nil
 }
 
 func (f *fakeChannel) lastText() string {
@@ -97,6 +103,14 @@ func (f *fakeInteractiveChannel) EditText(ctx context.Context, chatID, messageID
 	f.edits = append(f.edits, chatID+"|"+messageID+"|"+text)
 	return nil
 }
+
+// fakeChannelWithID 指定渠道 ID 的 fake（跨端投递需要多渠道并存区分目标）。
+type fakeChannelWithID struct {
+	fakeChannel
+	id string
+}
+
+func (f *fakeChannelWithID) ChannelID() string { return f.id }
 
 func newTestAdapter(gw *service) (*imAdapter, *[]*model.ChannelMessage) {
 	var bindings []*model.ChannelMessage
@@ -665,5 +679,136 @@ func TestBuildSessionListText(t *testing.T) {
 	}
 	if !strings.Contains(text, strings.Repeat("长", 40)+"…") {
 		t.Fatalf("长摘要应截断: %q", text)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 跨端投递（M2 delivery.go）
+// ---------------------------------------------------------------------------
+
+// newDeliveryTestService 构造挂双 fake 渠道（origin/target）的投递测试服务：
+// 目标解析与绑定写入均注入替身（单测无 DB）。
+func newDeliveryTestService(t *testing.T, targets []model.ChannelSession) (*service, *fakeChannelWithID, *fakeChannelWithID, *[]*model.ChannelMessage) {
+	t.Helper()
+	origin := &fakeChannelWithID{fakeChannel: fakeChannel{}, id: "gwch_origin"}
+	target := &fakeChannelWithID{fakeChannel: fakeChannel{}, id: "gwch_target"}
+	gw := &service{adapters: map[string]*imAdapter{}}
+	gw.manager = newManager(nil)
+	gw.manager.channels[origin.ChannelID()] = origin
+	gw.manager.channels[target.ChannelID()] = target
+	gw.resolveDeliveryTargets = func(ctx *gin.Context, userName, excludeChannelID string) ([]model.ChannelSession, error) {
+		return targets, nil
+	}
+	bindings := &[]*model.ChannelMessage{}
+	originalRecord := recordCrossDeliveryBinding
+	recordCrossDeliveryBinding = func(row *model.ChannelMessage) error {
+		*bindings = append(*bindings, row)
+		return nil
+	}
+	t.Cleanup(func() { recordCrossDeliveryBinding = originalRecord })
+	return gw, origin, target, bindings
+}
+
+func withCrossDelivery(t *testing.T, enabled bool, replayBaseURL string) {
+	t.Helper()
+	original := conf.CustomConf.LLM.Gateway
+	conf.CustomConf.LLM.Gateway.CrossDelivery = enabled
+	conf.CustomConf.LLM.Gateway.ReplayBaseURL = replayBaseURL
+	t.Cleanup(func() { conf.CustomConf.LLM.Gateway = original })
+}
+
+func TestCrossDeliverFansOutAndRecordsBinding(t *testing.T) {
+	withCrossDelivery(t, true, "")
+	gw, origin, target, bindings := newDeliveryTestService(t, []model.ChannelSession{
+		{ChannelID: "gwch_target", ChatID: "oc_target_chat"},
+	})
+
+	a := newIMAdapter(gw, "gwch_origin", "chat_o", "m1", "session_x", "alice", func() {})
+	a.setReplayInfo("demo-app", `["north"]`)
+	gw.crossDeliver(a, "任务结果：库存 42")
+
+	if target.textCount() != 1 {
+		t.Fatalf("目标渠道应收到投递，got %d", target.textCount())
+	}
+	got := target.lastText()
+	if !strings.Contains(got, "任务结果：库存 42") || !strings.Contains(got, "会话：session_x") {
+		t.Fatalf("投递文案应含结果与会话引用: %q", got)
+	}
+	if !strings.Contains(got, "回复本消息") {
+		t.Fatalf("投递文案应带续聊指引: %q", got)
+	}
+	if origin.textCount() != 0 {
+		t.Fatalf("发起渠道不应重复收到投递，got %d", origin.textCount())
+	}
+	if len(*bindings) != 1 || (*bindings)[0].ChannelID != "gwch_target" || (*bindings)[0].ChatID != "oc_target_chat" ||
+		(*bindings)[0].SessionID != "session_x" {
+		t.Fatalf("投递绑定字段不符: %+v", *bindings)
+	}
+}
+
+func TestCrossDeliverDisabledOrNoTargets(t *testing.T) {
+	// 开关关闭：完全不投递。
+	withCrossDelivery(t, false, "")
+	gw, _, target, _ := newDeliveryTestService(t, []model.ChannelSession{{ChannelID: "gwch_target", ChatID: "c1"}})
+	a := newIMAdapter(gw, "gwch_origin", "chat_o", "m1", "session_x", "alice", func() {})
+	gw.crossDeliver(a, "结果")
+	if target.textCount() != 0 {
+		t.Fatalf("cross_delivery 关闭时不应投递")
+	}
+	// 无目标：不投递。
+	withCrossDelivery(t, true, "")
+	gw2, _, target2, _ := newDeliveryTestService(t, nil)
+	a2 := newIMAdapter(gw2, "gwch_origin", "chat_o", "m1", "session_x", "alice", func() {})
+	gw2.crossDeliver(a2, "结果")
+	if target2.textCount() != 0 {
+		t.Fatalf("无目标时不应投递")
+	}
+}
+
+func TestCrossDeliverSkipsOriginAndUnknownChannels(t *testing.T) {
+	withCrossDelivery(t, true, "")
+	// 目标里混入发起渠道与未运行渠道：都应被跳过，只投可达目标。
+	gw, origin, target, _ := newDeliveryTestService(t, []model.ChannelSession{
+		{ChannelID: "gwch_origin", ChatID: "chat_o"},
+		{ChannelID: "gwch_missing", ChatID: "chat_m"},
+		{ChannelID: "gwch_target", ChatID: "chat_t"},
+	})
+	a := newIMAdapter(gw, "gwch_origin", "chat_o", "m1", "session_x", "alice", func() {})
+	gw.crossDeliver(a, "结果")
+	if target.textCount() != 1 || origin.textCount() != 0 {
+		t.Fatalf("应只投可达的非发起渠道: target=%d origin=%d", target.textCount(), origin.textCount())
+	}
+	if got := target.pushes[len(target.pushes)-1]; got.ChatID != "chat_t" || got.ReplyMessageID != "" {
+		t.Fatalf("投递寻址不符: %+v", got)
+	}
+}
+
+func TestBuildDeliveryMessage(t *testing.T) {
+	withCrossDelivery(t, true, "http://x/replay.html")
+	got := buildDeliveryMessage(model.ChannelKindTelegram, "结果正文", "session_abcdef1234567890", "demo-app", `["a","b"]`)
+	if !strings.Contains(got, "来自 Telegram") || !strings.Contains(got, "结果正文") {
+		t.Fatalf("投递文案应含来源与结果: %q", got)
+	}
+	wantLink := "http://x/replay.html?sessionId=session_abcdef1234567890&appKey=demo-app&routeValues=" + url.QueryEscape(`["a","b"]`)
+	if !strings.Contains(got, wantLink) {
+		t.Fatalf("回放链接应带编码参数: want %q got %q", wantLink, got)
+	}
+	// replay_base_url 未配置：不附链接，保留会话引用与续聊指引。
+	withCrossDelivery(t, true, "")
+	got = buildDeliveryMessage(model.ChannelKindFeishu, "结果", "session_y", "demo-app", `[]`)
+	if strings.Contains(got, "回放") || !strings.Contains(got, "来自 飞书") || !strings.Contains(got, "会话：session_y") {
+		t.Fatalf("无链接投递文案不符: %q", got)
+	}
+}
+
+func TestIdentityScopeKind(t *testing.T) {
+	if got := identityScopeKind("telegram", "feishu"); got != "telegram" {
+		t.Fatalf("入站 kind 优先: %q", got)
+	}
+	if got := identityScopeKind("", "feishu"); got != "feishu" {
+		t.Fatalf("缺省回渠道配置 kind: %q", got)
+	}
+	if got := identityScopeKind("  ", "feishu"); got != "feishu" {
+		t.Fatalf("空白 kind 回渠道配置: %q", got)
 	}
 }

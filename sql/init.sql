@@ -946,3 +946,22 @@ CREATE TABLE IF NOT EXISTS `tblLlmChannelMessage` (
 
 -- 存量环境增量（Telegram 增强第一批：白名单）：已建过 tblLlmChannelConfig 的库执行
 -- ALTER TABLE `tblLlmChannelConfig` ADD COLUMN `allowed_users` VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '接入白名单(JSON字符串数组,空=不限)' AFTER `default_user_name`;
+
+-- M2 身份绑定表（跨端投递的寻址地基）：平台用户 → 基座 userName；
+-- 入站按 (kind, platform_user_id) 解析身份覆盖渠道默认（未绑定回落 M1 语义，结果粘滞进会话快照）；
+-- 投递按 user_name 反查该逻辑用户绑定的各渠道聊天（tblLlmChannelSession.user_name）扇出终态结果
+CREATE TABLE IF NOT EXISTS `tblLlmUserIdentity` (
+    `id`                BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID',
+    `identity_id`       VARCHAR(64)  NOT NULL COMMENT '绑定唯一标识(idnt_+UUID)',
+    `kind`              VARCHAR(16)  NOT NULL COMMENT '平台类型: feishu/telegram',
+    `platform_user_id`  VARCHAR(128) NOT NULL COMMENT '平台用户标识(Telegram数字user ID/飞书open_id)',
+    `user_name`         VARCHAR(64)  NOT NULL COMMENT '基座userName(会话归属/跨端投递寻址键)',
+    `display_name`      VARCHAR(128) NOT NULL DEFAULT '' COMMENT '备注名(展示)',
+    `created_by`        VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '创建人',
+    `updated_by`        VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '更新人',
+    `created_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted_at`        BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '删除标记(0=未删除)',
+    UNIQUE KEY `uk_kind_platform_user` (`kind`, `platform_user_id`),
+    INDEX `idx_user_name` (`user_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多渠道网关身份绑定表';

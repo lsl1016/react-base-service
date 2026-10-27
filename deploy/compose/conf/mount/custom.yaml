@@ -83,6 +83,8 @@ llm:
       enabled: false
       push_max_runes: 4000   # 终态推送 IM 的单条截断上限（rune 数）
       hitl_timeout_sec: 600  # IM 端 ask_question/危险确认等待超时秒数
+      cross_delivery: true   # 跨端投递：终态结果推给同一 userName 的其他渠道聊天
+      replay_base_url: ""    # 回放页外网地址（如 https://host/react-base-service/react/replay.html）；空=不附链接
     # 内置 web_fetch 工具：URL 抓取 → 正文提取 → 按预算回填；未配置默认关闭。
     web_fetch:
       enabled: true

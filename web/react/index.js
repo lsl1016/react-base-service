@@ -666,6 +666,41 @@ const resources = {
       ['allowedUsersText', '白名单（用户/群 ID 或 @username，换行或逗号分隔；留空 = 不限制）', 'textarea'],
     ],
   },
+  // M2 身份绑定：平台用户（Telegram 数字 ID / 飞书 open_id）→ 基座 userName；
+  // 入站身份解析按此覆盖渠道默认归属；跨端投递按 userName 把终态结果扇出到其他渠道聊天。
+  identity: {
+    title: '身份绑定管理',
+    tabText: '身份绑定',
+    itemName: '身份绑定',
+    addText: '新增绑定',
+    idKey: 'identityId',
+    listPath: '/gateway/identity/list',
+    createPath: '/gateway/identity/create',
+    updatePath: '/gateway/identity/update',
+    deletePath: '/gateway/identity/delete',
+    deleteBody: (item) => ({ identityId: item.identityId }),
+    modalNote: '平台用户 → 基座 userName 的映射（跨端投递的寻址地基）。platformUserId：Telegram 填数字用户 ID（向 @userinfobot 查询，或看服务日志 chat=/user=），飞书填 open_id（ou_ 开头，见日志）。未绑定的发送者回落渠道配置的默认归属用户（M1 单用户语义）；绑定只影响新会话（存量会话快照粘滞）。跨端投递（llm.gateway.cross_delivery）把同一 userName 的任务结果推给其绑定的其他渠道聊天，回复投递消息即续聊。',
+    columns: [
+      ['kind', '平台'], ['platformUserId', '平台用户 ID'], ['userName', '基座用户名'], ['displayName', '备注名'], ['updatedBy', '更新人'], ['actions', '操作'],
+    ],
+    empty: () => ({
+      kind: 'telegram', platformUserId: '', userName: '', displayName: '',
+    }),
+    toDraft: (item) => ({ ...item }),
+    toPayload: (draft, config) => ({
+      identityId: draft.identityId,
+      kind: draft.kind || 'telegram',
+      platformUserId: draft.platformUserId,
+      userName: draft.userName,
+      displayName: draft.displayName,
+    }),
+    fields: (mode) => [
+      ...(mode === 'edit' ? [['identityId', '绑定标识', 'readonly'], ['kind', '平台', 'readonly']] : [['kind', '平台', 'enumSelect', [['feishu', '飞书'], ['telegram', 'Telegram']]]]),
+      ['platformUserId', '平台用户 ID（Telegram 数字 ID / 飞书 open_id）'],
+      ['userName', '基座用户名'],
+      ['displayName', '备注名'],
+    ],
+  },
   // 「API Key 管理」页已撤除（P1 Key 双轨消除）：app 级凭证并入模型配置面板的
   // 「连接与密钥」（tblLlmConnection，协议+地址+Key，无 ModelHash run 按 app+路由
   // 解析、优先于旧 tblLlmApiKey）；后端 /apikey/* 路由保留作为契约兼容层。

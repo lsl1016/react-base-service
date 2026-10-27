@@ -34,6 +34,9 @@ type imAdapter struct {
 
 	sessionID string
 	userName  string
+	// appKey/routeValues 是会话五元组快照的路由部分（跨端投递的回放链接参数）。
+	appKey      string
+	routeValues string
 
 	mu sync.Mutex
 	// lastAnswer 是外层 run 最近一条 assistant 全文（多轮/排队续跑时取最后一条）。
@@ -137,6 +140,14 @@ func (a *imAdapter) setPlaceholder(messageID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.placeholderMessageID = messageID
+}
+
+// setReplayInfo 记录会话路由快照（跨端投递消息的回放链接参数）。
+func (a *imAdapter) setReplayInfo(appKey, routeValues string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.appKey = appKey
+	a.routeValues = routeValues
 }
 
 // editPlaceholder 用新文本原位编辑占位消息；无占位或编辑失败返回 false。
@@ -406,21 +417,17 @@ func (a *imAdapter) pushTerminal(isError bool) {
 		SessionID: a.sessionID,
 		RunID:     runID,
 	})
+	// 跨端投递（M2）：同一 userName 的其他渠道聊天收到结果 + 会话引用；
+	// 异步执行不阻塞 run 事件流，投递端回复该消息即续聊原会话。
+	go a.gw.crossDeliver(a, text)
 }
 
 // pushText 推送到本 chat（带回复锚点）；失败只记日志不重试（旁路通知语义）。
-// 渠道自行分片长文本（LongTextSplitter，如 Telegram 4096）时不再截断；
-// 其余渠道维持 push_max_runes 截断兜底（飞书文本上限宽，截断是防御性收敛）。
+// 长文口径见 service.pushBounded：分片渠道发全量，其余渠道 push_max_runes 截断兜底。
 func (a *imAdapter) pushText(text string) (string, error) {
-	if !channelSplitsLongText(a.gw.manager.Get(a.channelID)) {
-		maxRunes := conf.CustomConf.LLM.Gateway.GatewayPushMaxRunes()
-		if runes := []rune(text); len(runes) > maxRunes {
-			text = string(runes[:maxRunes]) + "\n\n…(内容过长已截断，完整结果见会话)"
-		}
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return a.gw.pushText(ctx, PushAddr{
+	return a.gw.pushBounded(ctx, PushAddr{
 		ChannelID:      a.channelID,
 		ChatID:         a.chatID,
 		ReplyMessageID: a.replyAnchorMessageID,

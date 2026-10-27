@@ -187,6 +187,24 @@ func ListChannelSessionsByChat(ctx *gin.Context, channelID, chatID string, limit
 	return rows, nil
 }
 
+// ListChannelSessionsByUserName 跨端投递目标解析：该基座用户绑定的各渠道聊天
+// （排除发起渠道），最近活跃优先；投递端收到结果消息后回复即续聊原会话。
+func ListChannelSessionsByUserName(ctx *gin.Context, userName, excludeChannelID string, limit int) ([]ChannelSession, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	query := helpers.MysqlClientLLM.Model(&ChannelSession{}).WithContext(ctx).
+		Where("user_name = ?", userName)
+	if excludeChannelID != "" {
+		query = query.Where("channel_id != ?", excludeChannelID)
+	}
+	var rows []ChannelSession
+	if err := query.Order("last_active_at DESC").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, components.ErrorDbSelect.Wrap(err)
+	}
+	return rows, nil
+}
+
 func TouchChannelSessionActive(ctx *gin.Context, id uint, lastMessage string) error {
 	updates := map[string]interface{}{
 		"last_active_at": time.Now(),

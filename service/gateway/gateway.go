@@ -34,6 +34,8 @@ type service struct {
 	adapters map[string]*imAdapter // key: channelID + "/" + chatID
 
 	runInvoker RunInvoker
+	// resolveDeliveryTargets 跨端投递目标解析（默认查库；测试注入替身）。
+	resolveDeliveryTargets func(ctx *gin.Context, userName, excludeChannelID string) ([]model.ChannelSession, error)
 }
 
 var (
@@ -71,8 +73,9 @@ func Reload() error {
 func getService() *service {
 	once.Do(func() {
 		s := &service{
-			adapters:   map[string]*imAdapter{},
-			runInvoker: react.RunWithClientReaderContext,
+			adapters:               map[string]*imAdapter{},
+			runInvoker:             react.RunWithClientReaderContext,
+			resolveDeliveryTargets: defaultResolveDeliveryTargets,
 		}
 		s.manager = newManager(s.handleInbound)
 		impl = s
@@ -100,6 +103,17 @@ func (s *service) pushText(ctx context.Context, addr PushAddr, text string) (str
 		return "", fmt.Errorf("渠道 %s 未运行", addr.ChannelID)
 	}
 	return ch.PushText(ctx, addr, text)
+}
+
+// pushBounded 按渠道能力推送：分片渠道（LongTextSplitter）发全量自行拆条，
+// 其余渠道按 push_max_runes 截断兜底（跨端投递与终态推送共用口径）。
+func (s *service) pushBounded(ctx context.Context, addr PushAddr, text string) (string, error) {
+	if ch := s.manager.Get(addr.ChannelID); ch != nil && !channelSplitsLongText(ch) {
+		if maxRunes := conf.CustomConf.LLM.Gateway.GatewayPushMaxRunes(); len([]rune(text)) > maxRunes {
+			text = string([]rune(text)[:maxRunes]) + "\n\n…(内容过长已截断，完整结果见会话)"
+		}
+	}
+	return s.pushText(ctx, addr, text)
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +200,8 @@ func (s *service) handleInbound(ctx context.Context, msg InboundMessage) {
 	runCtx, cancel := context.WithCancel(context.Background())
 
 	adapter := newIMAdapter(s, msg.ChannelID, msg.ChatID, msg.MessageID, snapshot.SessionID, snapshot.UserName, cancel)
+	// 回放信息（M2 跨端投递链接用）：appKey/routeValues 进投递消息的 replay 链接参数。
+	adapter.setReplayInfo(snapshot.AppKey, snapshot.RouteValues)
 	s.mountAdapter(msg.ChannelID, msg.ChatID, adapter)
 
 	// 占位消息（渠道支持编辑时）：终态 editMessageText 原位替换为结果，减少消息噪音。
@@ -418,11 +434,19 @@ func (s *service) snapshotFromConfig(ginCtx *gin.Context, msg InboundMessage, se
 	if strings.TrimSpace(cfg.DefaultUserName) == "" {
 		return nil, fmt.Errorf("渠道 %s 未配置 default_user_name", msg.ChannelID)
 	}
+	// 身份解析（M2）：平台用户绑定表 (kind, platform_user_id) 命中时覆盖渠道默认
+	// userName（未绑定/查询失败回落 M1 渠道级默认，语义兼容）。解析结果随快照粘滞。
+	userName := cfg.DefaultUserName
+	if identity, err := model.GetUserIdentity(ginCtx, identityScopeKind(msg.Kind, cfg.Kind), msg.UserID); err != nil {
+		zlog.Errorf(ginCtx, "[gateway] 身份绑定查询失败(回落渠道默认): kind=%s user=%s err=%v", msg.Kind, msg.UserID, err)
+	} else if identity != nil && strings.TrimSpace(identity.UserName) != "" {
+		userName = identity.UserName
+	}
 	row := &model.ChannelSession{
 		ChannelID:    msg.ChannelID,
 		ChatID:       msg.ChatID,
 		SessionID:    sessionID,
-		UserName:     cfg.DefaultUserName,
+		UserName:     userName,
 		AppKey:       cfg.DefaultAppKey,
 		RouteValues:  normalizeRouteValuesJSON(cfg.DefaultRouteValues),
 		SessionType:  "chat",
@@ -448,6 +472,14 @@ func (s *service) snapshotFromConfig(ginCtx *gin.Context, msg InboundMessage, se
 		return nil, err
 	}
 	return snapshotFromRow(row), nil
+}
+
+// identityScopeKind 身份绑定查询的平台键：入站消息自带 kind 优先，缺省回渠道配置。
+func identityScopeKind(msgKind, cfgKind string) string {
+	if strings.TrimSpace(msgKind) != "" {
+		return strings.TrimSpace(msgKind)
+	}
+	return strings.TrimSpace(cfgKind)
 }
 
 // buildRunPayload 按快照构造 run 载荷；requestSource=gateway 仅作观测标注（身份已由
