@@ -8,10 +8,14 @@ llm:
       default_version: "deepseek-flash"
       max_context_tokens: 1000000
       supports_thinking: true
+      # 单轮输出上限：不配会落到 4096 兜底，模型把数据集内联进 python_exec
+      # 参数时会被 max_tokens 截断在工具调用参数中间，run 无果而终。
+      max_output_tokens: 16384
     deepseek:
       versions: ["deepseek-flash", "deepseek-v4-pro"]
       default_version: "deepseek-flash"
       max_context_tokens: 1000000
+      max_output_tokens: 16384
     gpt:
       default_version: "gpt-5.2"
       max_context_tokens: 1000000
